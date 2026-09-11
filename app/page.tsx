@@ -6,13 +6,15 @@ import { IntakeDispatchStage } from '@/components/IntakeDispatchStage';
 import { AuditEvaluationStage } from '@/components/AuditEvaluationStage';
 import { SettingsModal } from '@/components/SettingsModal';
 import { BlueprintVaultModal } from '@/components/BlueprintVaultModal';
+import { DocumentationModal } from '@/components/DocumentationModal';
 import { Blueprint } from '@/types';
-import { ShieldCheck, GitPullRequest, Send, ArrowRight, Sparkles } from 'lucide-react';
+import { ShieldCheck, GitPullRequest, Send, ArrowRight, Sparkles, BookOpen } from 'lucide-react';
 
 export default function RepoPilotPage() {
   const [currentStage, setCurrentStage] = React.useState<'stage1' | 'stage2'>('stage1');
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [vaultOpen, setVaultOpen] = React.useState(false);
+  const [docsOpen, setDocsOpen] = React.useState(false);
 
   // API credentials stored in localStorage
   const [julesKey, setJulesKey] = React.useState('');
@@ -100,6 +102,7 @@ export default function RepoPilotPage() {
         setCurrentStage={setCurrentStage}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenVault={() => setVaultOpen(true)}
+        onOpenDocs={() => setDocsOpen(true)}
         hasCredentials={Boolean(julesKey || geminiKey || githubPat)}
         blueprintsCount={blueprints.length}
       />
@@ -142,12 +145,14 @@ export default function RepoPilotPage() {
           />
         ) : (
           <AuditEvaluationStage
+            julesKey={julesKey}
             geminiKey={geminiKey}
             githubPat={githubPat}
             activeBlueprint={activeBlueprint}
             blueprints={blueprints}
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenVault={() => setVaultOpen(true)}
+            onSaveBlueprint={handleSaveBlueprint}
           />
         )}
       </main>
@@ -193,6 +198,11 @@ export default function RepoPilotPage() {
         onSelectBlueprintForAudit={handleSelectBlueprintForAudit}
         onDeleteBlueprint={handleDeleteBlueprint}
         onClearAll={handleClearAllBlueprints}
+      />
+
+      <DocumentationModal
+        open={docsOpen}
+        onClose={() => setDocsOpen(false)}
       />
     </div>
   );

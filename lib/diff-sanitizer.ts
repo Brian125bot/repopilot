@@ -35,11 +35,11 @@ export function matchesFileBoundary(filepath: string, boundaries: string[]): boo
 
     // Convert glob pattern to regex
     // Escaping special characters except *
-    const escaped = pattern
+    let escaped = pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*\*/g, '§DOUBLESTAR§')
-      .replace(/\*/g, '[^/]*')
-      .replace(/§DOUBLESTAR§/g, '.*');
+      .replace(/\/\*\*\//g, '(?:/|/.+/)')
+      .replace(/\*\*/g, '.*')
+      .replace(/\*/g, '[^/]*');
 
     try {
       const reg = new RegExp(`^${escaped}$`, 'i');

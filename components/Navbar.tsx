@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, Key, Sparkles, FolderArchive, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Compass, Key, Sparkles, FolderArchive, ArrowRight, ShieldCheck, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 
@@ -10,6 +10,7 @@ interface NavbarProps {
   setCurrentStage: (stage: 'stage1' | 'stage2') => void;
   onOpenSettings: () => void;
   onOpenVault: () => void;
+  onOpenDocs: () => void;
   hasCredentials: boolean;
   blueprintsCount: number;
 }
@@ -19,6 +20,7 @@ export function Navbar({
   setCurrentStage,
   onOpenSettings,
   onOpenVault,
+  onOpenDocs,
   hasCredentials,
   blueprintsCount,
 }: NavbarProps) {
@@ -81,8 +83,18 @@ export function Navbar({
           <Button
             variant="outline"
             size="sm"
+            onClick={onOpenDocs}
+            className="flex items-center gap-1.5 text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-50 cursor-pointer"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+            <span>Docs</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={onOpenVault}
-            className="hidden md:flex items-center gap-1.5 text-xs border-slate-200 text-slate-700 hover:bg-slate-50"
+            className="hidden md:flex items-center gap-1.5 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
           >
             <FolderArchive className="h-3.5 w-3.5 text-slate-500" />
             <span>Vault</span>

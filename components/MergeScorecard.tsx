@@ -18,25 +18,244 @@ import {
   ArrowUpRight,
   Code,
   Terminal,
+  Send,
+  Sparkles,
+  GitBranch,
+  Wrench,
+  Edit3,
+  RotateCcw,
+  FolderGit2,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Progress } from './ui/progress';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
-import { GeminiAuditReport, PRMetadata } from '@/types';
+import { GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
+import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 
 interface MergeScorecardProps {
   report: GeminiAuditReport;
   prMetadata?: PRMetadata | null;
+  repo?: string;
+  fileBoundaries?: string[];
+  julesKey?: string;
+  githubPat?: string;
   onViewDiff?: () => void;
+  onOpenSettings?: () => void;
+  onSaveBlueprint?: (blueprint: Blueprint) => void;
 }
 
-export function MergeScorecard({ report, prMetadata, onViewDiff }: MergeScorecardProps) {
+export function MergeScorecard({
+  report,
+  prMetadata,
+  repo,
+  fileBoundaries,
+  julesKey = '',
+  githubPat = '',
+  onViewDiff,
+  onOpenSettings,
+  onSaveBlueprint,
+}: MergeScorecardProps) {
   const [copiedPrompt, setCopiedPrompt] = React.useState(false);
   const [copiedSummary, setCopiedSummary] = React.useState(false);
+  const [copiedUrl, setCopiedUrl] = React.useState(false);
+
+  // Remediation Dispatch State
+  const [isDispatching, setIsDispatching] = React.useState(false);
+  const [dispatchResult, setDispatchResult] = React.useState<{
+    success: boolean;
+    sessionId?: string;
+    sessionUrl?: string | null;
+    apiStatus?: string;
+    warningMessage?: string;
+    targetBranch?: string;
+  } | null>(null);
+
+  // Modal and Editor State
+  const [troubleshootOpen, setTroubleshootOpen] = React.useState(false);
+  const [isEditingPrompt, setIsEditingPrompt] = React.useState(false);
+  const [customPromptText, setCustomPromptText] = React.useState<string>('');
 
   const { criteriaResults, scopeIntegrity, blastRadius, mergeVerdict } = report;
+
+  // Resolve target audited branch
+  const auditedBranch = React.useMemo(() => {
+    if (prMetadata?.headBranch && prMetadata.headBranch.trim()) {
+      return prMetadata.headBranch.trim();
+    }
+    return 'main';
+  }, [prMetadata]);
+
+  // Resolve clean repo string
+  const cleanRepo = React.useMemo(() => {
+    if (repo && repo.includes('/')) {
+      return repo.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+    }
+    if (prMetadata?.htmlUrl) {
+      const match = prMetadata.htmlUrl.match(/github\.com\/([^\/]+\/[^\/]+)/);
+      if (match && match[1]) {
+        return match[1].replace(/\/pull\/.*$/, '');
+      }
+    }
+    return 'acme-corp/api-gateway';
+  }, [repo, prMetadata]);
+
+  // Resolve canonical copyable PR URL
+  const copyableUrl = React.useMemo(() => {
+    if (prMetadata?.htmlUrl) return prMetadata.htmlUrl;
+    if (cleanRepo && prMetadata?.number) {
+      return `https://github.com/${cleanRepo}/pull/${prMetadata.number}`;
+    }
+    if (cleanRepo && auditedBranch) {
+      return `https://github.com/${cleanRepo}/tree/${auditedBranch}`;
+    }
+    return 'https://github.com';
+  }, [prMetadata, cleanRepo, auditedBranch]);
+
+  // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch
+  const defaultRemediationPrompt = React.useMemo(() => {
+    const blockersText =
+      mergeVerdict.keyBlockers && mergeVerdict.keyBlockers.length > 0
+        ? mergeVerdict.keyBlockers.map((b) => `- [CRITICAL BLOCKER] ${b}`).join('\n')
+        : '- No critical architectural blockers recorded.';
+
+    const criteriaText =
+      criteriaResults && criteriaResults.length > 0
+        ? criteriaResults
+            .filter((c) => c.status !== 'MET')
+            .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Audit Evidence: ${c.evidence}`)
+            .join('\n') || '- All declared acceptance criteria were satisfied.'
+        : '- No explicit criteria items.';
+
+    const boundariesText =
+      fileBoundaries && fileBoundaries.length > 0
+        ? `Authorized File Boundaries:\n${fileBoundaries.map((f) => `- \`${f}\``).join('\n')}`
+        : 'Preserve existing file scope. Do NOT touch unauthorized root files or lockfiles.';
+
+    return `# RepoPilot Autonomous Remediation Contract
+**Target Pull Request:** ${copyableUrl}
+**Audited Target Branch:** \`${auditedBranch}\` (Direct Commit Target)
+**Base Branch:** \`${prMetadata?.baseBranch || 'main'}\`
+**Audit Status:** ${mergeVerdict.status} (Score: ${mergeVerdict.overallScore}/100)
+
+---
+
+### CRITICAL BRANCH WORKFLOW DIRECTIVE:
+You are assigned to remediate an active Pull Request: ${copyableUrl}.
+You MUST check out and apply all code modifications directly to the audited branch: \`${auditedBranch}\`.
+DO NOT create an alternate branch or start over from the base branch. All fixes, refactors, and test additions must be committed and pushed directly to \`${auditedBranch}\` so the pull request automatically updates with your changes.
+
+---
+
+### 1. Key Blockers to Resolve
+${blockersText}
+
+---
+
+### 2. Unmet / Partially Met Acceptance Criteria
+${criteriaText}
+
+---
+
+### 3. Actionable Code Instructions for Agent
+${mergeVerdict.actionableFeedbackForAgent}
+
+---
+
+### 4. Strict Scope & File Boundaries
+${boundariesText}
+
+### Anti-Drift Enforcement:
+1. Work strictly on \`${auditedBranch}\`.
+2. Do not modify unauthorized files or reformat unrelated modules.
+3. Ensure all tests pass before completing the session.`;
+  }, [copyableUrl, auditedBranch, prMetadata, mergeVerdict, criteriaResults, fileBoundaries]);
+
+  // Active prompt in view or edit
+  const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
+
+  const handleCopyUrl = () => {
+    navigator.clipboard.writeText(copyableUrl);
+    setCopiedUrl(true);
+    setTimeout(() => setCopiedUrl(false), 2000);
+  };
+
+  const handleCopyRemediationPrompt = () => {
+    navigator.clipboard.writeText(activePrompt);
+    setCopiedPrompt(true);
+    setTimeout(() => setCopiedPrompt(false), 2000);
+  };
+
+  const handleDispatchRemediationToJules = async () => {
+    setIsDispatching(true);
+    setDispatchResult(null);
+
+    try {
+      const promptToSend = customPromptText.trim() || defaultRemediationPrompt;
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (julesKey) headers['x-jules-api-key'] = julesKey;
+      if (githubPat) headers['x-github-pat'] = githubPat;
+
+      const res = await fetch('/api/jules/dispatch', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          repo: cleanRepo,
+          baseBranch: prMetadata?.baseBranch || 'main',
+          branchName: auditedBranch,
+          startingBranch: auditedBranch, // DIRECTS JULES JUST TO MAKE THE CHANGES ON THE AUDITED BRANCH
+          isRemediation: true,
+          prNumber: prMetadata?.number,
+          prUrl: copyableUrl,
+          customPrompt: promptToSend,
+          objective: `Remediate PR #${prMetadata?.number || ''} on branch "${auditedBranch}": address audit blockers`,
+          fileBoundaries: fileBoundaries || [],
+          criteria: criteriaResults.map((c) => ({
+            id: String(c.id),
+            text: c.criterion,
+            category: 'functional',
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch remediation session to Jules.');
+      }
+
+      const sessionUrl =
+        data.julesApiResponse?.url ||
+        (data.sessionId
+          ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, '')}`
+          : null);
+
+      setDispatchResult({
+        success: true,
+        sessionId: data.sessionId,
+        sessionUrl,
+        apiStatus: data.apiStatus,
+        warningMessage: data.warningMessage,
+        targetBranch: data.targetBranch || auditedBranch,
+      });
+
+      if (onSaveBlueprint && data.blueprint) {
+        onSaveBlueprint(data.blueprint);
+      }
+    } catch (err) {
+      console.error('Remediation dispatch failed:', err);
+      setDispatchResult({
+        success: false,
+        warningMessage: err instanceof Error ? err.message : 'Unknown error dispatching to Jules.',
+        targetBranch: auditedBranch,
+      });
+    } finally {
+      setIsDispatching(false);
+    }
+  };
 
   const getVerdictStyle = (status: string) => {
     switch (status) {
@@ -76,29 +295,6 @@ export function MergeScorecard({ report, prMetadata, onViewDiff }: MergeScorecar
 
   const verdictStyle = getVerdictStyle(mergeVerdict.status);
   const VerdictIcon = verdictStyle.icon;
-
-  const handleCopyRemediationPrompt = () => {
-    const formattedPrompt = `### RepoPilot Automated Audit Remediation Feedback
-**Verdict:** ${mergeVerdict.status} (Score: ${mergeVerdict.overallScore}/100)
-
-#### Key Blockers Identified:
-${mergeVerdict.keyBlockers.map((b) => `- ${b}`).join('\n')}
-
-#### Unmet / Partially Met Criteria:
-${criteriaResults
-  .filter((c) => c.status !== 'MET')
-  .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Evidence: ${c.evidence}`)
-  .join('\n')}
-
-#### Required Actionable Changes for Agent:
-${mergeVerdict.actionableFeedbackForAgent}
-
-Please address the exact issues above and update the pull request. Strictly respect declared file boundaries.`;
-
-    navigator.clipboard.writeText(formattedPrompt);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 2000);
-  };
 
   const handleCopyScorecardSummary = () => {
     const summary = `RepoPilot Scorecard: ${mergeVerdict.status} (${mergeVerdict.overallScore}/100)
@@ -429,38 +625,312 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
         </div>
       </Card>
 
-      {/* 3. Actionable Agent Remediation Prompt Section */}
-      <Card className="border-indigo-200 bg-indigo-50/20 shadow-sm">
-        <CardHeader className="py-4 px-6 border-b border-indigo-100/80">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-indigo-600" />
-              <CardTitle className="text-sm font-bold text-slate-900">
-                Actionable Agent Remediation Prompt
-              </CardTitle>
+      {/* 3. Actionable Agent Remediation Prompt Section with Automated Jules Dispatch */}
+      <Card className="border-indigo-200 bg-indigo-50/20 shadow-sm overflow-hidden">
+        <CardHeader className="py-4 px-6 border-b border-indigo-100/80 bg-white">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-indigo-100 flex items-center justify-center text-indigo-700">
+                <Terminal className="h-4 w-4" />
+              </div>
+              <div>
+                <CardTitle className="text-sm font-bold text-slate-900">
+                  Actionable Agent Remediation Prompt & Automated Dispatch
+                </CardTitle>
+                <CardDescription className="text-xs text-slate-600">
+                  Directs Google Jules to apply fixes directly on the audited branch without drift.
+                </CardDescription>
+              </div>
             </div>
-            <Button
-              size="sm"
-              onClick={handleCopyRemediationPrompt}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8 gap-1.5 shadow-xs"
-            >
-              {copiedPrompt ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedPrompt ? 'Copied to Clipboard!' : 'Copy Remediation Prompt'}
-            </Button>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (!isEditingPrompt && !customPromptText) {
+                    setCustomPromptText(defaultRemediationPrompt);
+                  }
+                  setIsEditingPrompt(!isEditingPrompt);
+                }}
+                className="text-xs h-8 gap-1.5 border-slate-200 text-slate-700 hover:bg-slate-50"
+              >
+                <Edit3 className="h-3.5 w-3.5 text-slate-500" />
+                <span>{isEditingPrompt ? 'View Formatted' : 'Customize Prompt'}</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyRemediationPrompt}
+                className="text-xs h-8 gap-1.5 border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100"
+              >
+                {copiedPrompt ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                <span>{copiedPrompt ? 'Prompt Copied!' : 'Copy Prompt'}</span>
+              </Button>
+
+              <Button
+                size="sm"
+                onClick={handleDispatchRemediationToJules}
+                disabled={isDispatching}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 px-4 gap-2 shadow-xs transition-colors"
+              >
+                {isDispatching ? (
+                  <>
+                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>Dispatching...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-3.5 w-3.5 fill-current" />
+                    <span>Auto-Dispatch to Jules</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
-          <CardDescription className="text-xs text-slate-600">
-            Pre-baked follow-up instruction ready to paste directly into GitHub PR review comments or the Jules agent interface.
-          </CardDescription>
         </CardHeader>
 
-        <CardContent className="p-6">
-          <div className="relative">
-            <pre className="p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono whitespace-pre-wrap leading-relaxed border border-slate-800 max-h-60 overflow-y-auto">
-              {mergeVerdict.actionableFeedbackForAgent}
-            </pre>
+        <CardContent className="p-6 space-y-5">
+          {/* Section 1: Copyable URL & Audited Branch Directive */}
+          <div className="rounded-xl border border-indigo-200/90 bg-white p-4 shadow-xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100/70 pb-2.5">
+              <div className="flex items-center gap-2">
+                <GitPullRequest className="h-4 w-4 text-indigo-600" />
+                <span className="text-xs font-bold text-slate-900 uppercase tracking-wide">
+                  Target Pull Request & Audited Branch Directive
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="indigo" className="text-[11px] font-mono gap-1.5 py-0.5">
+                  <GitBranch className="h-3 w-3 text-indigo-600" />
+                  Audited Branch: <span className="font-bold text-indigo-900">{auditedBranch}</span>
+                </Badge>
+              </div>
+            </div>
+
+            {/* Copyable URL Input Bar */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Target Pull Request URL (Copyable Reference)
+              </label>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    readOnly
+                    value={copyableUrl}
+                    className="w-full h-9 px-3 text-xs font-mono bg-slate-50 text-slate-800 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 select-all"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyUrl}
+                    className="h-9 px-3 text-xs gap-1.5 border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100 transition-colors"
+                  >
+                    {copiedUrl ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 text-indigo-600" />}
+                    <span>{copiedUrl ? 'URL Copied!' : 'Copy PR URL'}</span>
+                  </Button>
+
+                  {copyableUrl.startsWith('http') && (
+                    <a
+                      href={copyableUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors"
+                    >
+                      <span>Open PR</span>
+                      <ExternalLink className="h-3 w-3 text-slate-400" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Explanatory Target Branch Callout */}
+            <div className="flex items-start gap-2.5 text-xs text-slate-700 bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-100">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+              <div className="space-y-0.5">
+                <p className="font-semibold text-slate-900 leading-tight">
+                  Audited Branch Enforcement: <code className="font-mono text-indigo-800 bg-white px-1.5 py-0.5 rounded border border-indigo-200">{auditedBranch}</code>
+                </p>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  The automated dispatch below passes <code className="font-mono text-slate-800">startingBranch: &quot;{auditedBranch}&quot;</code> directly into the Google Jules API. Jules will checkout and commit remediation fixes exclusively on this audited branch so the pull request automatically updates.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Automated Dispatch Action Panel */}
+          <div className="rounded-xl border border-indigo-300/80 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-4 sm:p-5 text-white shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-emerald-400" />
+                  <h4 className="text-sm font-bold text-white tracking-tight">
+                    Automated Jules Remediation Dispatch
+                  </h4>
+                  <Badge variant="outline" className="text-[10px] text-indigo-200 border-indigo-400/40 bg-indigo-900/60 font-mono">
+                    Branch: {auditedBranch}
+                  </Badge>
+                </div>
+                <p className="text-xs text-indigo-200/90 leading-relaxed">
+                  Triggers an autonomous Google Jules agent session to resolve the {criteriaResults.filter(c => c.status !== 'MET').length} unmet criteria and {mergeVerdict.keyBlockers.length} blockers on repository <span className="font-mono font-bold text-white">{cleanRepo}</span>.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTroubleshootOpen(true)}
+                  className="h-9 px-3 text-xs gap-1.5 border-indigo-400/40 bg-white/10 text-white hover:bg-white/20"
+                >
+                  <Wrench className="h-3.5 w-3.5 text-indigo-300" />
+                  <span>Troubleshoot Jules</span>
+                </Button>
+
+                <Button
+                  onClick={handleDispatchRemediationToJules}
+                  disabled={isDispatching}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
+                >
+                  {isDispatching ? (
+                    <>
+                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                      <span>Creating Jules Session on {auditedBranch}...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-3.5 w-3.5 fill-current" />
+                      <span>Auto-Dispatch Remediation to Jules</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Dispatched Live Status Feedback Notification */}
+            {dispatchResult && (
+              <div
+                className={`rounded-lg p-3.5 border transition-all ${
+                  dispatchResult.apiStatus === 'DISPATCHED_TO_JULES'
+                    ? 'bg-emerald-950/80 border-emerald-500 text-emerald-100'
+                    : 'bg-amber-950/80 border-amber-500 text-amber-100'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    {dispatchResult.apiStatus === 'DISPATCHED_TO_JULES' ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-xs text-white">
+                          {dispatchResult.apiStatus === 'DISPATCHED_TO_JULES'
+                            ? 'Remediation Session Dispatched to Google Jules Cloud!'
+                            : 'Remediation Contract Saved to Vault (Cloud Fallback)'}
+                        </span>
+                        {dispatchResult.sessionId && (
+                          <span className="text-[10px] font-mono bg-black/40 px-2 py-0.5 rounded border border-white/10 text-slate-300">
+                            ID: {dispatchResult.sessionId}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-white/80 leading-relaxed">
+                        {dispatchResult.apiStatus === 'DISPATCHED_TO_JULES'
+                          ? `Jules autonomous agent has checked out branch "${dispatchResult.targetBranch || auditedBranch}" and is working autonomously to address the audit blockers.`
+                          : dispatchResult.warningMessage || 'Jules rejected direct session dispatch. Blueprint contract is safely stored in your vault.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {dispatchResult.sessionUrl && dispatchResult.apiStatus === 'DISPATCHED_TO_JULES' && (
+                      <a
+                        href={dispatchResult.sessionUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-slate-950 font-bold rounded-md text-xs shadow transition-colors"
+                      >
+                        <span>Open Session in Jules Console</span>
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                    {dispatchResult.apiStatus !== 'DISPATCHED_TO_JULES' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setTroubleshootOpen(true)}
+                        className="h-8 text-xs border-amber-400 text-white bg-amber-900/60 hover:bg-amber-800 gap-1.5"
+                      >
+                        <Wrench className="h-3.5 w-3.5" />
+                        Diagnose Jules Error
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Prompt Text Display & Customizer */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                {isEditingPrompt ? 'Customized Remediation Contract' : 'Compiled Remediation Contract'}
+              </span>
+              <div className="flex items-center gap-2">
+                {isEditingPrompt && (
+                  <button
+                    type="button"
+                    onClick={() => setCustomPromptText(defaultRemediationPrompt)}
+                    className="text-[11px] text-slate-500 hover:text-indigo-600 flex items-center gap-1 transition-colors"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Reset to Default
+                  </button>
+                )}
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {activePrompt.length} chars
+                </span>
+              </div>
+            </div>
+
+            {isEditingPrompt ? (
+              <textarea
+                value={customPromptText}
+                onChange={(e) => setCustomPromptText(e.target.value)}
+                rows={12}
+                className="w-full p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono leading-relaxed border border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-inner"
+              />
+            ) : (
+              <div className="relative group">
+                <pre className="p-4 bg-slate-900 text-slate-100 rounded-xl text-xs font-mono whitespace-pre-wrap leading-relaxed border border-slate-800 max-h-72 overflow-y-auto shadow-inner">
+                  {activePrompt}
+                </pre>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {/* Embedded Jules Troubleshooting Modal */}
+      <JulesTroubleshootModal
+        open={troubleshootOpen}
+        onOpenChange={setTroubleshootOpen}
+        targetRepo={cleanRepo}
+        onSelectRepo={() => {}}
+        julesKey={julesKey}
+        baseBranch={auditedBranch}
+        onOpenSettings={onOpenSettings || (() => {})}
+      />
     </div>
   );
 }

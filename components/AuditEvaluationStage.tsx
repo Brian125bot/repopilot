@@ -31,12 +31,14 @@ import { MergeScorecard } from './MergeScorecard';
 import { Blueprint, AcceptanceCriterion, SanitizedDiffResult, PRMetadata, GeminiAuditReport } from '@/types';
 
 interface AuditEvaluationStageProps {
+  julesKey?: string;
   geminiKey: string;
   githubPat: string;
   activeBlueprint: Blueprint | null;
   blueprints: Blueprint[];
   onOpenSettings: () => void;
   onOpenVault: () => void;
+  onSaveBlueprint?: (blueprint: Blueprint) => void;
 }
 
 // Pre-baked realistic sample PR unified diff with embedded blueprint comment
@@ -135,12 +137,14 @@ index 0000000..1d8e9f4
 +});`;
 
 export function AuditEvaluationStage({
+  julesKey,
   geminiKey,
   githubPat,
   activeBlueprint,
   blueprints,
   onOpenSettings,
   onOpenVault,
+  onSaveBlueprint,
 }: AuditEvaluationStageProps) {
   const [prInput, setPrInput] = React.useState('acme-corp/api-gateway/pull/42');
   const [isFetchingDiff, setIsFetchingDiff] = React.useState(false);
@@ -169,6 +173,22 @@ export function AuditEvaluationStage({
 
   // Modals
   const [diffModalOpen, setDiffModalOpen] = React.useState(false);
+
+  // Extract clean repository name
+  const extractedRepo = React.useMemo(() => {
+    if (prMetadata?.htmlUrl) {
+      const match = prMetadata.htmlUrl.match(/github\.com\/([^\/]+\/[^\/]+)/);
+      if (match && match[1]) {
+        return match[1].replace(/\/pull\/.*$/, '');
+      }
+    }
+    const clean = prInput.replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      return `${parts[0]}/${parts[1]}`;
+    }
+    return 'acme-corp/api-gateway';
+  }, [prMetadata, prInput]);
 
   // Update when activeBlueprint changes from vault or Stage 1
   React.useEffect(() => {
@@ -224,8 +244,7 @@ export function AuditEvaluationStage({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to process demo diff');
 
-      setSanitizedResult(data.sanitizedResult);
-      setPrMetadata({
+      const meta: PRMetadata = {
         title: 'feat(rate-limiter): add sliding window redis rate limiter middleware',
         number: 42,
         author: 'jules-agent',
@@ -235,13 +254,43 @@ export function AuditEvaluationStage({
         state: 'open',
         body: `<!-- AUDIT_BLUEPRINT: ${JSON.stringify(demoBlueprint)} -->`,
         embeddedBlueprint: demoBlueprint,
-      });
+      };
+
+      setSanitizedResult(data.sanitizedResult);
+      setPrMetadata(meta);
 
       setHydratedCriteria(demoBlueprint.criteria);
       setHydratedBoundaries(demoBlueprint.fileBoundaries);
       setHydratedObjective(demoBlueprint.objective);
       setHydrationSource('DEMO');
       setPrInput('https://github.com/acme-corp/api-gateway/pull/42');
+
+      // Auto-populate audit report so the complete scorecard and remediation prompt appear immediately
+      try {
+        const auditHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (geminiKey) auditHeaders['x-gemini-api-key'] = geminiKey;
+
+        const auditRes = await fetch('/api/audit/evaluate', {
+          method: 'POST',
+          headers: auditHeaders,
+          body: JSON.stringify({
+            diff: data.sanitizedResult.sanitizedDiff,
+            criteria: demoBlueprint.criteria,
+            objective: demoBlueprint.objective,
+            fileBoundaries: demoBlueprint.fileBoundaries,
+            prMetadata: meta,
+          }),
+        });
+
+        if (auditRes.ok) {
+          const auditData = await auditRes.json();
+          if (auditData.report) {
+            setAuditReport(auditData.report);
+          }
+        }
+      } catch (auditErr) {
+        console.warn('Initial demo auto-audit notice:', auditErr);
+      }
     } catch (err) {
       setFetchError(err instanceof Error ? err.message : 'Error loading demo');
     } finally {
@@ -614,7 +663,13 @@ export function AuditEvaluationStage({
         <MergeScorecard
           report={auditReport}
           prMetadata={prMetadata}
+          repo={extractedRepo}
+          fileBoundaries={hydratedBoundaries}
+          julesKey={julesKey}
+          githubPat={githubPat}
           onViewDiff={() => setDiffModalOpen(true)}
+          onOpenSettings={onOpenSettings}
+          onSaveBlueprint={onSaveBlueprint}
         />
       )}
     </div>

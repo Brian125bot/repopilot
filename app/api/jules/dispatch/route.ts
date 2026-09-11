@@ -6,9 +6,14 @@ interface DispatchRequestBody {
   repo: string;
   baseBranch?: string;
   branchName?: string;
+  startingBranch?: string;
   fileBoundaries?: string[] | string;
-  objective: string;
-  criteria: AcceptanceCriterion[];
+  objective?: string;
+  criteria?: AcceptanceCriterion[];
+  customPrompt?: string;
+  isRemediation?: boolean;
+  prNumber?: number;
+  prUrl?: string;
   dryRun?: boolean;
 }
 
@@ -20,9 +25,14 @@ export async function POST(req: NextRequest) {
       repo,
       baseBranch = 'main',
       branchName,
+      startingBranch: explicitStartingBranch,
       fileBoundaries = [],
-      objective,
-      criteria,
+      objective: rawObjective,
+      criteria: rawCriteria,
+      customPrompt,
+      isRemediation = false,
+      prNumber,
+      prUrl,
       dryRun = false,
     } = body;
 
@@ -33,14 +43,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!objective || objective.trim().length === 0) {
+    const cleanRepo = repo
+      .trim()
+      .replace(/^https?:\/\/github\.com\//i, '')
+      .replace(/\.git$/i, '')
+      .replace(/^\/+|\/+$/g, '');
+
+    const targetBranch =
+      branchName?.trim() ||
+      explicitStartingBranch?.trim() ||
+      (isRemediation
+        ? 'main'
+        : `jules/${(rawObjective || 'task').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Math.floor(
+            1000 + Math.random() * 9000
+          )}`);
+
+    const objective =
+      rawObjective?.trim() ||
+      (isRemediation
+        ? `Remediate audit findings for Pull Request ${prNumber ? `#${prNumber}` : ''} on branch "${targetBranch}". Address all flagged blockers and unmet criteria.`
+        : '');
+
+    if (!objective) {
       return NextResponse.json(
         { error: 'Objective and task description is required.' },
         { status: 400 }
       );
     }
 
-    if (!criteria || criteria.length === 0) {
+    const criteria: AcceptanceCriterion[] =
+      rawCriteria && rawCriteria.length > 0
+        ? rawCriteria
+        : isRemediation
+        ? [
+            {
+              id: 'crit-rem-1',
+              text: 'Resolve all key blockers identified in the Gemini audit report.',
+              category: 'functional',
+            },
+            {
+              id: 'crit-rem-2',
+              text: 'Implement all unmet and partially met acceptance criteria.',
+              category: 'functional',
+            },
+            {
+              id: 'crit-rem-3',
+              text: 'Apply all changes directly to the audited branch without introducing scope drift.',
+              category: 'constraint',
+            },
+          ]
+        : [];
+
+    if (criteria.length === 0) {
       return NextResponse.json(
         { error: 'At least one Acceptance Criterion is required.' },
         { status: 400 }
@@ -53,13 +107,6 @@ export async function POST(req: NextRequest) {
     const julesApiKey = headerJulesKey?.trim() || process.env.JULES_API_KEY?.trim();
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
-    // Clean repository name (strip full github.com URL or .git suffix if provided)
-    const cleanRepo = repo
-      .trim()
-      .replace(/^https?:\/\/github\.com\//i, '')
-      .replace(/\.git$/i, '')
-      .replace(/^\/+|\/+$/g, '');
-
     // Normalize boundaries
     const parsedBoundaries: string[] = Array.isArray(fileBoundaries)
       ? fileBoundaries
@@ -67,26 +114,31 @@ export async function POST(req: NextRequest) {
       ? fileBoundaries.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
-    const targetBranch =
-      branchName?.trim() ||
-      `jules/${objective.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Math.floor(
-        1000 + Math.random() * 9000
-      )}`;
-
     const blueprintId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    // Compile anti-drift Markdown contract
-    const compiledPrompt = compileJulesPrompt(
-      {
-        repo: cleanRepo,
-        baseBranch: baseBranch.trim(),
-        branchName: targetBranch,
-        fileBoundaries: parsedBoundaries,
-        objective: objective.trim(),
-        criteria,
-      },
-      blueprintId
-    );
+    // Compile anti-drift Markdown contract or use custom remediation prompt
+    const compiledPrompt =
+      customPrompt && customPrompt.trim().length > 0
+        ? customPrompt.trim()
+        : compileJulesPrompt(
+            {
+              repo: cleanRepo,
+              baseBranch: baseBranch.trim(),
+              branchName: targetBranch,
+              fileBoundaries: parsedBoundaries,
+              objective: objective.trim(),
+              criteria,
+            },
+            blueprintId
+          );
+
+    // Determine the exact starting branch for Jules
+    // For remediation, Jules MUST start and apply changes on the branch being audited
+    const effectiveStartingBranch =
+      explicitStartingBranch?.trim() ||
+      (isRemediation ? targetBranch : undefined) ||
+      baseBranch.trim() ||
+      'main';
 
     // Google Jules API Payload using official sourceContext structure
     const julesPayload = {
@@ -94,7 +146,7 @@ export async function POST(req: NextRequest) {
       sourceContext: {
         source: `sources/github/${cleanRepo}`,
         githubRepoContext: {
-          startingBranch: baseBranch.trim() || 'main',
+          startingBranch: effectiveStartingBranch,
         },
       },
     };
@@ -194,7 +246,7 @@ export async function POST(req: NextRequest) {
 
     const completeBlueprint: Blueprint = {
       blueprintId,
-      repo: repo.trim(),
+      repo: cleanRepo,
       baseBranch: baseBranch.trim(),
       branchName: targetBranch,
       fileBoundaries: parsedBoundaries,
@@ -207,15 +259,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      dryRun: dryRun || apiStatus === 'LOCAL_DRY_RUN',
       blueprint: completeBlueprint,
       sessionId,
       targetBranch,
-      repo: repo.trim(),
+      repo: cleanRepo,
       baseBranch: baseBranch.trim(),
       apiStatus,
       warningMessage,
       julesApiResponse,
-      githubUrl: `https://github.com/${repo.trim()}`,
+      githubUrl: `https://github.com/${cleanRepo}`,
       dispatchedAt: new Date().toISOString(),
     });
   } catch (error) {
