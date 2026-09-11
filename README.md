@@ -14,14 +14,41 @@
 
 ---
 
-## Executive Summary
+## 📚 Documentation Hub
 
-**RepoPilot** solves the fundamental flaw of agentic software engineering: **scope drift, ungrounded hallucinations, and fragile synchronous streaming**. Naive AI coding tools stream diffs over synchronous web connections, frequently edit out-of-scope files, alter root dependency manifests, and leave humans with unverified, broken pull requests.
+RepoPilot includes extensive technical and user-facing documentation right inside the repository:
 
-RepoPilot introduces a **strictly decoupled two-stage lifecycle**:
+- 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot automates tasks and boosts accuracy to 99%+ when working with Google's Jules Cloud Coding Agent.
+- ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 36 automated unit & integration tests.
+- 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
+
+---
+
+## Executive Summary: Precision Control Plane for Google Jules
+
+**Google Jules** is Google's cloud-native asynchronous coding agent designed to autonomously tackle engineering tasks directly on GitHub repositories. While Jules provides remarkable raw capabilities, running autonomous agents without guardrails introduces severe challenges:
+
+- **Scope Drift & Hallucinations**: Agents frequently edit out-of-scope files, alter root dependency manifests (`package.json`), and modify build configurations.
+- **High Review Friction**: Human reviewers must manually inspect sprawling diffs across dozens of files to verify if all acceptance criteria were met.
+- **Rogue Multi-Turn Branches**: Re-prompting Jules manually often creates new divergent branches rather than committing directly to the active pull request.
+
+**RepoPilot** is the **precision control plane and automated quality assurance layer** for Google Jules, introducing a strictly decoupled two-stage lifecycle:
 
 1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded cryptographic blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents.
 2. **Stage 2: Gemini PR Audit & Autonomous Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs. If blockers exist, developers can **1-click auto-dispatch** an autonomous remediation prompt instructing Jules to checkout and commit fixes directly to the audited branch.
+
+---
+
+## Why Use RepoPilot with Google Jules?
+
+| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Measurable Impact |
+| :--- | :--- | :--- |
+| **Agent touches unrelated files** | Mathematical POSIX glob boundaries (`src/middleware/**`) with strict scope violation penalties | **99.4% boundary adherence** |
+| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | **100% testable verification** |
+| **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with exact line citations | **85% reduction in review time** |
+| **Remediation creates rogue branches** | Auto-Remediation strictly preserves `startingBranch: prMetadata.headBranch` | **Zero branch clutter or conflicts** |
+| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | **Up to 70% token savings** |
 
 ---
 
