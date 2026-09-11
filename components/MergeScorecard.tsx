@@ -25,6 +25,7 @@ import {
   Edit3,
   RotateCcw,
   FolderGit2,
+  Database,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';
 import { Button } from './ui/button';
@@ -39,6 +40,8 @@ interface MergeScorecardProps {
   prMetadata?: PRMetadata | null;
   repo?: string;
   fileBoundaries?: string[];
+  blueprint?: Blueprint | null;
+  hydrationSource?: string | null;
   julesKey?: string;
   githubPat?: string;
   onViewDiff?: () => void;
@@ -51,6 +54,8 @@ export function MergeScorecard({
   prMetadata,
   repo,
   fileBoundaries,
+  blueprint,
+  hydrationSource,
   julesKey = '',
   githubPat = '',
   onViewDiff,
@@ -360,6 +365,34 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
                   </>
                 )}
               </div>
+
+              {blueprint && (
+                <div className="flex items-center gap-2 text-xs bg-white/95 border border-indigo-200/90 text-slate-800 px-3 py-1.5 rounded-lg shadow-2xs font-mono flex-wrap mt-1">
+                  <Database className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                  <span className="text-slate-500 font-sans text-xs font-medium">Evaluated Contract:</span>
+                  <strong className="text-indigo-950 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 font-bold">
+                    {blueprint.blueprintId}
+                  </strong>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-indigo-700 font-sans text-[11px] font-semibold">
+                    {hydrationSource === 'LOCAL_VAULT'
+                      ? 'Hydrated from Vault Cache'
+                      : hydrationSource === 'EMBEDDED_COMMENT'
+                      ? 'Extracted from PR <!-- AUDIT_BLUEPRINT -->'
+                      : hydrationSource === 'DEMO'
+                      ? 'Sample Demo Specification'
+                      : 'Custom / Ad-Hoc Specification'}
+                  </span>
+                  {blueprint.repo && (
+                    <>
+                      <span className="text-slate-300 hidden sm:inline">•</span>
+                      <span className="text-slate-600 font-sans text-[11px] hidden sm:inline">
+                        Target: <strong className="text-slate-800">{blueprint.repo}</strong> ({blueprint.branchName})
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right: Radial / Circular Score Gauge */}

@@ -153,6 +153,7 @@ export default function RepoPilotPage() {
             onOpenSettings={() => setSettingsOpen(true)}
             onOpenVault={() => setVaultOpen(true)}
             onSaveBlueprint={handleSaveBlueprint}
+            onSelectBlueprint={setActiveBlueprint}
           />
         )}
       </main>

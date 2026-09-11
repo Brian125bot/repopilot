@@ -20,6 +20,12 @@ import {
   ArrowRight,
   Database,
   RefreshCw,
+  Copy,
+  Check,
+  GitBranch,
+  Calendar,
+  Terminal,
+  FolderArchive,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';
 import { Button } from './ui/button';
@@ -39,6 +45,7 @@ interface AuditEvaluationStageProps {
   onOpenSettings: () => void;
   onOpenVault: () => void;
   onSaveBlueprint?: (blueprint: Blueprint) => void;
+  onSelectBlueprint?: (blueprint: Blueprint) => void;
 }
 
 // Pre-baked realistic sample PR unified diff with embedded blueprint comment
@@ -145,6 +152,7 @@ export function AuditEvaluationStage({
   onOpenSettings,
   onOpenVault,
   onSaveBlueprint,
+  onSelectBlueprint,
 }: AuditEvaluationStageProps) {
   const [prInput, setPrInput] = React.useState('acme-corp/api-gateway/pull/42');
   const [isFetchingDiff, setIsFetchingDiff] = React.useState(false);
@@ -153,18 +161,25 @@ export function AuditEvaluationStage({
   // Ingested data
   const [prMetadata, setPrMetadata] = React.useState<PRMetadata | null>(null);
   const [sanitizedResult, setSanitizedResult] = React.useState<SanitizedDiffResult | null>(null);
+
+  // Active hydrated blueprint contract tracking
+  const [hydratedBlueprint, setHydratedBlueprint] = React.useState<Blueprint | null>(
+    activeBlueprint || (blueprints.length > 0 ? blueprints[0] : null)
+  );
+  const [copiedBpId, setCopiedBpId] = React.useState(false);
+
   const [hydratedCriteria, setHydratedCriteria] = React.useState<AcceptanceCriterion[]>(
-    activeBlueprint?.criteria || []
+    activeBlueprint?.criteria || (blueprints.length > 0 ? blueprints[0]?.criteria || [] : [])
   );
   const [hydratedBoundaries, setHydratedBoundaries] = React.useState<string[]>(
-    activeBlueprint?.fileBoundaries || []
+    activeBlueprint?.fileBoundaries || (blueprints.length > 0 ? blueprints[0]?.fileBoundaries || [] : [])
   );
   const [hydratedObjective, setHydratedObjective] = React.useState<string>(
-    activeBlueprint?.objective || ''
+    activeBlueprint?.objective || (blueprints.length > 0 ? blueprints[0]?.objective || '' : '')
   );
   const [hydrationSource, setHydrationSource] = React.useState<
     'EMBEDDED_COMMENT' | 'LOCAL_VAULT' | 'MANUAL_EDIT' | 'DEMO' | null
-  >(activeBlueprint ? 'LOCAL_VAULT' : null);
+  >(activeBlueprint || blueprints.length > 0 ? 'LOCAL_VAULT' : null);
 
   // Gemini audit evaluation
   const [isEvaluating, setIsEvaluating] = React.useState(false);
@@ -194,6 +209,7 @@ export function AuditEvaluationStage({
   React.useEffect(() => {
     if (activeBlueprint) {
       const timer = setTimeout(() => {
+        setHydratedBlueprint(activeBlueprint);
         setHydratedCriteria(activeBlueprint.criteria || []);
         setHydratedBoundaries(activeBlueprint.fileBoundaries || []);
         setHydratedObjective(activeBlueprint.objective || '');
@@ -205,6 +221,39 @@ export function AuditEvaluationStage({
       return () => clearTimeout(timer);
     }
   }, [activeBlueprint]);
+
+  // If activeBlueprint is not passed but blueprints are present and unhydrated, hydrate first
+  React.useEffect(() => {
+    if (!activeBlueprint && blueprints.length > 0 && !hydratedBlueprint) {
+      const timer = setTimeout(() => {
+        const first = blueprints[0];
+        setHydratedBlueprint(first);
+        setHydratedCriteria(first.criteria || []);
+        setHydratedBoundaries(first.fileBoundaries || []);
+        setHydratedObjective(first.objective || '');
+        setHydrationSource('LOCAL_VAULT');
+        if (first.repo && first.branchName) {
+          setPrInput(`${first.repo} (${first.branchName})`);
+        }
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [activeBlueprint, blueprints, hydratedBlueprint]);
+
+  // Handler to switch vault cache entry directly
+  const handleSelectVaultEntry = (bp: Blueprint) => {
+    setHydratedBlueprint(bp);
+    setHydratedCriteria(bp.criteria || []);
+    setHydratedBoundaries(bp.fileBoundaries || []);
+    setHydratedObjective(bp.objective || '');
+    setHydrationSource('LOCAL_VAULT');
+    if (bp.repo && bp.branchName) {
+      setPrInput(`${bp.repo} (${bp.branchName})`);
+    } else if (bp.repo) {
+      setPrInput(bp.repo);
+    }
+    onSelectBlueprint?.(bp);
+  };
 
   // Load Demo PR
   const handleLoadDemo = async () => {
@@ -259,6 +308,7 @@ export function AuditEvaluationStage({
       setSanitizedResult(data.sanitizedResult);
       setPrMetadata(meta);
 
+      setHydratedBlueprint(demoBlueprint);
       setHydratedCriteria(demoBlueprint.criteria);
       setHydratedBoundaries(demoBlueprint.fileBoundaries);
       setHydratedObjective(demoBlueprint.objective);
@@ -336,22 +386,27 @@ export function AuditEvaluationStage({
       // 1. Check embedded blueprint in PR body
       if (data.pr?.embeddedBlueprint) {
         const bp = data.pr.embeddedBlueprint as Blueprint;
+        setHydratedBlueprint(bp);
         setHydratedCriteria(bp.criteria || []);
         setHydratedBoundaries(bp.fileBoundaries || []);
         setHydratedObjective(bp.objective || '');
         setHydrationSource('EMBEDDED_COMMENT');
       } else {
-        // 2. Check localStorage blueprints matching repo & headBranch
+        // 2. Check localStorage blueprints matching repo & headBranch or active blueprint
         const matching = blueprints.find(
           (b) =>
             b.repo.toLowerCase() === prInput.toLowerCase() ||
-            (data.pr?.headBranch && b.branchName === data.pr.headBranch)
+            (data.pr?.headBranch && b.branchName === data.pr.headBranch) ||
+            (activeBlueprint && b.blueprintId === activeBlueprint.blueprintId)
         );
 
         if (matching) {
+          setHydratedBlueprint(matching);
           setHydratedCriteria(matching.criteria || []);
           setHydratedBoundaries(matching.fileBoundaries || []);
           setHydratedObjective(matching.objective || '');
+          setHydrationSource('LOCAL_VAULT');
+        } else if (hydratedBlueprint) {
           setHydrationSource('LOCAL_VAULT');
         } else if (hydratedCriteria.length === 0) {
           setHydrationSource('MANUAL_EDIT');
@@ -467,6 +522,234 @@ export function AuditEvaluationStage({
             </Alert>
           )}
 
+          {/* Hydrated Vault Cache Entry Card - Prominent Active Specification Display */}
+          {hydratedBlueprint ? (
+            <div className="rounded-xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/70 via-slate-50/40 to-white p-4 sm:p-5 space-y-3.5 shadow-xs">
+              {/* Header Status & Selector Row */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-indigo-100/90">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-600"></span>
+                  </span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    Hydrated Vault Evaluation Contract
+                  </span>
+
+                  {hydrationSource === 'LOCAL_VAULT' && (
+                    <Badge variant="indigo" className="text-[10px] gap-1 font-semibold shadow-2xs">
+                      <Database className="h-3 w-3 text-indigo-600" />
+                      Vault Cache Entry Active
+                    </Badge>
+                  )}
+                  {hydrationSource === 'EMBEDDED_COMMENT' && (
+                    <Badge variant="success" className="text-[10px] gap-1 font-semibold shadow-2xs">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                      PR Markdown Contract Ingested
+                    </Badge>
+                  )}
+                  {hydrationSource === 'DEMO' && (
+                    <Badge variant="outline" className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 border-indigo-200 shadow-2xs">
+                      Sample Demo Contract Active
+                    </Badge>
+                  )}
+                  {hydrationSource === 'MANUAL_EDIT' && (
+                    <Badge variant="secondary" className="text-[10px] font-semibold">
+                      Ad-Hoc / Custom Contract
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Entry Switcher & Vault Button */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {blueprints.length > 1 && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500 hidden md:inline">Switch Entry:</span>
+                      <select
+                        value={hydratedBlueprint.blueprintId}
+                        onChange={(e) => {
+                          const found = blueprints.find((b) => b.blueprintId === e.target.value);
+                          if (found) handleSelectVaultEntry(found);
+                        }}
+                        className="text-xs font-mono bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs max-w-[220px] truncate cursor-pointer hover:border-indigo-300 transition-colors"
+                        title="Switch hydrated vault entry"
+                      >
+                        {blueprints.map((b) => (
+                          <option key={b.blueprintId} value={b.blueprintId}>
+                            {b.blueprintId === hydratedBlueprint.blueprintId ? '✓ ' : ''}
+                            {b.blueprintId} ({b.repo.split('/')[1] || b.repo})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onOpenVault}
+                    className="text-xs h-7 gap-1 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs"
+                  >
+                    <FolderArchive className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Vault</span> ({blueprints.length})
+                  </Button>
+                </div>
+              </div>
+
+              {/* Identification Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* Entry ID */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Vault Entry ID
+                  </span>
+                  <div className="flex items-center justify-between gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100 shadow-2xs font-mono text-xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Database className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                      <span className="font-bold text-indigo-950 truncate">
+                        {hydratedBlueprint.blueprintId}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(hydratedBlueprint.blueprintId);
+                        setCopiedBpId(true);
+                        setTimeout(() => setCopiedBpId(false), 1500);
+                      }}
+                      className="text-slate-400 hover:text-indigo-600 transition-colors p-0.5 rounded hover:bg-slate-50 shrink-0"
+                      title="Copy Blueprint ID"
+                    >
+                      {copiedBpId ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Target Repo */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Target Repository
+                  </span>
+                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/80 shadow-2xs text-xs font-semibold text-slate-900 truncate">
+                    <GitPullRequest className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+                    <span className="truncate">{hydratedBlueprint.repo}</span>
+                  </div>
+                </div>
+
+                {/* Target Branch Contract */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Target Branch Contract
+                  </span>
+                  <div className="flex items-center gap-1.5 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200/80 shadow-2xs text-xs font-mono text-slate-800 truncate">
+                    <GitBranch className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                    <span className="font-bold text-indigo-700 truncate">{hydratedBlueprint.branchName}</span>
+                    <span className="text-slate-400 text-[10px]">←</span>
+                    <span className="text-slate-500 text-[11px] truncate">{hydratedBlueprint.baseBranch || 'main'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Objective Preview */}
+              <div className="rounded-lg bg-white/95 p-3 border border-slate-200/80 text-xs text-slate-700 leading-relaxed shadow-2xs">
+                <span className="font-bold text-slate-900">Task Objective: </span>
+                <span className="text-slate-800 font-normal">
+                  {hydratedBlueprint.objective || hydratedObjective || 'No explicit objective text provided.'}
+                </span>
+              </div>
+
+              {/* Meta Tags & Action Row */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 border border-emerald-200/70 shadow-2xs">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    <strong>{hydratedCriteria.length}</strong> Acceptance Criteria
+                  </span>
+
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-800 border border-indigo-200/70 shadow-2xs">
+                    <ShieldCheck className="h-3.5 w-3.5 text-indigo-600" />
+                    <strong>{hydratedBoundaries.length}</strong> Authorized Boundaries
+                  </span>
+
+                  {hydratedBlueprint.sessionId && (
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 text-xs font-mono text-slate-700 border border-slate-200/70 shadow-2xs">
+                      <Terminal className="h-3 w-3 text-slate-500" />
+                      Session: <span className="font-bold">{hydratedBlueprint.sessionId.slice(0, 16)}...</span>
+                    </span>
+                  )}
+
+                  {hydratedBlueprint.createdAt && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                      <Calendar className="h-3 w-3" />
+                      {new Date(hydratedBlueprint.createdAt).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </span>
+                  )}
+                </div>
+
+                {/* Pre-fill Action */}
+                {hydratedBlueprint.repo && (
+                  <button
+                    onClick={() => {
+                      if (hydratedBlueprint.branchName) {
+                        setPrInput(`${hydratedBlueprint.repo} (${hydratedBlueprint.branchName})`);
+                      } else {
+                        setPrInput(hydratedBlueprint.repo);
+                      }
+                    }}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2 hover:bg-indigo-50/60 px-2 py-1 rounded transition-colors"
+                  >
+                    Use target in PR search &rarr;
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 space-y-2.5 text-xs text-amber-900 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                <span className="font-bold text-amber-950">No Vault Cache Entry Hydrated</span>
+              </div>
+              <p className="text-amber-800/90 leading-relaxed">
+                The Evaluation Engine compares incoming pull requests against a deterministic acceptance contract.
+                {blueprints.length > 0
+                  ? ` You have ${blueprints.length} cached blueprint${blueprints.length > 1 ? 's' : ''} in your Vault. Select an entry below to hydrate its contract:`
+                  : ' Dispatch a task in Stage 1 to automatically populate the vault, load the demo PR, or enter a GitHub PR URL with an embedded contract comment.'}
+              </p>
+
+              {blueprints.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <span className="text-[11px] font-semibold text-amber-950">Cached Entries:</span>
+                  {blueprints.slice(0, 3).map((b) => (
+                    <Button
+                      key={b.blueprintId}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSelectVaultEntry(b)}
+                      className="text-xs h-7 bg-white hover:bg-amber-50 border-amber-200/90 text-amber-950 gap-1.5 shadow-2xs"
+                    >
+                      <Database className="h-3 w-3 text-indigo-600" />
+                      <span className="font-mono font-bold">{b.blueprintId}:</span>
+                      <span className="text-slate-600 truncate max-w-[140px]">{b.repo}</span>
+                    </Button>
+                  ))}
+                  {blueprints.length > 3 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onOpenVault}
+                      className="text-xs h-7 text-amber-800 hover:text-amber-950"
+                    >
+                      +{blueprints.length - 3} more...
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Search / Ingestion Bar */}
           <div className="flex flex-col sm:flex-row items-center gap-3">
             <div className="relative flex-1 w-full">
@@ -548,6 +831,37 @@ export function AuditEvaluationStage({
                 </Button>
               </div>
 
+              {/* Dedicated Hydrated Vault Cache Entry Callout in Diff Banner */}
+              <div className="rounded-lg bg-indigo-50/80 border border-indigo-200/90 p-3 space-y-1.5 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Database className="h-4 w-4 text-indigo-600 shrink-0" />
+                    <span className="text-xs font-bold text-indigo-950">
+                      Active Evaluation Contract:
+                    </span>
+                    <code className="font-mono text-xs font-bold bg-white text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 shadow-2xs">
+                      {hydratedBlueprint?.blueprintId || (hydrationSource === 'EMBEDDED_COMMENT' ? 'PR-EMBEDDED' : 'AD-HOC')}
+                    </code>
+                  </div>
+                  <span className="text-[11px] text-indigo-800 font-medium">
+                    {hydrationSource === 'LOCAL_VAULT' && `Source: Local Vault Cache (${blueprints.length} available)`}
+                    {hydrationSource === 'EMBEDDED_COMMENT' && 'Source: PR Description Markdown Comment'}
+                    {hydrationSource === 'DEMO' && 'Source: Sample Interactive Demo Specification'}
+                    {hydrationSource === 'MANUAL_EDIT' && 'Source: Ad-Hoc Manual Parameters'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs text-indigo-900 flex-wrap pt-0.5">
+                  <span>Target Repo: <strong>{hydratedBlueprint?.repo || extractedRepo}</strong></span>
+                  <span>•</span>
+                  <span>Branch: <strong className="font-mono">{hydratedBlueprint?.branchName || prMetadata?.headBranch || 'audited-branch'}</strong></span>
+                  <span>•</span>
+                  <span>Enforcing: <strong>{hydratedCriteria.length} criteria</strong></span>
+                  <span>•</span>
+                  <span>Boundaries: <strong>{hydratedBoundaries.length} authorized path glob(s)</strong></span>
+                </div>
+              </div>
+
               {/* Blast Radius Stats Pill Row */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="rounded-lg bg-white p-2.5 border border-slate-200/80 space-y-0.5">
@@ -598,9 +912,14 @@ export function AuditEvaluationStage({
 
               {/* Active Acceptance Criteria Checklist */}
               <div className="space-y-2 pt-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                    Active Criteria Matrix ({hydratedCriteria.length} criteria)
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+                    <span>Active Criteria Matrix ({hydratedCriteria.length} criteria)</span>
+                    {hydratedBlueprint && (
+                      <span className="font-mono text-[10px] font-normal text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                        {hydratedBlueprint.blueprintId}
+                      </span>
+                    )}
                   </span>
                   <span className="text-[11px] text-slate-400">Ready for Gemini verification</span>
                 </div>
@@ -665,6 +984,8 @@ export function AuditEvaluationStage({
           prMetadata={prMetadata}
           repo={extractedRepo}
           fileBoundaries={hydratedBoundaries}
+          blueprint={hydratedBlueprint}
+          hydrationSource={hydrationSource}
           julesKey={julesKey}
           githubPat={githubPat}
           onViewDiff={() => setDiffModalOpen(true)}
