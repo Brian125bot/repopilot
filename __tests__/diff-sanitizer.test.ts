@@ -62,6 +62,17 @@ describe('Diff Sanitizer & Scope Analysis Engine', () => {
       expect(matchesFileBoundary('tsconfig.json', boundaries)).toBe(false);
     });
 
+    it('strictly rejects path prefix false positives without relying on startsWith', () => {
+      // Boundaries: 'src/middleware/rate-limiter.ts', 'src/config/*', 'tests/**/*.test.ts'
+      // Exact file prefix should NOT match extensions or substrings
+      expect(matchesFileBoundary('src/middleware/rate-limiter.ts.bak', boundaries)).toBe(false);
+      expect(matchesFileBoundary('src/middleware/rate-limiter.tsx', boundaries)).toBe(false);
+      // Single * should NOT match deep subpaths or partial folder names
+      expect(matchesFileBoundary('src/config/sub/deep.ts', boundaries)).toBe(false);
+      expect(matchesFileBoundary('src/configuration.ts', boundaries)).toBe(false);
+      expect(matchesFileBoundary('src/config-extra/file.ts', boundaries)).toBe(false);
+    });
+
     it('allows all files if boundaries array is empty or wildcard', () => {
       expect(matchesFileBoundary('any/file/path.ts', [])).toBe(true);
       expect(matchesFileBoundary('any/file/path.ts', ['*'])).toBe(true);

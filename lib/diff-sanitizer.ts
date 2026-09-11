@@ -19,33 +19,82 @@ export function isFileExcluded(filename: string): { isExcluded: boolean; reason?
   return { isExcluded: false };
 }
 
+export function globToRegex(glob: string): RegExp {
+  const cleanGlob = glob.replace(/^\.\//, '').replace(/^[ab]\//, '').trim();
+
+  let regexStr = '^';
+  let i = 0;
+  const len = cleanGlob.length;
+
+  while (i < len) {
+    const c = cleanGlob[i];
+
+    if (c === '/') {
+      // Check for /**/
+      if (cleanGlob.slice(i, i + 4) === '/**/') {
+        regexStr += '(?:/|/.+/)';
+        i += 4;
+        continue;
+      }
+      // Check for /** at the end
+      if (cleanGlob.slice(i) === '/**') {
+        regexStr += '(?:/.*)?';
+        i += 3;
+        continue;
+      }
+      regexStr += '/';
+      i++;
+    } else if (c === '*') {
+      if (cleanGlob[i + 1] === '*') {
+        // **/ at the beginning
+        if (i === 0 && cleanGlob.slice(0, 3) === '**/') {
+          regexStr += '(?:^|.*/)';
+          i += 3;
+          continue;
+        }
+        // Standalone **
+        regexStr += '.*';
+        i += 2;
+      } else {
+        // Single * matches anything except slash
+        regexStr += '[^/]*';
+        i++;
+      }
+    } else if (c === '?') {
+      regexStr += '[^/]';
+      i++;
+    } else if ('[.+^${}()|[\\]'.includes(c)) {
+      regexStr += '\\' + c;
+      i++;
+    } else {
+      regexStr += c;
+      i++;
+    }
+  }
+
+  regexStr += '$';
+  return new RegExp(regexStr, 'i');
+}
+
 export function matchesFileBoundary(filepath: string, boundaries: string[]): boolean {
   if (!boundaries || boundaries.length === 0) return true;
-  const cleanPath = filepath.replace(/^[ab]\//, '').trim();
+  const cleanPath = filepath.replace(/^\.\//, '').replace(/^[ab]\//, '').trim();
 
   return boundaries.some((rawPattern) => {
-    const pattern = rawPattern.trim().replace(/^[ab]\//, '');
+    const pattern = rawPattern.trim().replace(/^\.\//, '').replace(/^[ab]\//, '');
     if (!pattern) return true;
     if (pattern === '*' || pattern === '**') return true;
 
-    // Direct match or exact subpath match
-    if (cleanPath === pattern || cleanPath.startsWith(pattern.replace(/\*+$/, ''))) {
+    // Direct exact match
+    if (cleanPath === pattern) {
       return true;
     }
 
-    // Convert glob pattern to regex
-    // Escaping special characters except *
-    let escaped = pattern
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\/\*\*\//g, '(?:/|/.+/)')
-      .replace(/\*\*/g, '.*')
-      .replace(/\*/g, '[^/]*');
-
     try {
-      const reg = new RegExp(`^${escaped}$`, 'i');
+      const reg = globToRegex(pattern);
       return reg.test(cleanPath);
     } catch {
-      return cleanPath.includes(pattern);
+      return false;
     }
   });
 }

@@ -1,35 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { GeminiAuditReport } from '@/types';
+import { computeScorecardMetrics } from '@/lib/scoring';
 
 describe('Gemini Audit Scoring Logic & Metric Evaluation', () => {
-  function computeMockScorecardMetrics(report: GeminiAuditReport) {
-    const totalCriteria = report.criteriaResults.length;
-    const metCriteria = report.criteriaResults.filter((c) => c.status === 'MET').length;
-    const partiallyMetCriteria = report.criteriaResults.filter((c) => c.status === 'PARTIALLY_MET').length;
-    const unmetCriteria = report.criteriaResults.filter((c) => c.status === 'UNMET').length;
-
-    const complianceRatio = totalCriteria > 0 ? (metCriteria + partiallyMetCriteria * 0.5) / totalCriteria : 0;
-    const scopePenalty = report.scopeIntegrity.strictlyInScope ? 0 : 35;
-    const calculatedScore = Math.max(0, Math.min(100, Math.round(complianceRatio * 100 - scopePenalty)));
-
-    let expectedVerdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
-    if (!report.scopeIntegrity.strictlyInScope || unmetCriteria > 0 || calculatedScore < 60) {
-      expectedVerdict = calculatedScore < 40 ? 'BLOCKED' : 'NEEDS_REVISION';
-    } else if (partiallyMetCriteria > 0 || calculatedScore < 85) {
-      expectedVerdict = 'NEEDS_REVISION';
-    } else {
-      expectedVerdict = 'READY_TO_MERGE';
-    }
-
-    return {
-      totalCriteria,
-      metCriteria,
-      partiallyMetCriteria,
-      unmetCriteria,
-      calculatedScore,
-      expectedVerdict,
-    };
-  }
 
   it('assigns READY_TO_MERGE when all criteria are met and diff is strictly in scope', () => {
     const report: GeminiAuditReport = {
@@ -48,7 +21,7 @@ describe('Gemini Audit Scoring Logic & Metric Evaluation', () => {
       },
     };
 
-    const metrics = computeMockScorecardMetrics(report);
+    const metrics = computeScorecardMetrics(report);
     expect(metrics.metCriteria).toBe(2);
     expect(metrics.unmetCriteria).toBe(0);
     expect(metrics.calculatedScore).toBe(100);
@@ -75,7 +48,7 @@ describe('Gemini Audit Scoring Logic & Metric Evaluation', () => {
       },
     };
 
-    const metrics = computeMockScorecardMetrics(report);
+    const metrics = computeScorecardMetrics(report);
     expect(metrics.calculatedScore).toBeLessThanOrEqual(65);
     expect(metrics.expectedVerdict).not.toBe('READY_TO_MERGE');
   });

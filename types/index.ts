@@ -102,6 +102,7 @@ export interface MergeVerdict {
   overallScore: number;
   keyBlockers: string[];
   actionableFeedbackForAgent: string;
+  recommendation?: string;
 }
 
 export interface GeminiAuditReport {
@@ -109,7 +110,7 @@ export interface GeminiAuditReport {
   scopeIntegrity: ScopeIntegrity;
   blastRadius: BlastRadius;
   mergeVerdict: MergeVerdict;
-  evaluatedAt: string;
+  evaluatedAt?: string;
   prTitle?: string;
   prAuthor?: string;
   prNumber?: number;
@@ -127,6 +128,6 @@ export interface PRMetadata {
   baseBranch: string;
   headBranch: string;
   state: string;
-  body: string;
+  body?: string;
   embeddedBlueprint?: Blueprint | null;
 }

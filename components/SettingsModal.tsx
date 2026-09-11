@@ -37,6 +37,8 @@ export function SettingsModal({
   const [hasServerJules, setHasServerJules] = React.useState<boolean | null>(null);
   const [testingJules, setTestingJules] = React.useState(false);
   const [julesTestResult, setJulesTestResult] = React.useState<{ valid?: boolean; message?: string } | null>(null);
+  const [testingPat, setTestingPat] = React.useState(false);
+  const [patTestResult, setPatTestResult] = React.useState<{ valid?: boolean; message?: string } | null>(null);
 
   React.useEffect(() => {
     if (open) {
@@ -45,6 +47,7 @@ export function SettingsModal({
         setLocalGemini(geminiKey);
         setLocalPat(githubPat);
         setJulesTestResult(null);
+        setPatTestResult(null);
       }, 0);
       return () => clearTimeout(timer);
     }
@@ -110,6 +113,37 @@ export function SettingsModal({
     }
   };
 
+  const handleTestPat = async () => {
+    setTestingPat(true);
+    setPatTestResult(null);
+    try {
+      const headers: Record<string, string> = {};
+      if (localPat.trim()) {
+        headers['x-github-pat'] = localPat.trim();
+      }
+      const res = await fetch('/api/github/status', { headers });
+      const data = await res.json();
+      if (data.isValid) {
+        setPatTestResult({
+          valid: true,
+          message: `Connected as @${data.login || 'user'}! (${data.rateLimit?.remaining ?? 5000} req/hr remaining)`,
+        });
+      } else {
+        setPatTestResult({
+          valid: false,
+          message: data.error || 'GitHub token rejected (401 Bad credentials)',
+        });
+      }
+    } catch (e) {
+      setPatTestResult({
+        valid: false,
+        message: e instanceof Error ? e.message : 'Network test error',
+      });
+    } finally {
+      setTestingPat(false);
+    }
+  };
+
   const handleSave = () => {
     setJulesKey(localJules.trim());
     setGeminiKey(localGemini.trim());
@@ -134,6 +168,7 @@ export function SettingsModal({
     setGeminiKey('');
     setGithubPat('');
     setJulesTestResult(null);
+    setPatTestResult(null);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('repopilot_jules_key');
       localStorage.removeItem('repopilot_gemini_key');
@@ -276,13 +311,39 @@ export function SettingsModal({
                 </Badge>
               )}
             </div>
-            <Input
-              type="password"
-              placeholder="ghp_... or github_pat_..."
-              value={localPat}
-              onChange={(e) => setLocalPat(e.target.value)}
-              className="font-mono text-xs"
-            />
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder="ghp_... or github_pat_..."
+                value={localPat}
+                onChange={(e) => {
+                  setLocalPat(e.target.value);
+                  setPatTestResult(null);
+                }}
+                className="font-mono text-xs flex-1 bg-white"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleTestPat}
+                disabled={testingPat || !localPat.trim()}
+                className="text-xs shrink-0"
+              >
+                {testingPat ? 'Testing...' : 'Test Token'}
+              </Button>
+            </div>
+
+            {patTestResult && (
+              <p
+                className={`text-[11px] font-medium ${
+                  patTestResult.valid ? 'text-emerald-700' : 'text-rose-600'
+                }`}
+              >
+                {patTestResult.message}
+              </p>
+            )}
+
             <p className="text-xs text-slate-500 leading-relaxed">
               Required for private repositories, pre-dispatch accessibility checks, and avoiding GitHub unauthenticated rate limits.
             </p>

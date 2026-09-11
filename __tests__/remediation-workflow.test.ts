@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AcceptanceCriterion, GeminiAuditReport, PRMetadata } from '@/types';
+import { compileRemediationPrompt } from '@/lib/prompt-compiler';
 
 describe('Autonomous Remediation Workflow & Branch Safety', () => {
   const mockPR: PRMetadata = {
@@ -66,33 +67,13 @@ describe('Autonomous Remediation Workflow & Branch Safety', () => {
   });
 
   it('compiles actionable remediation prompt embedding blockers, evidence, and critical branch directive', () => {
-    const defaultRemediationPrompt = `### CRITICAL BRANCH WORKFLOW DIRECTIVE:
-You are assigned to remediate active Pull Request #${mockPR.number}:
-${mockPR.htmlUrl}
-
-You MUST check out and apply all code modifications directly to the audited branch:
-\`${mockPR.headBranch}\`
-
-DO NOT create an alternate branch or start over from the base branch (${mockPR.baseBranch}). All fixes, refactors, and test additions must be committed and pushed directly to \`${mockPR.headBranch}\` so the pull request automatically updates with your changes.
-
----
-
-### Audit Findings & Blockers:
-- **Verdict:** ${mockReport.mergeVerdict.status} (${mockReport.mergeVerdict.overallScore}/100)
-- **Scope Integrity:** ${mockReport.scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}
-${mockReport.scopeIntegrity.unauthorizedFiles.length > 0 ? `- **Unauthorized Files to Revert:** ${mockReport.scopeIntegrity.unauthorizedFiles.join(', ')}` : ''}
-
-#### Key Blockers:
-${mockReport.mergeVerdict.keyBlockers.map((b) => `1. ${b}`).join('\n')}
-
-#### Unmet / Partially Met Acceptance Criteria:
-${mockReport.criteriaResults
-  .filter((c) => c.status !== 'MET')
-  .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Evidence: ${c.evidence}`)
-  .join('\n')}
-
-#### Required Actionable Changes:
-${mockReport.mergeVerdict.actionableFeedbackForAgent}`;
+    const defaultRemediationPrompt = compileRemediationPrompt({
+      targetBranch: mockPR.headBranch,
+      baseBranch: mockPR.baseBranch,
+      prNumber: mockPR.number,
+      prUrl: mockPR.htmlUrl,
+      report: mockReport,
+    });
 
     expect(defaultRemediationPrompt).toContain('CRITICAL BRANCH WORKFLOW DIRECTIVE');
     expect(defaultRemediationPrompt).toContain('jules/rate-limiter-redis');

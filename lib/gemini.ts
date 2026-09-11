@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { AcceptanceCriterion, GeminiAuditReport, GeneratedCriteriaResponse, RepoInspectionResult } from '@/types';
+import { reconcileAuditReport } from '@/lib/scoring';
 
 export function getGeminiClient(customApiKey?: string): GoogleGenAI {
   const key = customApiKey || process.env.GEMINI_API_KEY;
@@ -191,9 +192,10 @@ Please output the complete structured audit report.`;
   }
 
   const parsed = JSON.parse(text) as Omit<GeminiAuditReport, 'evaluatedAt'>;
+  const reconciled = reconcileAuditReport(parsed);
 
   return {
-    ...parsed,
+    ...reconciled,
     evaluatedAt: new Date().toISOString(),
   };
 }

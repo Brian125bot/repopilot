@@ -1,4 +1,4 @@
-import { Blueprint, AcceptanceCriterion } from '@/types';
+import { Blueprint, AcceptanceCriterion, GeminiAuditReport } from '@/types';
 
 export interface PromptCompilerInput {
   repo: string;
@@ -93,3 +93,71 @@ export function extractBlueprintFromPRBody(body: string): Blueprint | null {
   }
   return null;
 }
+
+export interface RemediationPromptInput {
+  targetBranch: string;
+  baseBranch?: string;
+  prNumber?: number;
+  prUrl?: string;
+  report: GeminiAuditReport;
+  fileBoundaries?: string[];
+}
+
+export function compileRemediationPrompt(input: RemediationPromptInput): string {
+  const { targetBranch, baseBranch = 'main', prNumber, prUrl, report, fileBoundaries } = input;
+  const { criteriaResults, scopeIntegrity, mergeVerdict } = report;
+
+  const prReference = prNumber
+    ? `active Pull Request #${prNumber}`
+    : prUrl
+    ? `active Pull Request: ${prUrl}`
+    : `active Pull Request`;
+
+  const unauthorizedSection =
+    scopeIntegrity?.unauthorizedFiles && scopeIntegrity.unauthorizedFiles.length > 0
+      ? `\n- **Unauthorized Files to Revert:** ${scopeIntegrity.unauthorizedFiles.join(', ')}`
+      : '';
+
+  const blockersSection =
+    mergeVerdict.keyBlockers && mergeVerdict.keyBlockers.length > 0
+      ? mergeVerdict.keyBlockers.map((b, i) => `${i + 1}. ${b}`).join('\n')
+      : '1. None identified.';
+
+  const unmetCriteriaSection =
+    criteriaResults && criteriaResults.length > 0
+      ? criteriaResults
+          .filter((c) => c.status !== 'MET')
+          .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Evidence: ${c.evidence}`)
+          .join('\n') || '- All declared criteria were satisfied.'
+      : '- No explicit criteria recorded.';
+
+  const boundariesSection =
+    fileBoundaries && fileBoundaries.length > 0
+      ? `\n\n#### Authorized File Boundaries:\n${fileBoundaries.map((f) => `- \`${f}\``).join('\n')}`
+      : '';
+
+  return `### CRITICAL BRANCH WORKFLOW DIRECTIVE:
+You are assigned to remediate ${prReference}:
+${prUrl || ''}
+
+You MUST check out and apply all code modifications directly to the audited branch:
+\`${targetBranch}\`
+
+DO NOT create an alternate branch or start over from the base branch (${baseBranch}). All fixes, refactors, and test additions must be committed and pushed directly to \`${targetBranch}\` so the pull request automatically updates with your changes.
+
+---
+
+### Audit Findings & Blockers:
+- **Verdict:** ${mergeVerdict.status} (${mergeVerdict.overallScore}/100)
+- **Scope Integrity:** ${scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}${unauthorizedSection}
+
+#### Key Blockers:
+${blockersSection}
+
+#### Unmet / Partially Met Acceptance Criteria:
+${unmetCriteriaSection}
+
+#### Required Actionable Changes:
+${mergeVerdict.actionableFeedbackForAgent}${boundariesSection}`;
+}
+

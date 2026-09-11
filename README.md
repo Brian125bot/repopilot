@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-36%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-47%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -18,9 +18,9 @@
 
 RepoPilot includes extensive technical and user-facing documentation right inside the repository:
 
-- 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot automates tasks and boosts accuracy to 99%+ when working with Google's Jules Cloud Coding Agent.
+- 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot organizes task contracts and manages the review loop when working with Google's Jules Cloud Coding Agent.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 36 automated unit & integration tests.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 47 automated unit & integration tests.
 - 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
 
 ---
@@ -35,20 +35,20 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 
 **RepoPilot** is the **precision control plane and automated quality assurance layer** for Google Jules, introducing a strictly decoupled two-stage lifecycle:
 
-1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded cryptographic blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents.
-2. **Stage 2: Gemini PR Audit & Autonomous Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs. If blockers exist, developers can **1-click auto-dispatch** an autonomous remediation prompt instructing Jules to checkout and commit fixes directly to the audited branch.
+1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded cryptographic blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents with fail-closed error handling.
+2. **Stage 2: Gemini PR Audit & Autonomous Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, developers can **1-click auto-dispatch** an autonomous remediation prompt instructing Jules to checkout and commit fixes directly to the audited branch.
 
 ---
 
 ## Why Use RepoPilot with Google Jules?
 
-| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Measurable Impact |
+| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Functional Guarantee |
 | :--- | :--- | :--- |
-| **Agent touches unrelated files** | Mathematical POSIX glob boundaries (`src/middleware/**`) with strict scope violation penalties | **99.4% boundary adherence** |
-| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | **100% testable verification** |
-| **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with exact line citations | **85% reduction in review time** |
-| **Remediation creates rogue branches** | Auto-Remediation strictly preserves `startingBranch: prMetadata.headBranch` | **Zero branch clutter or conflicts** |
-| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | **Up to 70% token savings** |
+| **Agent touches unrelated files** | Strict glob boundaries (`src/middleware/**`, `tests/**/*.test.ts`) parsed via regex without false prefix matches | Deterministic rejection of out-of-scope file modifications |
+| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | Every criterion receives explicit evidence and status (`MET`, `PARTIALLY_MET`, `UNMET`) |
+| **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with exact line citations | Structured audit report with actionable recommendations and blocker breakdown |
+| **Remediation creates rogue branches** | Auto-Remediation strictly preserves `startingBranch: prMetadata.headBranch` | Commits directly to active PR branch with fail-closed API dispatch |
+| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Zero lockfile tokens forwarded to LLM evaluation context |
 
 ---
 
@@ -114,7 +114,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the entire test suite (36 tests across 7 suites)
+# Run the entire test suite (47 tests across 8 suites)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -126,8 +126,9 @@ npm run test:watch
 | Suite | File | Tests | Focus Area |
 | :--- | :--- | :--- | :--- |
 | **Prompt Compiler** | `prompt-compiler.test.ts` | 7 | Anti-drift markdown generation & blueprint comment embedding |
-| **Diff Sanitizer** | `diff-sanitizer.test.ts` | 13 | Recursive glob matching (`**`), lockfile exclusion, hunk extraction |
-| **Jules Dispatch** | `jules-dispatch.test.ts` | 4 | API route validation, dry-run simulation, startingBranch resolution |
+| **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
+| **Jules Dispatch** | `jules-dispatch.test.ts` | 7 | API validation, fail-closed 401/404 handling, startingBranch resolution |
+| **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
 | **Audit Engine** | `audit-engine.test.ts` | 4 | Diff ingestion, error boundaries, evaluation payload validation |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 3 | Score algorithms, scope violation penalties, blast radius ratings |
@@ -199,6 +200,9 @@ Dispatches a new coding session to Google Jules or saves a local dry-run bluepri
 
 ### `GET /api/jules/sources`
 Lists authorized GitHub repositories connected to your Google Jules cloud account.
+
+### `GET /api/github/status`
+Validates a GitHub Personal Access Token (PAT) supplied via `x-github-pat` header or server environment, returning authenticated user identity, scopes, and hourly rate limit consumption.
 
 ### `POST /api/audit/fetch-diff`
 Fetches a GitHub pull request diff, parses commit hunks, and applies noise-reduction filters.

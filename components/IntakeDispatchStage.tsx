@@ -341,7 +341,7 @@ export function IntakeDispatchStage({
 
       const data = await response.json();
 
-      if (!response.ok) {
+      if (!response.ok || data.success === false) {
         throw new Error(data.error || 'Failed to dispatch job to Jules API.');
       }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
+import { createJulesSession } from '@/lib/jules';
 import { Blueprint, AcceptanceCriterion } from '@/types';
 
 interface DispatchRequestBody {
@@ -32,7 +33,6 @@ export async function POST(req: NextRequest) {
       customPrompt,
       isRemediation = false,
       prNumber,
-      prUrl,
       dryRun = false,
     } = body;
 
@@ -107,6 +107,19 @@ export async function POST(req: NextRequest) {
     const julesApiKey = headerJulesKey?.trim() || process.env.JULES_API_KEY?.trim();
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
+    // Fail-closed check: if not a dryRun, an API key is strictly required
+    if (!dryRun && !julesApiKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          dryRun: false,
+          error:
+            'No Google Jules API key configured. Provide an API key via request headers or environment variables, or enable dryRun mode.',
+        },
+        { status: 401 }
+      );
+    }
+
     // Normalize boundaries
     const parsedBoundaries: string[] = Array.isArray(fileBoundaries)
       ? fileBoundaries
@@ -140,22 +153,6 @@ export async function POST(req: NextRequest) {
       baseBranch.trim() ||
       'main';
 
-    // Google Jules API Payload using official sourceContext structure
-    const julesPayload = {
-      prompt: compiledPrompt,
-      sourceContext: {
-        source: `sources/github/${cleanRepo}`,
-        githubRepoContext: {
-          startingBranch: effectiveStartingBranch,
-        },
-      },
-    };
-
-    let sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    let apiStatus: 'DISPATCHED_TO_JULES' | 'LOCAL_DRY_RUN' | 'JULES_API_FALLBACK' = 'LOCAL_DRY_RUN';
-    let julesApiResponse: unknown = null;
-    let warningMessage: string | undefined = undefined;
-
     // Check repository accessibility via GitHub API if token available
     if (githubPat) {
       try {
@@ -173,75 +170,41 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    let sessionUrl: string | undefined = undefined;
+    let julesApiResponse: unknown = null;
+
     if (!dryRun && julesApiKey) {
-      try {
-        const julesEndpoint = 'https://jules.googleapis.com/v1alpha/sessions';
-        const response = await fetch(julesEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': julesApiKey,
-            'User-Agent': 'RepoPilot/1.0',
+      const sessionTitle = `[RepoPilot] ${objective.slice(0, 80)}`;
+      const julesResult = await createJulesSession({
+        apiKey: julesApiKey,
+        repo: cleanRepo,
+        startingBranch: effectiveStartingBranch,
+        prompt: compiledPrompt,
+        title: sessionTitle,
+        requirePlanApproval: false,
+        automationMode: 'AUTO_CREATE_PR',
+      });
+
+      if (!julesResult.ok) {
+        // Fail-closed invariant: live failures MUST NOT return success: true
+        return NextResponse.json(
+          {
+            success: false,
+            dryRun: false,
+            error: julesResult.error || `Google Jules API error (HTTP ${julesResult.status})`,
+            status: julesResult.status,
+            details: julesResult.details,
+            repo: cleanRepo,
+            targetBranch,
           },
-          body: JSON.stringify(julesPayload),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          sessionId = data.name || data.id || data.sessionId || sessionId;
-          const sessionNumericId = (data.name || '').replace(/^sessions\//, '') || data.id || '';
-          const sessionUrl = sessionNumericId
-            ? `https://jules.google.com/session/${sessionNumericId}`
-            : undefined;
-
-          julesApiResponse = {
-            ...data,
-            url: sessionUrl,
-            numericId: sessionNumericId,
-          };
-          apiStatus = 'DISPATCHED_TO_JULES';
-        } else {
-          let errorMsg = `Google Jules API returned HTTP ${response.status}`;
-          let rawErrorBody: unknown = null;
-          try {
-            const errJson = await response.json();
-            rawErrorBody = errJson;
-            if (errJson.error?.message) {
-              errorMsg = errJson.error.message;
-            }
-          } catch {
-            const rawText = await response.text().catch(() => '');
-            if (rawText) {
-              errorMsg = rawText.slice(0, 200);
-              rawErrorBody = rawText;
-            }
-          }
-
-          console.warn(`Google Jules API dispatch error (${response.status}):`, errorMsg);
-          apiStatus = 'JULES_API_FALLBACK';
-          julesApiResponse = {
-            status: response.status,
-            error: errorMsg,
-            details: rawErrorBody,
-          };
-
-          if (response.status === 401 || response.status === 403 || errorMsg.toLowerCase().includes('api key')) {
-            warningMessage = `Jules API rejected credentials (HTTP ${response.status}: ${errorMsg}). Verify that you provided a valid Google Jules API key from jules.google.com/settings (distinct from Gemini API keys). The blueprint has been compiled and saved locally.`;
-          } else if (response.status === 404 || errorMsg.toLowerCase().includes('source') || errorMsg.toLowerCase().includes('not found')) {
-            warningMessage = `Repository source not found in Jules (HTTP ${response.status}: ${errorMsg}). Ensure the Jules GitHub App is installed for "${cleanRepo}" at jules.google.com before dispatching. Blueprint saved to vault.`;
-          } else {
-            warningMessage = `Jules API returned ${response.status}: ${errorMsg}. Blueprint compiled and recorded locally.`;
-          }
-        }
-      } catch (err) {
-        console.warn('Google Jules API network call failed:', err);
-        apiStatus = 'JULES_API_FALLBACK';
-        warningMessage = `Network error connecting to Google Jules API (${err instanceof Error ? err.message : 'connection refused'}). Blueprint preserved in vault for manual dispatch.`;
+          { status: julesResult.status || 502 }
+        );
       }
-    } else if (!julesApiKey && !dryRun) {
-      apiStatus = 'LOCAL_DRY_RUN';
-      warningMessage =
-        'No Google Jules API key configured. Dispatch was saved locally as a blueprint. To dispatch directly to the Jules asynchronous agent, configure your Jules API key from jules.google.com/settings in the Settings panel (or set JULES_API_KEY).';
+
+      sessionId = julesResult.sessionId || sessionId;
+      sessionUrl = julesResult.sessionUrl;
+      julesApiResponse = julesResult.data;
     }
 
     const completeBlueprint: Blueprint = {
@@ -259,14 +222,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      dryRun: dryRun || apiStatus === 'LOCAL_DRY_RUN',
+      dryRun: Boolean(dryRun),
       blueprint: completeBlueprint,
       sessionId,
+      sessionUrl,
       targetBranch,
       repo: cleanRepo,
       baseBranch: baseBranch.trim(),
-      apiStatus,
-      warningMessage,
+      apiStatus: dryRun ? 'LOCAL_DRY_RUN' : 'DISPATCHED_TO_JULES',
       julesApiResponse,
       githubUrl: `https://github.com/${cleanRepo}`,
       dispatchedAt: new Date().toISOString(),
@@ -275,6 +238,7 @@ export async function POST(req: NextRequest) {
     console.error('Error in /api/jules/dispatch:', error);
     return NextResponse.json(
       {
+        success: false,
         error: error instanceof Error ? error.message : 'Unknown dispatch error occurred.',
       },
       { status: 500 }

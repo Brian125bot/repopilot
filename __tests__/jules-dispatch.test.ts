@@ -116,5 +116,101 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
     expect(dispatchedBody.sourceContext.githubRepoContext.startingBranch).toBe(
       'jules/pr-42-remediation-branch'
     );
+    expect(dispatchedBody.title).toContain('[RepoPilot]');
+    expect(dispatchedBody.requirePlanApproval).toBe(false);
+    expect(dispatchedBody.automationMode).toBe('AUTO_CREATE_PR');
+  });
+
+  it('fails closed when dispatching live without an API key (returns 401, success: false)', async () => {
+    const originalEnv = process.env.JULES_API_KEY;
+    delete process.env.JULES_API_KEY;
+
+    try {
+      const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+        method: 'POST',
+        body: JSON.stringify({
+          repo: 'acme-corp/api-gateway',
+          objective: 'Live dispatch without key',
+          criteria: [{ id: '1', text: 'Test criterion' }],
+          dryRun: false,
+        }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toContain('No Google Jules API key');
+    } finally {
+      if (originalEnv !== undefined) {
+        process.env.JULES_API_KEY = originalEnv;
+      }
+    }
+  });
+
+  it('fails closed on Jules 401 Unauthorized (returns 401, success: false)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = typeof input === 'string' ? input : (input as { url: string }).url;
+      if (url.includes('jules.googleapis.com')) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ error: { message: 'Invalid API Key provided' } }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+      method: 'POST',
+      headers: {
+        'x-jules-api-key': 'bad-key',
+      },
+      body: JSON.stringify({
+        repo: 'acme-corp/api-gateway',
+        objective: 'Test 401 rejection',
+        criteria: [{ id: '1', text: 'Test criterion' }],
+        dryRun: false,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('Invalid API Key provided');
+  });
+
+  it('fails closed on Jules 404 Source Not Found (returns 404, success: false)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = typeof input === 'string' ? input : (input as { url: string }).url;
+      if (url.includes('jules.googleapis.com')) {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: { message: 'Source repository not found in Jules organization' } }),
+        } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+      method: 'POST',
+      headers: {
+        'x-jules-api-key': 'valid-key',
+      },
+      body: JSON.stringify({
+        repo: 'acme-corp/unknown-service',
+        objective: 'Test 404 rejection',
+        criteria: [{ id: '1', text: 'Test criterion' }],
+        dryRun: false,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain('Source repository not found');
   });
 });

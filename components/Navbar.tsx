@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Compass, Key, Sparkles, FolderArchive, ArrowRight, ShieldCheck, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { GitHubStatusIndicator } from './GitHubStatusIndicator';
 
 interface NavbarProps {
   currentStage: 'stage1' | 'stage2';
@@ -13,6 +14,7 @@ interface NavbarProps {
   onOpenDocs: () => void;
   hasCredentials: boolean;
   blueprintsCount: number;
+  githubPat?: string;
 }
 
 export function Navbar({
@@ -23,6 +25,7 @@ export function Navbar({
   onOpenDocs,
   hasCredentials,
   blueprintsCount,
+  githubPat = '',
 }: NavbarProps) {
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
@@ -79,12 +82,15 @@ export function Navbar({
         </nav>
 
         {/* Right: Actions & Vault */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
+          {/* Real-time GitHub Connection Status Indicator */}
+          <GitHubStatusIndicator githubPat={githubPat} onOpenSettings={onOpenSettings} />
+
           <Button
             variant="outline"
             size="sm"
             onClick={onOpenDocs}
-            className="flex items-center gap-1.5 text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-50 cursor-pointer"
+            className="hidden lg:flex items-center gap-1.5 text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-50 cursor-pointer"
           >
             <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
             <span>Docs</span>

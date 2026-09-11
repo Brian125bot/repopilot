@@ -105,6 +105,7 @@ export default function RepoPilotPage() {
         onOpenDocs={() => setDocsOpen(true)}
         hasCredentials={Boolean(julesKey || geminiKey || githubPat)}
         blueprintsCount={blueprints.length}
+        githubPat={githubPat}
       />
 
       {/* Main App Container */}

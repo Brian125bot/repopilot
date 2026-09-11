@@ -33,6 +33,7 @@ import { Badge } from './ui/badge';
 import { Progress } from './ui/progress';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
+import { compileRemediationPrompt } from '@/lib/prompt-compiler';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 
 interface MergeScorecardProps {
@@ -120,62 +121,15 @@ export function MergeScorecard({
 
   // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch
   const defaultRemediationPrompt = React.useMemo(() => {
-    const blockersText =
-      mergeVerdict.keyBlockers && mergeVerdict.keyBlockers.length > 0
-        ? mergeVerdict.keyBlockers.map((b) => `- [CRITICAL BLOCKER] ${b}`).join('\n')
-        : '- No critical architectural blockers recorded.';
-
-    const criteriaText =
-      criteriaResults && criteriaResults.length > 0
-        ? criteriaResults
-            .filter((c) => c.status !== 'MET')
-            .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Audit Evidence: ${c.evidence}`)
-            .join('\n') || '- All declared acceptance criteria were satisfied.'
-        : '- No explicit criteria items.';
-
-    const boundariesText =
-      fileBoundaries && fileBoundaries.length > 0
-        ? `Authorized File Boundaries:\n${fileBoundaries.map((f) => `- \`${f}\``).join('\n')}`
-        : 'Preserve existing file scope. Do NOT touch unauthorized root files or lockfiles.';
-
-    return `# RepoPilot Autonomous Remediation Contract
-**Target Pull Request:** ${copyableUrl}
-**Audited Target Branch:** \`${auditedBranch}\` (Direct Commit Target)
-**Base Branch:** \`${prMetadata?.baseBranch || 'main'}\`
-**Audit Status:** ${mergeVerdict.status} (Score: ${mergeVerdict.overallScore}/100)
-
----
-
-### CRITICAL BRANCH WORKFLOW DIRECTIVE:
-You are assigned to remediate an active Pull Request: ${copyableUrl}.
-You MUST check out and apply all code modifications directly to the audited branch: \`${auditedBranch}\`.
-DO NOT create an alternate branch or start over from the base branch. All fixes, refactors, and test additions must be committed and pushed directly to \`${auditedBranch}\` so the pull request automatically updates with your changes.
-
----
-
-### 1. Key Blockers to Resolve
-${blockersText}
-
----
-
-### 2. Unmet / Partially Met Acceptance Criteria
-${criteriaText}
-
----
-
-### 3. Actionable Code Instructions for Agent
-${mergeVerdict.actionableFeedbackForAgent}
-
----
-
-### 4. Strict Scope & File Boundaries
-${boundariesText}
-
-### Anti-Drift Enforcement:
-1. Work strictly on \`${auditedBranch}\`.
-2. Do not modify unauthorized files or reformat unrelated modules.
-3. Ensure all tests pass before completing the session.`;
-  }, [copyableUrl, auditedBranch, prMetadata, mergeVerdict, criteriaResults, fileBoundaries]);
+    return compileRemediationPrompt({
+      targetBranch: auditedBranch,
+      baseBranch: prMetadata?.baseBranch || 'main',
+      prNumber: prMetadata?.number,
+      prUrl: copyableUrl,
+      report,
+      fileBoundaries,
+    });
+  }, [copyableUrl, auditedBranch, prMetadata, report, fileBoundaries]);
 
   // Active prompt in view or edit
   const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
@@ -353,7 +307,9 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
                 <span>
                   Evaluated:{' '}
                   <strong className="text-slate-900">
-                    {new Date(report.evaluatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {report.evaluatedAt
+                      ? new Date(report.evaluatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : 'Recently'}
                   </strong>
                 </span>
                 {prMetadata?.headBranch && (
