@@ -95,7 +95,7 @@ export default function RepoPilotPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/60 text-slate-900 flex flex-col antialiased">
+    <div suppressHydrationWarning className="min-h-screen bg-slate-50/60 text-slate-900 flex flex-col antialiased">
       {/* Navbar */}
       <Navbar
         currentStage={currentStage}
@@ -108,7 +108,7 @@ export default function RepoPilotPage() {
       />
 
       {/* Main App Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <main suppressHydrationWarning className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         {/* Architecture Operating Banner */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-2xs text-xs text-slate-600">
           <div className="flex items-center gap-2">

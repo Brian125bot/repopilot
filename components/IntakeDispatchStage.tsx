@@ -44,55 +44,6 @@ interface IntakeDispatchStageProps {
   onOpenSettings: () => void;
 }
 
-const TEMPLATE_PRESETS = [
-  {
-    name: 'Redis Rate Limiter',
-    repo: 'acme-corp/api-gateway',
-    baseBranch: 'main',
-    branchName: 'jules/rate-limiter-redis',
-    fileBoundaries: 'src/middleware/rate-limiter.ts, src/config/redis.ts, tests/rate-limiter.test.ts',
-    objective:
-      'Implement an IP-based sliding window rate limiter middleware backed by Redis. Return HTTP 429 with standard RateLimit-* headers when threshold (60 req/min) is exceeded.',
-    criteria: [
-      { id: '1', text: 'Middleware extracts client IP correctly with support for X-Forwarded-For', category: 'functional' as const, rationale: 'Required for reverse-proxy routing' },
-      { id: '2', text: 'Sliding window algorithm enforces 60 requests per minute ceiling', category: 'functional' as const, rationale: 'Prevents burst window exploitation' },
-      { id: '3', text: 'Returns HTTP 429 Too Many Requests with RateLimit-Limit, RateLimit-Remaining, and Retry-After headers', category: 'functional' as const, rationale: 'Standard IETF rate-limit header compliance' },
-      { id: '4', text: 'Unit tests cover under-limit, burst limit, and window expiry states', category: 'testing' as const, rationale: 'Ensures algorithmic reliability under concurrency' },
-      { id: '5', text: 'Zero modifications to package.json dependencies or existing unrelated route handlers', category: 'constraint' as const, rationale: 'Strict anti-drift boundary compliance' },
-    ],
-  },
-  {
-    name: 'JWT Auth Refresh Bugfix',
-    repo: 'acme-corp/user-service',
-    baseBranch: 'main',
-    branchName: 'jules/fix-jwt-refresh-race',
-    fileBoundaries: 'src/auth/token-service.ts, tests/auth.test.ts',
-    objective:
-      'Resolve race condition during concurrent JWT refresh requests where simultaneous requests invalidate valid refresh tokens prematurely.',
-    criteria: [
-      { id: '1', text: 'Implement a 15-second grace period for previously rotated refresh tokens', category: 'security' as const, rationale: 'Prevents premature session revocation during network jitter' },
-      { id: '2', text: 'Prevent unhandled Promise rejections when concurrent refresh requests arrive in the same tick', category: 'functional' as const, rationale: 'Eliminates unhandled server process crashes' },
-      { id: '3', text: 'Add unit tests simulating 5 concurrent refresh calls with identical token', category: 'testing' as const, rationale: 'Direct regression coverage for race condition' },
-      { id: '4', text: 'Strictly confine edits to src/auth/token-service.ts and test suite', category: 'constraint' as const, rationale: 'Guarantees core user models remain untouched' },
-    ],
-  },
-  {
-    name: 'Stripe Idempotency Layer',
-    repo: 'acme-corp/billing-service',
-    baseBranch: 'main',
-    branchName: 'jules/stripe-webhook-idempotency',
-    fileBoundaries: 'src/webhooks/stripe.ts, src/services/ledger.ts, tests/webhooks.test.ts',
-    objective:
-      'Add cryptographic idempotency deduplication to Stripe invoice webhooks using Redis SETNX with a 24-hour TTL to prevent double billing.',
-    criteria: [
-      { id: '1', text: 'Verify Stripe webhook signature before processing payload', category: 'security' as const, rationale: 'Blocks spoofed webhook attack vectors' },
-      { id: '2', text: 'Store processed event ID in Redis with 24-hour expiration key', category: 'functional' as const, rationale: 'Ensures exactly-once ledger transaction execution' },
-      { id: '3', text: 'Return HTTP 200 immediately if duplicate event ID is detected without re-executing payment ledger update', category: 'functional' as const, rationale: 'Satisfies Stripe webhook retry protocol' },
-      { id: '4', text: 'Integration test simulates duplicate webhook delivery within 100ms', category: 'testing' as const, rationale: 'Validates deduplication under high-throughput events' },
-    ],
-  },
-];
-
 export function IntakeDispatchStage({
   julesKey,
   geminiKey,
@@ -243,19 +194,6 @@ export function IntakeDispatchStage({
     }, 1000);
     return () => clearTimeout(timer);
   }, [repo, handleInspectRepo]);
-
-  // Apply template preset
-  const handleApplyPreset = (preset: (typeof TEMPLATE_PRESETS)[0]) => {
-    setRepo(preset.repo);
-    setObjective(preset.objective);
-    setBaseBranch(preset.baseBranch);
-    setBranchName(preset.branchName);
-    setFileBoundaries(preset.fileBoundaries);
-    setCriteria(preset.criteria);
-    setAiRationaleSummary(null);
-    setDetectedArch(null);
-    handleInspectRepo(preset.repo);
-  };
 
   // AI Criteria Generation handler
   const handleAutoGenerateCriteria = async () => {
@@ -649,23 +587,6 @@ export function IntakeDispatchStage({
                 <CardDescription className="mt-1 text-xs text-slate-600">
                   Fill in your target repository and task objective first. Auto-establish acceptance criteria with Gemini, and dispatch an anti-drift contract to Google Jules.
                 </CardDescription>
-              </div>
-
-              {/* Template Presets */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs text-slate-400 font-medium mr-1">Presets:</span>
-                {TEMPLATE_PRESETS.map((preset) => (
-                  <Button
-                    key={preset.name}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleApplyPreset(preset)}
-                    className="h-7 text-xs border-slate-200 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 transition-colors"
-                  >
-                    <Sparkles className="h-3 w-3 text-indigo-500 mr-1" />
-                    {preset.name}
-                  </Button>
-                ))}
               </div>
             </div>
           </CardHeader>
