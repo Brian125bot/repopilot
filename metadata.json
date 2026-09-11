@@ -1,0 +1,6 @@
+{
+  "name": "RepoPilot",
+  "description": "Decoupled code generation and audit workflow tool with Stage 1 Jules dispatch and Stage 2 Gemini PR evaluation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
