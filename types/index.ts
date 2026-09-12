@@ -56,6 +56,26 @@ export interface Blueprint {
   prUrl?: string;
   prTitle?: string;
   isRemediation?: boolean;
+  /** Latest compact outcome brief for continuation (v0.3 outcome memory). */
+  lastBrief?: FailureBrief;
+}
+
+export type OutcomeTurn = 'initial' | 'continuation' | 'new-from-brief';
+
+export interface FailureBrief {
+  sessionId?: string;
+  sessionState?: string;
+  prUrl?: string;
+  verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
+  score: number;
+  unmetIds: string[];
+  partialIds: string[];
+  metIds: string[];
+  unauthorizedPaths: string[];
+  doNotTouch: string[];
+  requiredFixes: string[];
+  evidenceById?: Record<string, string>;
+  turn?: OutcomeTurn;
 }
 
 export interface DiffFileSummary {

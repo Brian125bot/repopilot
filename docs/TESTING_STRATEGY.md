@@ -40,16 +40,19 @@ All test files are organized in the `/__tests__/` directory:
 /__tests__/
 ├── prompt-compiler.test.ts      # Anti-drift contract generation & blueprint parsing (7)
 ├── diff-sanitizer.test.ts       # Glob boundary matching, lockfile exclusion, hunk parsing (14)
-├── jules-dispatch.test.ts       # Dispatch validation, source binding, automationMode, fail-closed 401/404 (21)
+├── jules-dispatch.test.ts       # Dispatch validation, source binding, automationMode, fail-closed 401/404 (36)
 ├── jules-session.test.ts        # Session poll route + harvestPullRequest/getJulesSession (7)
+├── jules-message.test.ts        # Follow-up :sendMessage lib + route, fail-closed 401/400/404 (8)
 ├── github-status.test.ts        # PAT validation, scopes, rate limits (7)
 ├── remediation-workflow.test.ts # Closed-loop remediation, audited branch targeting (2)
 ├── audit-engine.test.ts         # Ingestion, error boundaries, unauthorizedPaths forcing (9)
 ├── gemini-scoring.test.ts       # Metrics, penalties, forced scope reconciliation (8)
-└── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
+├── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
+├── outcome-memory.test.ts       # FailureBrief build + continuation prompt caps (11)
+└── outcome-log.test.ts          # Append/cap-50/turns/update/export, no aggregates (9)
 ```
 
-Total: 94 tests across 9 suites (`npm test`).
+Total: 122 tests across 12 suites (`npm test`).
 
 ---
 

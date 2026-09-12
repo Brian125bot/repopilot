@@ -86,6 +86,8 @@ export function JulesTroubleshootModal({
     sessionUrl?: string;
     warningMessage?: string;
     error?: string;
+    sourcesListed?: number;
+    sourcesTruncated?: boolean;
     raw?: unknown;
   } | null>(null);
 
@@ -248,6 +250,8 @@ export function JulesTroubleshootModal({
           success: false,
           status: response.status,
           error: data.error || `HTTP ${response.status} returned by server`,
+          sourcesListed: typeof data.sourcesListed === 'number' ? data.sourcesListed : undefined,
+          sourcesTruncated: data.sourcesTruncated === true,
           raw: data,
         });
       }
@@ -672,6 +676,14 @@ export function JulesTroubleshootModal({
                   {probeResult.error && (
                     <p className="text-[11px] text-rose-800 bg-rose-100/70 p-2.5 rounded border border-rose-200 leading-relaxed font-mono">
                       {probeResult.error}
+                    </p>
+                  )}
+
+                  {typeof probeResult.sourcesListed === 'number' && (
+                    <p className="text-[11px] text-slate-600 font-mono">
+                      Jules listed {probeResult.sourcesListed} source
+                      {probeResult.sourcesListed === 1 ? '' : 's'} for this key
+                      {probeResult.sourcesTruncated ? ' (list truncated — more may exist)' : ''}.
                     </p>
                   )}
                 </div>

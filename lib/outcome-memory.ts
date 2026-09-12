@@ -1,0 +1,293 @@
+import { Blueprint, FailureBrief, GeminiAuditReport, OutcomeTurn } from '@/types';
+
+export const MAX_REQUIRED_FIXES = 7;
+export const MAX_CONTINUATION_CHARS = 4000;
+export const OUTCOME_LOG_KEY = 'repopilot_outcome_log';
+export const MAX_OUTCOME_ROWS = 50;
+
+export interface OutcomeLogRow {
+  blueprintId: string;
+  repo: string;
+  sessionId?: string;
+  turn: OutcomeTurn;
+  verdict?: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
+  score?: number;
+  unauthorizedCount?: number;
+  unmetIds?: string[];
+  usedPriorSession: boolean;
+  at: string;
+}
+const EVIDENCE_SNIPPET_CHARS = 240;
+const FIX_LINE_CHARS = 350;
+
+function oneLine(value: string): string {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function snippet(value: string, maxChars: number): string {
+  const flat = oneLine(value);
+  return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
+}
+
+/**
+ * Extracts `path` tokens from `path:lines`-style references (e.g. "src/a.ts:12-20").
+ * Only tokens already present in the input are returned — paths are never invented.
+ */
+export function extractPathsFromReferences(references: string[]): string[] {
+  const paths: string[] = [];
+  for (const ref of references || []) {
+    const match = /^\s*([A-Za-z0-9_@.\-][A-Za-z0-9_@.\-/]*\.[A-Za-z0-9]{1,5})(?::|$)/.exec(ref);
+    if (match && !paths.includes(match[1])) paths.push(match[1]);
+  }
+  return paths;
+}
+
+/**
+ * Builds a compact FailureBrief from a reconciled audit report, the dispatched
+ * blueprint, and the sanitizer's unauthorized paths (required array).
+ * The unauthorized union is add-only: client paths ∪ model-flagged files.
+ * doNotTouch is that union plus paths cited only by MET criteria evidence
+ * (parsed from lineReferences already on the report); without such paths it
+ * is exactly the unauthorized union. No path is ever invented.
+ */
+export function buildFailureBrief(
+  report: GeminiAuditReport,
+  blueprint: Blueprint,
+  unauthorizedPaths: string[],
+  turn?: OutcomeTurn
+): FailureBrief {
+  const clientPaths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
+  const modelPaths = Array.isArray(report.scopeIntegrity?.unauthorizedFiles)
+    ? report.scopeIntegrity.unauthorizedFiles
+    : [];
+  const unionPaths = Array.from(new Set([...clientPaths, ...modelPaths].filter(Boolean)));
+
+  const criteria = report.criteriaResults || [];
+  const unmetIds = criteria.filter((c) => c.status === 'UNMET').map((c) => c.id);
+  const partialIds = criteria.filter((c) => c.status === 'PARTIALLY_MET').map((c) => c.id);
+  const metIds = criteria.filter((c) => c.status === 'MET').map((c) => c.id);
+
+  const metPaths: string[] = [];
+  for (const criterion of criteria) {
+    if (criterion.status !== 'MET') continue;
+    for (const path of extractPathsFromReferences(criterion.lineReferences || [])) {
+      if (!metPaths.includes(path)) metPaths.push(path);
+    }
+  }
+  const doNotTouch = Array.from(new Set([...unionPaths, ...metPaths]));
+
+  const open = [
+    ...criteria.filter((c) => c.status === 'UNMET'),
+    ...criteria.filter((c) => c.status === 'PARTIALLY_MET'),
+  ];
+  const requiredFixes = open
+    .slice(0, MAX_REQUIRED_FIXES)
+    .map(
+      (c) =>
+        `[${c.status}] Criterion ${c.id}: ${oneLine(c.criterion)} — Evidence: ${snippet(
+          c.evidence || '',
+          EVIDENCE_SNIPPET_CHARS
+        )}`
+    );
+
+  const evidenceById: Record<string, string> = {};
+  for (const criterion of criteria) {
+    evidenceById[criterion.id] = snippet(criterion.evidence || '', EVIDENCE_SNIPPET_CHARS);
+  }
+
+  return {
+    sessionId: blueprint.sessionId,
+    sessionState: blueprint.sessionState,
+    prUrl: blueprint.prUrl,
+    verdict: report.mergeVerdict.status,
+    score: report.mergeVerdict.overallScore,
+    unmetIds,
+    partialIds,
+    metIds,
+    unauthorizedPaths: unionPaths,
+    doNotTouch,
+    requiredFixes,
+    evidenceById,
+    ...(turn ? { turn } : {}),
+  };
+}
+
+/**
+ * Compiles a compact continuation prompt from a blueprint + brief.
+ * Restates the objective, repeats the same boundaries, seals MET criteria,
+ * lists unauthorized paths as revert-only, numbers the required fixes, and
+ * locks the audited branch / existing PR. Never embeds a diff, full model
+ * JSON, or lockfile hunks; never mentions AUTO_CREATE_PR (remediation omits
+ * that key). Body is capped at ~4000 chars excluding the contract id line.
+ */
+export function compileContinuationPrompt(input: {
+  blueprint: Blueprint;
+  brief: FailureBrief;
+}): string {
+  const { blueprint, brief } = input;
+  const prRef = brief.prUrl || blueprint.prUrl;
+  const header = `<!-- CONTINUATION_CONTRACT: ${blueprint.blueprintId} -->`;
+
+  const boundaryLines =
+    blueprint.fileBoundaries && blueprint.fileBoundaries.length > 0
+      ? blueprint.fileBoundaries.map((b) => `- \`${b.trim()}\``).join('\n')
+      : '- (no explicit boundaries recorded; stay within the files touched by the audited branch)';
+
+  const metSection =
+    brief.metIds.length > 0
+      ? brief.metIds.map((id) => `- \`${id}\`: verified MET — do not reopen, modify, or re-verify.`).join('\n')
+      : '- None verified MET yet — every criterion below is still open.';
+
+  const revertSection =
+    brief.unauthorizedPaths.length > 0
+      ? brief.unauthorizedPaths.map((p) => `- \`${p}\`: revert to base. No feature work here.`).join('\n')
+      : '- None — every touched file is in scope.';
+
+  const fixesSection =
+    brief.requiredFixes.length > 0
+      ? brief.requiredFixes
+          .slice(0, MAX_REQUIRED_FIXES)
+          .map((fix, i) => `${i + 1}. ${snippet(fix, FIX_LINE_CHARS)}`)
+          .join('\n')
+      : `No open fixes. Verdict: ${brief.verdict} (${brief.score}/100). Do not start new work and do not reopen the MET criteria above.`;
+
+  const main = [
+    '# Continuation Contract (follow-up — no new scope)',
+    '',
+    '## 1. Objective (restated, unchanged)',
+    blueprint.objective,
+    '',
+    '## 2. Authorized files (unchanged)',
+    boundaryLines,
+    '',
+    '## 3. MET criteria — do not reopen',
+    metSection,
+    '',
+    '## 4. Revert only — do not build on these',
+    revertSection,
+    '',
+    '## 5. Required fixes',
+    fixesSection,
+    '',
+  ].join('\n');
+
+  const lock = [
+    '## 6. Branch lock',
+    `Work ONLY on branch \`${blueprint.branchName}\`${prRef ? ` (PR: ${prRef})` : ''}.`,
+    'Commit and push there so the existing pull request updates.',
+    'Do not create a new branch and do not open a new pull request.',
+  ].join('\n');
+
+  const budget = MAX_CONTINUATION_CHARS - lock.length - 1;
+  const cappedMain = main.length > budget ? `${main.slice(0, budget - 1)}…` : main;
+
+  return `${header}\n\n${cappedMain}\n${lock}\n`;
+}
+
+/**
+ * Builds one outcome-log row. Verdict fields stay empty until an audit
+ * completes them via updateOutcomeRow — nothing is invented up front.
+ */
+export function buildOutcomeRow(input: {
+  blueprint: Pick<Blueprint, 'blueprintId' | 'repo' | 'sessionId'>;
+  turn: OutcomeTurn;
+  usedPriorSession: boolean;
+  verdict?: OutcomeLogRow['verdict'];
+  score?: number;
+  unauthorizedCount?: number;
+  unmetIds?: string[];
+  at?: string;
+}): OutcomeLogRow {
+  return {
+    blueprintId: input.blueprint.blueprintId,
+    repo: input.blueprint.repo,
+    sessionId: input.blueprint.sessionId,
+    turn: input.turn,
+    verdict: input.verdict,
+    score: input.score,
+    unauthorizedCount: input.unauthorizedCount,
+    unmetIds: input.unmetIds,
+    usedPriorSession: input.usedPriorSession,
+    at: input.at || new Date().toISOString(),
+  };
+}
+
+/**
+ * Appends a row, dropping oldest rows past MAX_OUTCOME_ROWS (50).
+ */
+export function appendOutcomeRow(rows: OutcomeLogRow[], row: OutcomeLogRow): OutcomeLogRow[] {
+  const next = [...(Array.isArray(rows) ? rows : []), row];
+  return next.length > MAX_OUTCOME_ROWS ? next.slice(next.length - MAX_OUTCOME_ROWS) : next;
+}
+
+/**
+ * Fills outcome fields on the most recent row matching blueprintId
+ * (and sessionId when given). Non-matching rows pass through untouched.
+ */
+export function updateOutcomeRow(
+  rows: OutcomeLogRow[],
+  match: { blueprintId: string; sessionId?: string },
+  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+): OutcomeLogRow[] {
+  const list = Array.isArray(rows) ? [...rows] : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const row = list[i];
+    if (row.blueprintId !== match.blueprintId) continue;
+    if (match.sessionId && row.sessionId !== match.sessionId) continue;
+    list[i] = { ...row, ...patch };
+    break;
+  }
+  return list;
+}
+
+function readOutcomeStorage(): string | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    return window.localStorage.getItem(OUTCOME_LOG_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Loads persisted rows; corrupt or missing storage yields []. */
+export function loadOutcomeLog(): OutcomeLogRow[] {
+  const raw = readOutcomeStorage();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as OutcomeLogRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOutcomeLog(rows: OutcomeLogRow[]): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(OUTCOME_LOG_KEY, JSON.stringify(rows));
+  } catch {
+    // Storage full or unavailable — the in-memory flow continues unaffected.
+  }
+}
+
+/** Appends one row to the persisted log (cap enforced). */
+export function recordOutcomeRow(row: OutcomeLogRow): OutcomeLogRow[] {
+  const next = appendOutcomeRow(loadOutcomeLog(), row);
+  saveOutcomeLog(next);
+  return next;
+}
+
+/** Patches the persisted log's matching row; returns the updated list. */
+export function updateStoredOutcomeRow(
+  match: { blueprintId: string; sessionId?: string },
+  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+): OutcomeLogRow[] {
+  const next = updateOutcomeRow(loadOutcomeLog(), match, patch);
+  saveOutcomeLog(next);
+  return next;
+}
+
+/** Raw JSON export of the log. No rates or aggregates are computed. */
+export function exportOutcomeLog(rows: OutcomeLogRow[]): string {
+  return JSON.stringify(Array.isArray(rows) ? rows : [], null, 2);
+}

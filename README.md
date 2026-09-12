@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-94%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-122%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -20,7 +20,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot organizes task contracts and manages the review loop when working with Google's Jules Cloud Coding Agent.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 94 automated unit & integration tests.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 122 automated unit & integration tests.
 - 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
 
 ---
@@ -114,7 +114,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the entire test suite (94 tests across 9 suites)
+# Run the entire test suite (122 tests across 12 suites)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -129,11 +129,14 @@ npm run test:watch
 | **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
 | **Jules Dispatch** | `jules-dispatch.test.ts` | 36 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode |
 | **Jules Session** | `jules-session.test.ts` | 7 | Session poll route, `harvestPullRequest`/`getJulesSession` harvest |
+| **Jules Message** | `jules-message.test.ts` | 8 | Follow-up `:sendMessage` lib + route, fail-closed 401/400/404 |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
 | **Audit Engine** | `audit-engine.test.ts` | 9 | Diff ingestion, error boundaries, `unauthorizedPaths` scope forcing |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
 | **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
+| **Outcome Memory** | `outcome-memory.test.ts` | 11 | FailureBrief build + continuation prompt caps |
+| **Outcome Log** | `outcome-log.test.ts` | 9 | Append/cap-50/turns/update/export, no aggregates |
 
 ---
 

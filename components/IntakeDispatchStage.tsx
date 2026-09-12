@@ -34,6 +34,7 @@ import { ContractPreviewModal } from './ContractPreviewModal';
 import { JulesTroubleshootModal, JulesSourceSummary } from './JulesTroubleshootModal';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { findJulesSource } from '@/lib/jules';
+import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
 import { Blueprint, AcceptanceCriterion, RepoInspectionResult, GeneratedCriteriaResponse } from '@/types';
 
 interface IntakeDispatchStageProps {
@@ -93,6 +94,10 @@ export function IntakeDispatchStage({
   // Dispatch state
   const [isDispatching, setIsDispatching] = React.useState(false);
   const [dispatchError, setDispatchError] = React.useState<string | null>(null);
+  const [dispatchDiagnostics, setDispatchDiagnostics] = React.useState<{
+    sourcesListed?: number;
+    sourcesTruncated?: boolean;
+  } | null>(null);
   const [dryRun, setDryRun] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [previewMarkdown, setPreviewMarkdown] = React.useState('');
@@ -301,6 +306,7 @@ export function IntakeDispatchStage({
 
   const handleDispatch = async () => {
     setDispatchError(null);
+    setDispatchDiagnostics(null);
     if (!repo.includes('/')) {
       setDispatchError('Please specify repository in "owner/repo" format.');
       return;
@@ -345,6 +351,11 @@ export function IntakeDispatchStage({
       const data = await response.json();
 
       if (!response.ok || data.success === false) {
+        // Surface bind diagnostics the API already returns (error string untouched).
+        setDispatchDiagnostics({
+          sourcesListed: typeof data.sourcesListed === 'number' ? data.sourcesListed : undefined,
+          sourcesTruncated: data.sourcesTruncated === true,
+        });
         throw new Error(data.error || 'Failed to dispatch job to Jules API.');
       }
 
@@ -368,6 +379,10 @@ export function IntakeDispatchStage({
 
       // Save to client localStorage vault
       onDispatchSuccess(blueprint);
+      // Outcome log: live creates open an initial turn (no verdict yet).
+      if (!dryRun) {
+        recordOutcomeRow(buildOutcomeRow({ blueprint, turn: 'initial', usedPriorSession: false }));
+      }
     } catch (err) {
       console.error('Dispatch error:', err);
       setDispatchError(err instanceof Error ? err.message : 'Unknown error during dispatch');
@@ -689,7 +704,17 @@ export function IntakeDispatchStage({
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Validation Notice</AlertTitle>
-                <AlertDescription className="text-xs">{dispatchError}</AlertDescription>
+                <AlertDescription className="text-xs">
+                  {dispatchError}
+                  {dispatchDiagnostics &&
+                    typeof dispatchDiagnostics.sourcesListed === 'number' && (
+                      <span className="block pt-1 font-mono text-[11px] opacity-90">
+                        Jules listed {dispatchDiagnostics.sourcesListed} source
+                        {dispatchDiagnostics.sourcesListed === 1 ? '' : 's'}
+                        {dispatchDiagnostics.sourcesTruncated ? ' (list truncated — more may exist)' : ''} for this key.
+                      </span>
+                    )}
+                </AlertDescription>
               </Alert>
             )}
 

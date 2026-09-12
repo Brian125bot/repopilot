@@ -413,8 +413,8 @@ Executes Gemini structured verification of the sanitized diff against criteria.
 RepoPilot includes 75 automated unit and integration tests executing under **Vitest**:
 
 ```
-Test Suites: 9 passed, 9 total
-Tests:       94 passed, 94 total
+Test Suites: 12 passed, 12 total
+Tests:       122 passed, 122 total
 ```
 
 Run test suite via:

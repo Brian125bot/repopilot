@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Copy,
   Check,
+  Download,
   GitBranch,
   Calendar,
   Terminal,
@@ -34,6 +35,11 @@ import { Badge } from './ui/badge';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { DiffViewerModal } from './DiffViewerModal';
 import { MergeScorecard } from './MergeScorecard';
+import {
+  exportOutcomeLog,
+  loadOutcomeLog,
+  updateStoredOutcomeRow,
+} from '@/lib/outcome-memory';
 import { Blueprint, AcceptanceCriterion, SanitizedDiffResult, PRMetadata, GeminiAuditReport } from '@/types';
 
 interface AuditEvaluationStageProps {
@@ -459,12 +465,37 @@ export function AuditEvaluationStage({
       }
 
       setAuditReport(data.report);
+      // Outcome log: complete the row for this blueprint with the audit outcome.
+      if (hydratedBlueprint) {
+        const completed = data.report as GeminiAuditReport;
+        updateStoredOutcomeRow(
+          { blueprintId: hydratedBlueprint.blueprintId, sessionId: hydratedBlueprint.sessionId },
+          {
+            verdict: completed.mergeVerdict.status,
+            score: completed.mergeVerdict.overallScore,
+            unauthorizedCount: sanitizedResult.stats?.unauthorizedPaths?.length ?? 0,
+            unmetIds: (completed.criteriaResults || [])
+              .filter((c) => c.status !== 'MET')
+              .map((c) => c.id),
+          }
+        );
+      }
     } catch (err) {
       console.error('Audit evaluation error:', err);
       setAuditError(err instanceof Error ? err.message : 'Evaluation failed.');
     } finally {
       setIsEvaluating(false);
     }
+  };
+
+  const handleExportOutcomeLog = () => {
+    const blob = new Blob([exportOutcomeLog(loadOutcomeLog())], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'repopilot-outcome-log.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -995,6 +1026,14 @@ export function AuditEvaluationStage({
           onSaveBlueprint={onSaveBlueprint}
         />
       )}
+
+      {/* Outcome log export (raw JSON, no aggregates) */}
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleExportOutcomeLog} className="text-xs gap-1.5">
+          <Download className="h-3.5 w-3.5" />
+          <span>Export outcome log (JSON)</span>
+        </Button>
+      </div>
     </div>
   );
 }

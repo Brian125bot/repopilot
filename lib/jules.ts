@@ -380,6 +380,98 @@ export function harvestPullRequest(session: Record<string, unknown>): {
   return {};
 }
 
+export interface SendJulesMessageParams {
+  apiKey: string;
+  sessionId: string;
+  prompt: string;
+  fetchFn?: typeof fetch;
+}
+
+export interface SendJulesMessageResult {
+  ok: boolean;
+  status: number;
+  sessionId?: string;
+  sessionUrl?: string;
+  state?: string;
+  data?: Record<string, unknown>;
+  error?: string;
+  details?: unknown;
+}
+
+/**
+ * Sends a follow-up message to an existing Jules session.
+ * Official path: POST /v1alpha/sessions/{id}:sendMessage with { prompt }.
+ * A successful response body is empty. Fail-closed: 401/400/404 never resolve
+ * to success. Never creates a session and never sets automationMode.
+ */
+export async function sendJulesMessage(
+  params: SendJulesMessageParams
+): Promise<SendJulesMessageResult> {
+  const { apiKey, sessionId, prompt, fetchFn } = params;
+  const _fetch = fetchFn ?? globalThis.fetch;
+
+  if (!apiKey || !apiKey.trim()) {
+    return { ok: false, status: 401, error: 'Missing Google Jules API key.' };
+  }
+
+  const numericId = (sessionId || '').trim().replace(/^sessions\//, '');
+  if (!numericId) {
+    return { ok: false, status: 400, error: 'Session ID is required to message a Jules session.' };
+  }
+
+  if (!prompt || !prompt.trim()) {
+    return { ok: false, status: 400, error: 'Prompt is required to message a Jules session.' };
+  }
+
+  try {
+    const response = await _fetch(`${JULES_API_BASE}/sessions/${numericId}:sendMessage`, {
+      method: 'POST',
+      headers: julesHeaders(apiKey),
+      body: JSON.stringify({ prompt }),
+    });
+
+    if (!response.ok) {
+      const { message, raw } = await readErrorBody(response);
+      return { ok: false, status: response.status, error: message, details: raw };
+    }
+
+    const rawText = await response.text().catch(() => '');
+    let data: Record<string, unknown> = {};
+    if (rawText.trim()) {
+      try {
+        data = JSON.parse(rawText) as Record<string, unknown>;
+      } catch {
+        data = { raw: rawText.slice(0, 300) };
+      }
+    }
+
+    const rawName = typeof data.name === 'string' && data.name ? data.name : `sessions/${numericId}`;
+    const sessionUrl =
+      typeof data.url === 'string' && data.url
+        ? data.url
+        : `https://jules.google.com/session/${numericId}`;
+
+    return {
+      ok: true,
+      status: response.status,
+      sessionId: rawName,
+      sessionUrl,
+      state: typeof data.state === 'string' ? data.state : undefined,
+      data,
+    };
+  } catch (networkError) {
+    return {
+      ok: false,
+      status: 502,
+      error:
+        networkError instanceof Error
+          ? networkError.message
+          : 'Network error connecting to Google Jules API',
+      details: networkError,
+    };
+  }
+}
+
 /** Reads a Jules session back, harvesting its state and any PR it opened. */
 export async function getJulesSession(
   apiKey: string,
