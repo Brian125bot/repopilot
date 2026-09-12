@@ -1150,7 +1150,17 @@ export function IntakeDispatchStage({
               <div className="flex flex-col sm:flex-row items-center gap-2 pt-2 border-t border-slate-200/60">
                 <select
                   value={newCriterionCategory}
-                  onChange={(e) => setNewCriterionCategory(e.target.value as any)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (
+                      value === 'functional' ||
+                      value === 'security' ||
+                      value === 'testing' ||
+                      value === 'constraint'
+                    ) {
+                      setNewCriterionCategory(value);
+                    }
+                  }}
                   className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 shrink-0 w-full sm:w-auto"
                 >
                   <option value="functional">Functional</option>

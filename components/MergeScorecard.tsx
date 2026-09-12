@@ -34,6 +34,11 @@ import { Progress } from './ui/progress';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
 import { compileRemediationPrompt } from '@/lib/prompt-compiler';
+import {
+  buildOutcomeRow,
+  compileContinuationPrompt,
+  recordOutcomeRow,
+} from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 
 interface MergeScorecardProps {
@@ -119,8 +124,12 @@ export function MergeScorecard({
     return 'https://github.com';
   }, [prMetadata, cleanRepo, auditedBranch]);
 
-  // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch
+  // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch.
+  // When a stored brief exists, continue from it instead of rebuilding from the raw report.
   const defaultRemediationPrompt = React.useMemo(() => {
+    if (blueprint?.lastBrief) {
+      return compileContinuationPrompt({ blueprint, brief: blueprint.lastBrief });
+    }
     return compileRemediationPrompt({
       targetBranch: auditedBranch,
       baseBranch: prMetadata?.baseBranch || 'main',
@@ -129,7 +138,18 @@ export function MergeScorecard({
       report,
       fileBoundaries,
     });
-  }, [copyableUrl, auditedBranch, prMetadata, report, fileBoundaries]);
+  }, [blueprint, copyableUrl, auditedBranch, prMetadata, report, fileBoundaries]);
+
+  // Follow-up messaging on an existing session (continuation turn)
+  const [followUpText, setFollowUpText] = React.useState('');
+  const [isSendingFollowUp, setIsSendingFollowUp] = React.useState(false);
+  const [followUpResult, setFollowUpResult] = React.useState<{
+    success: boolean;
+    sessionId?: string;
+    sessionUrl?: string | null;
+    error?: string;
+  } | null>(null);
+  const followUpSessionId = dispatchResult?.sessionId || blueprint?.sessionId || null;
 
   // Active prompt in view or edit
   const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
@@ -144,6 +164,44 @@ export function MergeScorecard({
     navigator.clipboard.writeText(activePrompt);
     setCopiedPrompt(true);
     setTimeout(() => setCopiedPrompt(false), 2000);
+  };
+
+  const handleSendFollowUp = async () => {
+    if (!followUpSessionId || !followUpText.trim()) return;
+    setIsSendingFollowUp(true);
+    setFollowUpResult(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (julesKey) headers['x-jules-api-key'] = julesKey;
+      const res = await fetch('/api/jules/message', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sessionId: followUpSessionId, prompt: followUpText.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to send follow-up message to Jules.');
+      }
+      setFollowUpResult({ success: true, sessionId: data.sessionId, sessionUrl: data.sessionUrl });
+      setFollowUpText('');
+      if (blueprint) {
+        recordOutcomeRow(
+          buildOutcomeRow({
+            blueprint: { ...blueprint, sessionId: data.sessionId || followUpSessionId },
+            turn: 'continuation',
+            usedPriorSession: true,
+          })
+        );
+      }
+    } catch (err) {
+      // Fail-closed fallback: show the brief, do not auto-dispatch anything.
+      setFollowUpResult({
+        success: false,
+        error: err instanceof Error ? err.message : 'Unknown follow-up error.',
+      });
+    } finally {
+      setIsSendingFollowUp(false);
+    }
   };
 
   const handleDispatchRemediationToJules = async () => {
@@ -204,6 +262,17 @@ export function MergeScorecard({
       if (onSaveBlueprint && data.blueprint) {
         onSaveBlueprint(data.blueprint);
       }
+
+      // Outcome log: a brief-backed remediation opens a new session from memory.
+      if (blueprint?.lastBrief && data.sessionId) {
+        recordOutcomeRow(
+          buildOutcomeRow({
+            blueprint: { ...blueprint, sessionId: data.sessionId },
+            turn: 'new-from-brief',
+            usedPriorSession: true,
+          })
+        );
+      }
     } catch (err) {
       console.error('Remediation dispatch failed:', err);
       setDispatchResult({
@@ -216,7 +285,15 @@ export function MergeScorecard({
     }
   };
 
-  const getVerdictStyle = (status: string) => {
+  const getVerdictStyle = (status: string): {
+    badge: 'success' | 'warning' | 'destructive';
+    label: string;
+    icon: typeof CheckCircle2;
+    bg: string;
+    textColor: string;
+    ringColor: string;
+    progressColor: string;
+  } => {
     switch (status) {
       case 'READY_TO_MERGE':
         return {
@@ -275,7 +352,7 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
             <div className="space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge
-                  variant={verdictStyle.badge as any}
+                  variant={verdictStyle.badge}
                   className="px-3 py-1 text-xs font-bold tracking-wide gap-1.5 uppercase shadow-xs"
                 >
                   <VerdictIcon className="h-4 w-4" />
@@ -530,25 +607,25 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
           {criteriaResults.map((result, idx) => {
             const statusConfig = {
               MET: {
-                badge: 'success',
+                badge: 'success' as const,
                 label: 'MET',
                 icon: CheckCircle2,
                 rowBg: 'hover:bg-emerald-50/20',
               },
               PARTIALLY_MET: {
-                badge: 'warning',
+                badge: 'warning' as const,
                 label: 'PARTIAL',
                 icon: AlertTriangle,
                 rowBg: 'hover:bg-amber-50/20',
               },
               UNMET: {
-                badge: 'destructive',
+                badge: 'destructive' as const,
                 label: 'UNMET',
                 icon: XCircle,
                 rowBg: 'hover:bg-red-50/20',
               },
             }[result.status] || {
-              badge: 'secondary',
+              badge: 'secondary' as const,
               label: result.status,
               icon: AlertCircle,
               rowBg: '',
@@ -582,7 +659,7 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
                   {/* Right Column: Status Badge & Line References */}
                   <div className="sm:text-right shrink-0 pl-7 sm:pl-0 space-y-2">
                     <Badge
-                      variant={statusConfig.badge as any}
+                      variant={statusConfig.badge}
                       className="gap-1 text-[11px] font-bold uppercase tracking-wider"
                     >
                       <StatusIcon className="h-3 w-3" />
@@ -865,6 +942,60 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
                     )}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {followUpSessionId && (
+              <div className="rounded-lg p-3.5 border border-slate-700 bg-slate-900/60 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <Send className="h-4 w-4 text-indigo-400 shrink-0" />
+                  <span className="font-bold text-xs text-white">
+                    Follow up on session{' '}
+                    <code className="font-mono text-[11px] text-slate-300">{followUpSessionId}</code>
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={followUpText}
+                  onChange={(e) => setFollowUpText(e.target.value)}
+                  placeholder="Message the existing Jules session (no new session is created)…"
+                  className="w-full rounded-md bg-black/40 border border-white/10 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleSendFollowUp}
+                    disabled={isSendingFollowUp || !followUpText.trim()}
+                    className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white gap-1.5"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {isSendingFollowUp ? 'Sending…' : 'Send follow-up'}
+                  </Button>
+                  {followUpResult?.success && (
+                    <span className="text-[11px] text-emerald-300">
+                      Delivered{ followUpResult.sessionUrl ? ' — ' : '' }
+                      {followUpResult.sessionUrl && (
+                        <a href={followUpResult.sessionUrl} target="_blank" rel="noreferrer" className="underline">
+                          open session
+                        </a>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {followUpResult && !followUpResult.success && (
+                  <div className="rounded-md border border-rose-500/40 bg-rose-950/50 p-2.5 text-[11px] text-rose-100 leading-relaxed">
+                    <p className="font-mono break-all">{followUpResult.error}</p>
+                    {blueprint?.lastBrief && (
+                      <p className="pt-1.5 text-rose-200/90">
+                        No automatic retry was sent. Brief holds {blueprint.lastBrief.requiredFixes.length} open fix
+                        {blueprint.lastBrief.requiredFixes.length === 1 ? '' : 'es'} at score {blueprint.lastBrief.score}
+                        {blueprint.lastBrief.unauthorizedPaths.length > 0 &&
+                          ` (${blueprint.lastBrief.unauthorizedPaths.length} path(s) to revert)`}
+                        {' '}— dispatch a fresh remediation above instead.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

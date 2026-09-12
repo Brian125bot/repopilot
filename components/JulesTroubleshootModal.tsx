@@ -206,6 +206,15 @@ export function JulesTroubleshootModal({
   }, [sources, searchFilter]);
 
   const handleTestProbe = async () => {
+    // The probe creates a real Jules session (quota + session noise), so confirm first.
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        'Run a live probe dispatch? This creates a real Jules session on the target branch and may consume API quota.'
+      )
+    ) {
+      return;
+    }
     setIsProbing(true);
     setProbeResult(null);
     try {

@@ -39,6 +39,7 @@ import {
   exportOutcomeLog,
   loadOutcomeLog,
   updateStoredOutcomeRow,
+  buildFailureBrief,
 } from '@/lib/outcome-memory';
 import { Blueprint, AcceptanceCriterion, SanitizedDiffResult, PRMetadata, GeminiAuditReport } from '@/types';
 
@@ -479,6 +480,22 @@ export function AuditEvaluationStage({
               .map((c) => c.id),
           }
         );
+        // Outcome memory: attach the compact brief so remediation can continue
+        // from it (in-memory + vault, without disturbing the active hydration).
+        const briefed: Blueprint = {
+          ...hydratedBlueprint,
+          prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+          lastBrief: buildFailureBrief(
+            completed,
+            {
+              ...hydratedBlueprint,
+              prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+            },
+            sanitizedResult.stats?.unauthorizedPaths || []
+          ),
+        };
+        setHydratedBlueprint(briefed);
+        persistBlueprintToVault(briefed);
       }
     } catch (err) {
       console.error('Audit evaluation error:', err);
@@ -496,6 +513,20 @@ export function AuditEvaluationStage({
     anchor.download = 'repopilot-outcome-log.json';
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Vault write-through without disturbing active hydration (mirrors page.tsx dedupe).
+  const persistBlueprintToVault = (bp: Blueprint) => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('repopilot_vault_blueprints');
+      const parsed = raw ? (JSON.parse(raw) as Blueprint[]) : [];
+      const list = Array.isArray(parsed) ? parsed : [];
+      const updated = [bp, ...list.filter((b) => b.blueprintId !== bp.blueprintId)];
+      localStorage.setItem('repopilot_vault_blueprints', JSON.stringify(updated));
+    } catch {
+      // Vault unavailable — in-memory brief still drives this session.
+    }
   };
 
   return (
