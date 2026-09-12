@@ -41,6 +41,10 @@ import {
   updateStoredOutcomeRow,
   buildFailureBrief,
 } from '@/lib/outcome-memory';
+import { parseAuditIngestTarget } from '@/lib/github';
+import { applySessionSnapshotToBlueprint, type SessionPollAction } from '@/lib/session-poll';
+import { matchVaultBlueprint, stage2Prefill } from '@/lib/stage-handoff';
+import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
 import { Blueprint, AcceptanceCriterion, SanitizedDiffResult, PRMetadata, GeminiAuditReport } from '@/types';
 
 interface AuditEvaluationStageProps {
@@ -161,9 +165,13 @@ export function AuditEvaluationStage({
   onSaveBlueprint,
   onSelectBlueprint,
 }: AuditEvaluationStageProps) {
-  const [prInput, setPrInput] = React.useState('acme-corp/api-gateway/pull/42');
+  const [prInput, setPrInput] = React.useState('');
   const [isFetchingDiff, setIsFetchingDiff] = React.useState(false);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
+  const [prPending, setPrPending] = React.useState(false);
+  const [pollStatus, setPollStatus] = React.useState<SessionPollAction | null>(null);
+  const autoFetchedUrlRef = React.useRef<string | null>(null);
+  const hydratedBlueprintRef = React.useRef<Blueprint | null>(null);
 
   // Ingested data
   const [prMetadata, setPrMetadata] = React.useState<PRMetadata | null>(null);
@@ -212,55 +220,155 @@ export function AuditEvaluationStage({
     return 'acme-corp/api-gateway';
   }, [prMetadata, prInput]);
 
+  const applyBlueprintContract = React.useCallback((bp: Blueprint, source: 'LOCAL_VAULT' | 'EMBEDDED_COMMENT') => {
+    setHydratedBlueprint(bp);
+    setHydratedCriteria(bp.criteria || []);
+    setHydratedBoundaries(bp.fileBoundaries || []);
+    setHydratedObjective(bp.objective || '');
+    setHydrationSource(source);
+    const prefill = stage2Prefill(bp);
+    if (prefill.prInput) setPrInput(prefill.prInput);
+    setPrPending(prefill.waitingForPr);
+  }, []);
+
   // Update when activeBlueprint changes from vault or Stage 1
   React.useEffect(() => {
     if (activeBlueprint) {
       const timer = setTimeout(() => {
-        setHydratedBlueprint(activeBlueprint);
-        setHydratedCriteria(activeBlueprint.criteria || []);
-        setHydratedBoundaries(activeBlueprint.fileBoundaries || []);
-        setHydratedObjective(activeBlueprint.objective || '');
-        setHydrationSource('LOCAL_VAULT');
-        if (activeBlueprint.repo && activeBlueprint.branchName) {
-          setPrInput(`${activeBlueprint.repo} (${activeBlueprint.branchName})`);
-        }
+        applyBlueprintContract(activeBlueprint, 'LOCAL_VAULT');
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [activeBlueprint]);
+  }, [activeBlueprint, applyBlueprintContract]);
 
   // If activeBlueprint is not passed but blueprints are present and unhydrated, hydrate first
   React.useEffect(() => {
     if (!activeBlueprint && blueprints.length > 0 && !hydratedBlueprint) {
       const timer = setTimeout(() => {
-        const first = blueprints[0];
-        setHydratedBlueprint(first);
-        setHydratedCriteria(first.criteria || []);
-        setHydratedBoundaries(first.fileBoundaries || []);
-        setHydratedObjective(first.objective || '');
-        setHydrationSource('LOCAL_VAULT');
-        if (first.repo && first.branchName) {
-          setPrInput(`${first.repo} (${first.branchName})`);
-        }
+        applyBlueprintContract(blueprints[0], 'LOCAL_VAULT');
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [activeBlueprint, blueprints, hydratedBlueprint]);
+  }, [activeBlueprint, blueprints, hydratedBlueprint, applyBlueprintContract]);
 
   // Handler to switch vault cache entry directly
   const handleSelectVaultEntry = (bp: Blueprint) => {
-    setHydratedBlueprint(bp);
-    setHydratedCriteria(bp.criteria || []);
-    setHydratedBoundaries(bp.fileBoundaries || []);
-    setHydratedObjective(bp.objective || '');
-    setHydrationSource('LOCAL_VAULT');
-    if (bp.repo && bp.branchName) {
-      setPrInput(`${bp.repo} (${bp.branchName})`);
-    } else if (bp.repo) {
-      setPrInput(bp.repo);
-    }
+    applyBlueprintContract(bp, 'LOCAL_VAULT');
     onSelectBlueprint?.(bp);
   };
+
+  React.useEffect(() => {
+    hydratedBlueprintRef.current = hydratedBlueprint;
+  }, [hydratedBlueprint]);
+
+  const ingestDiff = React.useCallback(
+    async (
+      payload: { prUrl?: string; repo?: string; headBranch?: string },
+      boundaries?: string[]
+    ) => {
+      setFetchError(null);
+      setPrPending(false);
+      setAuditReport(null);
+      setIsFetchingDiff(true);
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (githubPat) headers['x-github-pat'] = githubPat;
+        const res = await fetch('/api/audit/fetch-diff', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            ...payload,
+            fileBoundaries: boundaries || hydratedBoundaries,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          if (data.prPending) setPrPending(true);
+          throw new Error(data.error || 'Failed to fetch PR diff from GitHub.');
+        }
+
+        setPrMetadata(data.pr);
+        setSanitizedResult(data.sanitizedResult);
+        if (data.pr?.htmlUrl) setPrInput(data.pr.htmlUrl);
+
+        if (data.pr?.embeddedBlueprint) {
+          const bp = data.pr.embeddedBlueprint as Blueprint;
+          setHydratedBlueprint(bp);
+          setHydratedCriteria(bp.criteria || []);
+          setHydratedBoundaries(bp.fileBoundaries || []);
+          setHydratedObjective(bp.objective || '');
+          setHydrationSource('EMBEDDED_COMMENT');
+        } else {
+          const matching = matchVaultBlueprint(blueprints, {
+            prUrl: data.pr?.htmlUrl || payload.prUrl,
+            repo: payload.repo || extractedRepo,
+            headBranch: data.pr?.headBranch || payload.headBranch,
+            activeId: activeBlueprint?.blueprintId,
+          });
+
+          if (matching) {
+            setHydratedBlueprint(matching);
+            setHydratedCriteria(matching.criteria || []);
+            setHydratedBoundaries(matching.fileBoundaries || []);
+            setHydratedObjective(matching.objective || '');
+            setHydrationSource('LOCAL_VAULT');
+          } else if (hydratedBlueprintRef.current) {
+            setHydrationSource('LOCAL_VAULT');
+          } else if (hydratedCriteria.length === 0) {
+            setHydrationSource('MANUAL_EDIT');
+          }
+        }
+      } catch (err) {
+        console.error('Diff fetch error:', err);
+        setFetchError(err instanceof Error ? err.message : 'Failed to fetch PR diff');
+      } finally {
+        setIsFetchingDiff(false);
+      }
+    },
+    [githubPat, hydratedBoundaries, blueprints, extractedRepo, activeBlueprint, hydratedCriteria.length]
+  );
+
+  React.useEffect(() => {
+    const url = activeBlueprint?.prUrl?.trim();
+    if (!url || !activeBlueprint) return;
+    if (autoFetchedUrlRef.current === url) return;
+    autoFetchedUrlRef.current = url;
+    setPrInput(url);
+    void ingestDiff({ prUrl: url }, activeBlueprint.fileBoundaries);
+  }, [activeBlueprint, ingestDiff]);
+
+  const applyPolledSnapshot = React.useCallback(
+    (snapshot: {
+      sessionId?: string;
+      sessionUrl?: string;
+      state?: string;
+      prUrl?: string;
+      prTitle?: string;
+    }) => {
+      const current = hydratedBlueprintRef.current || activeBlueprint;
+      if (!current) return;
+      const patched = applySessionSnapshotToBlueprint(current, snapshot);
+      setHydratedBlueprint(patched);
+      onSaveBlueprint?.(patched);
+      if (patched.prUrl && autoFetchedUrlRef.current !== patched.prUrl) {
+        autoFetchedUrlRef.current = patched.prUrl;
+        setPrInput(patched.prUrl);
+        setPrPending(false);
+        void ingestDiff({ prUrl: patched.prUrl }, patched.fileBoundaries);
+      }
+    },
+    [activeBlueprint, ingestDiff, onSaveBlueprint]
+  );
+
+  useJulesSessionPoll({
+    enabled: Boolean(hydratedBlueprint?.sessionId) && !hydratedBlueprint?.prUrl && !sanitizedResult,
+    sessionId: hydratedBlueprint?.sessionId,
+    prUrl: hydratedBlueprint?.prUrl,
+    sessionState: hydratedBlueprint?.sessionState,
+    julesKey: julesKey || '',
+    onSnapshot: applyPolledSnapshot,
+    onStatus: setPollStatus,
+  });
 
   // Load Demo PR
   const handleLoadDemo = async () => {
@@ -357,75 +465,36 @@ export function AuditEvaluationStage({
   };
 
   const handleFetchPR = async () => {
-    setFetchError(null);
-    setAuditReport(null);
-
-    if (!prInput.trim()) {
-      setFetchError('Please enter a GitHub PR URL (e.g. https://github.com/owner/repo/pull/123)');
+    const parsed = parseAuditIngestTarget(prInput);
+    if (parsed.kind === 'pr') {
+      await ingestDiff({ prUrl: prInput.trim() });
       return;
     }
-
-    setIsFetchingDiff(true);
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (githubPat) headers['x-github-pat'] = githubPat;
-
-      const res = await fetch('/api/audit/fetch-diff', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          prUrl: prInput.trim(),
-          fileBoundaries: hydratedBoundaries,
-        }),
+    if (parsed.kind === 'branch') {
+      await ingestDiff({
+        repo: `${parsed.owner}/${parsed.repo}`,
+        headBranch: parsed.headBranch,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to fetch PR diff from GitHub.');
-      }
-
-      setPrMetadata(data.pr);
-      setSanitizedResult(data.sanitizedResult);
-
-      // Hydration Check:
-      // 1. Check embedded blueprint in PR body
-      if (data.pr?.embeddedBlueprint) {
-        const bp = data.pr.embeddedBlueprint as Blueprint;
-        setHydratedBlueprint(bp);
-        setHydratedCriteria(bp.criteria || []);
-        setHydratedBoundaries(bp.fileBoundaries || []);
-        setHydratedObjective(bp.objective || '');
-        setHydrationSource('EMBEDDED_COMMENT');
-      } else {
-        // 2. Check localStorage blueprints matching repo & headBranch or active blueprint
-        const matching = blueprints.find(
-          (b) =>
-            b.repo.toLowerCase() === prInput.toLowerCase() ||
-            (data.pr?.headBranch && b.branchName === data.pr.headBranch) ||
-            (activeBlueprint && b.blueprintId === activeBlueprint.blueprintId)
-        );
-
-        if (matching) {
-          setHydratedBlueprint(matching);
-          setHydratedCriteria(matching.criteria || []);
-          setHydratedBoundaries(matching.fileBoundaries || []);
-          setHydratedObjective(matching.objective || '');
-          setHydrationSource('LOCAL_VAULT');
-        } else if (hydratedBlueprint) {
-          setHydrationSource('LOCAL_VAULT');
-        } else if (hydratedCriteria.length === 0) {
-          setHydrationSource('MANUAL_EDIT');
-        }
-      }
-    } catch (err) {
-      console.error('Diff fetch error:', err);
-      setFetchError(err instanceof Error ? err.message : 'Failed to fetch PR diff');
-    } finally {
-      setIsFetchingDiff(false);
+      return;
     }
+    if (hydratedBlueprint?.repo && hydratedBlueprint?.branchName && !prInput.trim()) {
+      await ingestDiff({
+        repo: hydratedBlueprint.repo,
+        headBranch: hydratedBlueprint.branchName,
+      });
+      return;
+    }
+    setFetchError(
+      'Please enter a GitHub PR URL (e.g. https://github.com/owner/repo/pull/123) or look up the dispatched branch.'
+    );
+  };
+
+  const handleLookupDispatchedBranch = () => {
+    if (!hydratedBlueprint?.repo || !hydratedBlueprint?.branchName) return;
+    void ingestDiff({
+      repo: hydratedBlueprint.repo,
+      headBranch: hydratedBlueprint.branchName,
+    });
   };
 
   const handleRunAudit = async () => {
@@ -579,9 +648,9 @@ export function AuditEvaluationStage({
 
         <CardContent className="space-y-6 pt-6">
           {fetchError && (
-            <Alert variant="destructive">
+            <Alert variant={prPending ? 'warning' : 'destructive'}>
               <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Ingestion Error</AlertTitle>
+              <AlertTitle>{prPending ? 'Pull request not opened yet' : 'Ingestion Error'}</AlertTitle>
               <AlertDescription className="text-xs">{fetchError}</AlertDescription>
             </Alert>
           )}
@@ -754,18 +823,12 @@ export function AuditEvaluationStage({
                 </div>
 
                 {/* Pre-fill Action */}
-                {hydratedBlueprint.repo && (
+                {hydratedBlueprint.repo && hydratedBlueprint.branchName && (
                   <button
-                    onClick={() => {
-                      if (hydratedBlueprint.branchName) {
-                        setPrInput(`${hydratedBlueprint.repo} (${hydratedBlueprint.branchName})`);
-                      } else {
-                        setPrInput(hydratedBlueprint.repo);
-                      }
-                    }}
+                    onClick={handleLookupDispatchedBranch}
                     className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2 hover:bg-indigo-50/60 px-2 py-1 rounded transition-colors"
                   >
-                    Use target in PR search &rarr;
+                    Look up PR on {hydratedBlueprint.branchName} &rarr;
                   </button>
                 )}
               </div>
@@ -811,6 +874,58 @@ export function AuditEvaluationStage({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {(hydratedBlueprint?.sessionId || prPending || hydratedBlueprint?.prUrl) && (
+            <div
+              className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${
+                hydratedBlueprint?.prUrl
+                  ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                  : 'border-amber-200 bg-amber-50/70 text-amber-950'
+              }`}
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                {hydratedBlueprint?.prUrl ? (
+                  <span>
+                    PR ready for audit
+                    {hydratedBlueprint.prTitle ? `: ${hydratedBlueprint.prTitle}` : ''} on{' '}
+                    <code className="font-mono font-bold">{hydratedBlueprint.branchName}</code>
+                  </span>
+                ) : (
+                  <span>
+                    Waiting for Jules to open a PR on{' '}
+                    <code className="font-mono font-bold">{hydratedBlueprint?.branchName}</code>
+                    {hydratedBlueprint?.sessionState ? ` (${hydratedBlueprint.sessionState})` : ''}
+                    {pollStatus === 'pause-hidden' ? ' — paused while this tab is hidden' : ''}
+                    {pollStatus === 'poll' ? ' — watching session' : ''}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {hydratedBlueprint?.prUrl && (
+                  <a
+                    href={hydratedBlueprint.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-medium underline underline-offset-2"
+                  >
+                    Open PR <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+                {!hydratedBlueprint?.prUrl && hydratedBlueprint?.repo && hydratedBlueprint?.branchName && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLookupDispatchedBranch}
+                    disabled={isFetchingDiff}
+                    className="h-7 text-[11px] bg-white"
+                  >
+                    Look up branch PR
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 

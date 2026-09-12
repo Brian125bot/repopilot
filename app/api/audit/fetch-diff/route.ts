@@ -2,39 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
 import { PRMetadata } from '@/types';
-
-function parseGitHubPRUrl(input: string): { owner: string; repo: string; pullNumber: number } | null {
-  const trimmed = input.trim();
-  // Matches https://github.com/owner/repo/pull/123 or owner/repo/pull/123
-  const urlMatch = trimmed.match(/(?:https?:\/\/github\.com\/)?([^/]+)\/([^/]+)\/pull\/(\d+)/i);
-  if (urlMatch) {
-    return {
-      owner: urlMatch[1],
-      repo: urlMatch[2],
-      pullNumber: parseInt(urlMatch[3], 10),
-    };
-  }
-
-  // Matches owner/repo #123
-  const hashMatch = trimmed.match(/^([^/]+)\/([^#\s]+)(?:#|\s+)(\d+)$/);
-  if (hashMatch) {
-    return {
-      owner: hashMatch[1],
-      repo: hashMatch[2],
-      pullNumber: parseInt(hashMatch[3], 10),
-    };
-  }
-
-  return null;
-}
+import {
+  findPullRequestByHeadBranch,
+  parseAuditIngestTarget,
+  parseGitHubPRUrl,
+  parseOwnerRepo,
+} from '@/lib/github';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { prUrl, owner, repo, pullNumber, rawDiff, fileBoundaries = [] } = body;
+    const { prUrl, owner, repo, pullNumber, headBranch, branchName, rawDiff, fileBoundaries = [] } = body;
 
     const headerGithubPat = req.headers.get('x-github-pat');
-    const githubPat = headerGithubPat || process.env.GITHUB_PAT;
+    const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
     // Case 1: Direct raw diff supplied (e.g., local testing or pasted diff)
     if (rawDiff && typeof rawDiff === 'string' && rawDiff.trim().length > 0) {
@@ -57,30 +38,69 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Case 2: Ingest from GitHub PR
-    let prOwner = owner;
-    let prRepo = repo;
-    let prNum = pullNumber;
+    // Case 2: Ingest from GitHub PR URL, owner/repo#n, or repo + head branch.
+    let prOwner = typeof owner === 'string' ? owner.trim() : '';
+    let prRepo = typeof repo === 'string' ? repo.trim() : '';
+    let prNum = typeof pullNumber === 'number' ? pullNumber : Number(pullNumber) || 0;
+    let branch = String(headBranch || branchName || '').trim();
+
+    if (typeof repo === 'string' && repo.includes('/') && !prOwner) {
+      const parsedRepo = parseOwnerRepo(repo);
+      if (parsedRepo) {
+        prOwner = parsedRepo.owner;
+        prRepo = parsedRepo.repo;
+      }
+    }
 
     if (prUrl) {
-      const parsed = parseGitHubPRUrl(prUrl);
-      if (!parsed) {
+      const parsed = parseAuditIngestTarget(String(prUrl));
+      if (parsed.kind === 'pr') {
+        prOwner = parsed.owner;
+        prRepo = parsed.repo;
+        prNum = parsed.pullNumber;
+      } else if (parsed.kind === 'branch') {
+        prOwner = parsed.owner;
+        prRepo = parsed.repo;
+        branch = parsed.headBranch;
+      } else {
+        const legacy = parseGitHubPRUrl(String(prUrl));
+        if (!legacy) {
+          return NextResponse.json(
+            {
+              error:
+                'Invalid GitHub PR URL format. Expected: https://github.com/owner/repo/pull/123, owner/repo#123, or owner/repo plus a head branch.',
+            },
+            { status: 400 }
+          );
+        }
+        prOwner = legacy.owner;
+        prRepo = legacy.repo;
+        prNum = legacy.pullNumber;
+      }
+    }
+
+    if (!prNum && prOwner && prRepo && branch) {
+      const found = await findPullRequestByHeadBranch(prOwner, prRepo, branch, githubPat);
+      if (!found.ok) {
         return NextResponse.json(
           {
-            error:
-              'Invalid GitHub PR URL format. Expected: https://github.com/owner/repo/pull/123 or owner/repo#123',
+            error: found.error,
+            prPending: found.prPending === true,
+            repo: `${prOwner}/${prRepo}`,
+            headBranch: branch,
           },
-          { status: 400 }
+          { status: found.status || 404 }
         );
       }
-      prOwner = parsed.owner;
-      prRepo = parsed.repo;
-      prNum = parsed.pullNumber;
+      prNum = found.pull.number;
     }
 
     if (!prOwner || !prRepo || !prNum) {
       return NextResponse.json(
-        { error: 'Missing GitHub repository owner, repo, or pull request number.' },
+        {
+          error:
+            'Missing GitHub repository owner, repo, or pull request number. Provide a PR URL or a repo plus head branch.',
+        },
         { status: 400 }
       );
     }
@@ -95,7 +115,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Fetch PR details
     const prDetailsUrl = `https://api.github.com/repos/${prOwner}/${prRepo}/pulls/${prNum}`;
-    const prRes = await fetch(prDetailsUrl, { headers: githubHeaders });
+    const prRes = await fetch(prDetailsUrl, { headers: githubHeaders, cache: 'no-store' });
 
     if (!prRes.ok) {
       const errBody = await prRes.text();
@@ -130,7 +150,7 @@ export async function POST(req: NextRequest) {
     }
 
     let diffText = '';
-    const diffRes = await fetch(prDetailsUrl, { headers: diffHeaders });
+    const diffRes = await fetch(prDetailsUrl, { headers: diffHeaders, cache: 'no-store' });
 
     if (diffRes.ok) {
       diffText = await diffRes.text();

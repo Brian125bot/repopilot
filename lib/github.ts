@@ -177,3 +177,191 @@ export async function validateGitHubToken(
     };
   }
 }
+
+export function githubRequestHeaders(token?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'RepoPilot-AuditEngine',
+  };
+  const clean = token?.trim()?.replace(/^(?:bearer|token)\s+/i, '') || '';
+  if (clean) headers.Authorization = `Bearer ${clean}`;
+  return headers;
+}
+
+export function parseGitHubPRUrl(
+  input: string
+): { owner: string; repo: string; pullNumber: number } | null {
+  const trimmed = (input || '').trim();
+  const urlMatch = trimmed.match(/(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/i);
+  if (urlMatch) {
+    return {
+      owner: urlMatch[1],
+      repo: urlMatch[2].replace(/\.git$/i, ''),
+      pullNumber: parseInt(urlMatch[3], 10),
+    };
+  }
+
+  const hashMatch = trimmed.match(/^([^/\s]+)\/([^#\s]+)#(\d+)\s*$/);
+  if (hashMatch) {
+    return {
+      owner: hashMatch[1],
+      repo: hashMatch[2].replace(/\.git$/i, ''),
+      pullNumber: parseInt(hashMatch[3], 10),
+    };
+  }
+
+  return null;
+}
+
+export function parseOwnerRepo(input: string): { owner: string; repo: string } | null {
+  const cleaned = (input || '')
+    .trim()
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
+  const [owner, repo] = cleaned.split('/');
+  if (!owner || !repo) return null;
+  return { owner, repo: repo.replace(/\/.*$/, '') };
+}
+
+export type AuditIngestTarget =
+  | { kind: 'pr'; owner: string; repo: string; pullNumber: number }
+  | { kind: 'branch'; owner: string; repo: string; headBranch: string }
+  | { kind: 'unknown' };
+
+/** Parses a Stage 2 ingest field: PR URL, owner/repo#123, owner/repo#branch, or owner/repo (branch). */
+export function parseAuditIngestTarget(input: string): AuditIngestTarget {
+  const trimmed = (input || '').trim();
+  if (!trimmed) return { kind: 'unknown' };
+
+  const pr = parseGitHubPRUrl(trimmed);
+  if (pr) return { kind: 'pr', ...pr };
+
+  const paren = trimmed.match(/^([^/\s]+)\/([^/\s(]+)\s*\(([^)]+)\)\s*$/);
+  if (paren?.[3]?.trim()) {
+    return {
+      kind: 'branch',
+      owner: paren[1],
+      repo: paren[2].replace(/\.git$/i, ''),
+      headBranch: paren[3].trim(),
+    };
+  }
+
+  const hash = trimmed.match(/^([^/\s]+)\/([^#\s]+)#(.+)$/);
+  if (hash?.[3]?.trim() && !/^\d+$/.test(hash[3].trim())) {
+    return {
+      kind: 'branch',
+      owner: hash[1],
+      repo: hash[2].replace(/\.git$/i, ''),
+      headBranch: hash[3].trim(),
+    };
+  }
+
+  return { kind: 'unknown' };
+}
+
+export interface GitHubPullSummary {
+  number: number;
+  htmlUrl: string;
+  title: string;
+  state: string;
+  headBranch: string;
+  baseBranch: string;
+}
+
+function mapPullSummary(raw: {
+  number?: number;
+  html_url?: string;
+  title?: string;
+  state?: string;
+  head?: { ref?: string };
+  base?: { ref?: string };
+}): GitHubPullSummary | null {
+  if (!raw?.number) return null;
+  return {
+    number: raw.number,
+    htmlUrl: raw.html_url || '',
+    title: raw.title || `PR #${raw.number}`,
+    state: raw.state || 'open',
+    headBranch: raw.head?.ref || '',
+    baseBranch: raw.base?.ref || '',
+  };
+}
+
+/**
+ * Finds a pull request whose head is `owner:headBranch`.
+ * Tries open PRs first, then all states. Fail-closed 404 when none exist.
+ */
+export async function findPullRequestByHeadBranch(
+  owner: string,
+  repo: string,
+  headBranch: string,
+  token?: string | null,
+  fetchFn: typeof fetch = fetch
+): Promise<{ ok: true; pull: GitHubPullSummary } | { ok: false; status: number; error: string; prPending?: boolean }> {
+  const cleanOwner = owner.trim();
+  const cleanRepo = repo.trim();
+  const branch = headBranch.trim();
+  if (!cleanOwner || !cleanRepo || !branch) {
+    return { ok: false, status: 400, error: 'Repository owner, repo, and head branch are required.' };
+  }
+
+  const headers = githubRequestHeaders(token);
+  const head = `${cleanOwner}:${branch}`;
+
+  const list = async (state: 'open' | 'all') => {
+    const url =
+      `https://api.github.com/repos/${encodeURIComponent(cleanOwner)}/${encodeURIComponent(cleanRepo)}` +
+      `/pulls?head=${encodeURIComponent(head)}&state=${state}&per_page=5`;
+    const response = await fetchFn(url, { method: 'GET', headers, cache: 'no-store' });
+    return response;
+  };
+
+  try {
+    let response = await list('open');
+    if (!response.ok && response.status !== 404) {
+      const errBody = await response.text().catch(() => '');
+      const isRateLimited = response.status === 403 && errBody.includes('API rate limit exceeded');
+      return {
+        ok: false,
+        status: response.status,
+        error: isRateLimited
+          ? 'GitHub API rate limit reached. Please provide a GitHub Personal Access Token in API Settings.'
+          : `Failed to look up pull requests from GitHub (${response.status})`,
+      };
+    }
+
+    let rows = response.ok ? ((await response.json()) as unknown[]) : [];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      response = await list('all');
+      if (response.ok) {
+        rows = (await response.json()) as unknown[];
+      } else if (response.status !== 404) {
+        return {
+          ok: false,
+          status: response.status,
+          error: `Failed to look up pull requests from GitHub (${response.status})`,
+        };
+      } else {
+        rows = [];
+      }
+    }
+
+    const first = Array.isArray(rows) ? mapPullSummary(rows[0] as Parameters<typeof mapPullSummary>[0]) : null;
+    if (!first) {
+      return {
+        ok: false,
+        status: 404,
+        prPending: true,
+        error: `Jules has not opened a PR yet for branch "${branch}" on ${cleanOwner}/${cleanRepo}.`,
+      };
+    }
+    return { ok: true, pull: first };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      error: err instanceof Error ? err.message : 'Network error looking up GitHub pull request',
+    };
+  }
+}

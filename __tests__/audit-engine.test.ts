@@ -53,6 +53,129 @@ describe('Audit Engine & Evaluation Pipeline', () => {
       const data = await res.json();
       expect(data.error).toBeDefined();
     });
+
+    it('resolves a dispatched branch to a GitHub PR then ingests the diff', async () => {
+      const diffText = `diff --git a/src/limiter.ts b/src/limiter.ts
+--- a/src/limiter.ts
++++ b/src/limiter.ts
+@@ -1,1 +1,2 @@
+ const x = 1;
++const y = 2;
+`;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown, init?: RequestInit) => {
+        const url = String(typeof input === 'string' ? input : (input as { url: string }).url);
+        const accept = String((init?.headers as Record<string, string> | undefined)?.Accept || '');
+        if (url.includes('/pulls?head=')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              {
+                number: 42,
+                html_url: 'https://github.com/acme-corp/api-gateway/pull/42',
+                title: 'Add limiter',
+                state: 'open',
+                head: { ref: 'jules/rate-limiter' },
+                base: { ref: 'main' },
+              },
+            ],
+          } as unknown as Response;
+        }
+        if (url.includes('/pulls/42') && accept.includes('diff')) {
+          return { ok: true, status: 200, text: async () => diffText } as unknown as Response;
+        }
+        if (url.includes('/pulls/42')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              title: 'Add limiter',
+              number: 42,
+              user: { login: 'jules-agent' },
+              html_url: 'https://github.com/acme-corp/api-gateway/pull/42',
+              base: { ref: 'main' },
+              head: { ref: 'jules/rate-limiter' },
+              state: 'open',
+              body: '',
+            }),
+          } as unknown as Response;
+        }
+        return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+      });
+
+      try {
+        const req = new NextRequest('http://localhost:3000/api/audit/fetch-diff', {
+          method: 'POST',
+          headers: { 'x-github-pat': 'ghp_test' },
+          body: JSON.stringify({
+            repo: 'acme-corp/api-gateway',
+            headBranch: 'jules/rate-limiter',
+            fileBoundaries: ['src/limiter.ts'],
+          }),
+        });
+        const res = await fetchDiffPOST(req);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.success).toBe(true);
+        expect(data.pr.number).toBe(42);
+        expect(data.pr.headBranch).toBe('jules/rate-limiter');
+        expect(data.pr.htmlUrl).toContain('/pull/42');
+        expect(data.sanitizedResult.files[0].filename).toBe('src/limiter.ts');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('returns prPending when the dispatched branch has no GitHub PR yet', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as unknown as Response);
+
+      try {
+        const req = new NextRequest('http://localhost:3000/api/audit/fetch-diff', {
+          method: 'POST',
+          body: JSON.stringify({
+            repo: 'acme-corp/api-gateway',
+            headBranch: 'jules/not-opened',
+          }),
+        });
+        const res = await fetchDiffPOST(req);
+        expect(res.status).toBe(404);
+        const data = await res.json();
+        expect(data.prPending).toBe(true);
+        expect(data.error).toMatch(/has not opened a PR yet/i);
+        expect(data.headBranch).toBe('jules/not-opened');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('accepts the legacy repo (branch) ingest string as a branch lookup', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      } as unknown as Response);
+
+      try {
+        const req = new NextRequest('http://localhost:3000/api/audit/fetch-diff', {
+          method: 'POST',
+          body: JSON.stringify({
+            prUrl: 'acme-corp/api-gateway (jules/rate-limiter)',
+          }),
+        });
+        const res = await fetchDiffPOST(req);
+        expect(res.status).toBe(404);
+        const data = await res.json();
+        expect(data.prPending).toBe(true);
+        expect(data.repo).toBe('acme-corp/api-gateway');
+        expect(data.headBranch).toBe('jules/rate-limiter');
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
   });
 
   describe('/api/audit/evaluate Route', () => {

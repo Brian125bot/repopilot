@@ -35,7 +35,10 @@ import { JulesTroubleshootModal, JulesSourceSummary } from './JulesTroubleshootM
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { findJulesSource } from '@/lib/jules';
 import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
+import { applySessionSnapshotToBlueprint } from '@/lib/session-poll';
+import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
 import { Blueprint, AcceptanceCriterion, RepoInspectionResult, GeneratedCriteriaResponse } from '@/types';
+import type { SessionPollAction } from '@/lib/session-poll';
 
 interface IntakeDispatchStageProps {
   julesKey: string;
@@ -112,6 +115,8 @@ export function IntakeDispatchStage({
   const [copiedBlueprint, setCopiedBlueprint] = React.useState(false);
   const [isRefreshingSession, setIsRefreshingSession] = React.useState(false);
   const [refreshError, setRefreshError] = React.useState<string | null>(null);
+  const [pollStatus, setPollStatus] = React.useState<SessionPollAction | null>(null);
+  const confirmedBlueprintRef = React.useRef<Blueprint | null>(null);
 
   // Server Jules configuration check and connected sources
   const [hasServerJules, setHasServerJules] = React.useState<boolean | null>(null);
@@ -406,7 +411,45 @@ export function IntakeDispatchStage({
     setApiStatus(null);
     setWarningMessage(null);
     setRefreshError(null);
+    setPollStatus(null);
   };
+
+  React.useEffect(() => {
+    confirmedBlueprintRef.current = confirmedBlueprint;
+  }, [confirmedBlueprint]);
+
+  const applySessionSnapshot = React.useCallback(
+    (snapshot: {
+      sessionId?: string;
+      sessionUrl?: string;
+      state?: string;
+      prUrl?: string;
+      prTitle?: string;
+    }) => {
+      const current = confirmedBlueprintRef.current;
+      if (!current) return;
+      const patched = applySessionSnapshotToBlueprint(current, snapshot);
+      setConfirmedBlueprint(patched);
+      setConfirmedSessionId(patched.sessionId || confirmedSessionId);
+      if (patched.sessionUrl) setConfirmedSessionUrl(patched.sessionUrl);
+      if (patched.sessionState) setConfirmedSessionState(patched.sessionState);
+      onDispatchSuccess(patched);
+    },
+    [confirmedSessionId, onDispatchSuccess]
+  );
+
+  useJulesSessionPoll({
+    enabled:
+      apiStatus === 'DISPATCHED_TO_JULES' &&
+      Boolean(confirmedSessionId) &&
+      !confirmedBlueprint?.prUrl,
+    sessionId: confirmedSessionId,
+    prUrl: confirmedBlueprint?.prUrl,
+    sessionState: confirmedSessionState,
+    julesKey,
+    onSnapshot: applySessionSnapshot,
+    onStatus: setPollStatus,
+  });
 
   const handleRefreshSession = async () => {
     if (!confirmedSessionId) return;
@@ -417,26 +460,19 @@ export function IntakeDispatchStage({
       if (julesKey) headers['x-jules-api-key'] = julesKey;
       const res = await fetch(
         `/api/jules/session?id=${encodeURIComponent(confirmedSessionId)}`,
-        { headers }
+        { headers, cache: 'no-store' }
       );
       const data = await res.json();
       if (!res.ok || data.success === false) {
         throw new Error(data.error || 'Failed to refresh Jules session.');
       }
-      const patched: Blueprint = {
-        ...(confirmedBlueprint as Blueprint),
+      applySessionSnapshot({
         sessionId: data.sessionId || confirmedSessionId,
-        sessionUrl: data.sessionUrl || confirmedSessionUrl || undefined,
-        sessionState: data.state || undefined,
-        prUrl: data.prUrl || undefined,
-        prTitle: data.prTitle || undefined,
-      };
-      setConfirmedBlueprint(patched);
-      setConfirmedSessionId(patched.sessionId || confirmedSessionId);
-      if (patched.sessionUrl) setConfirmedSessionUrl(patched.sessionUrl);
-      if (patched.sessionState) setConfirmedSessionState(patched.sessionState);
-      // Reuse the existing save path so page.tsx activeBlueprint stays in sync.
-      onDispatchSuccess(patched);
+        sessionUrl: data.sessionUrl,
+        state: data.state,
+        prUrl: data.prUrl,
+        prTitle: data.prTitle,
+      });
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : 'Failed to refresh session.');
     } finally {
@@ -620,7 +656,15 @@ export function IntakeDispatchStage({
                 ) : (
                   apiStatus === 'DISPATCHED_TO_JULES' && (
                     <span className="text-[11px] text-slate-500">
-                      No pull request harvested yet — use Refresh session after Jules opens one.
+                      {pollStatus === 'poll' || pollStatus === 'pause-hidden'
+                        ? pollStatus === 'pause-hidden'
+                          ? 'PR watch paused while this tab is hidden.'
+                          : `Watching Jules for a PR on ${confirmedBlueprint.branchName} (every 15s, up to 20 min).`
+                        : pollStatus === 'stop-timeout'
+                          ? 'Stopped watching after 20 minutes — Refresh session or look up the branch in Stage 2.'
+                          : pollStatus === 'stop-terminal'
+                            ? 'Session finished without a harvested PR — look up the branch in Stage 2.'
+                            : 'No pull request harvested yet — watching the session, or Refresh after Jules opens one.'}
                     </span>
                   )
                 )}
@@ -672,7 +716,11 @@ export function IntakeDispatchStage({
                 onClick={() => onNavigateToStage2(confirmedBlueprint)}
                 className="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white text-xs gap-2 font-semibold shadow-md"
               >
-                <span>Proceed to Stage 2: Evaluation & Audit</span>
+                <span>
+                  {confirmedBlueprint.prUrl
+                    ? 'Audit this PR in Stage 2'
+                    : 'Proceed to Stage 2: Evaluation & Audit'}
+                </span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </div>
