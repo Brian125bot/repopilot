@@ -55,21 +55,11 @@ export function SettingsModal({
 
   // Check if server environment variables are available
   React.useEffect(() => {
-    // Check server Gemini API key
-    fetch('/api/audit/evaluate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ diff: 'test', criteria: [] }),
-    })
+    // Check server Gemini API key via presence probe (no Gemini call spent)
+    fetch('/api/audit/evaluate', { method: 'GET' })
       .then((res) => res.json())
       .then((data) => {
-        if (data.error && data.error.includes('criteria matrix is required')) {
-          setHasServerGemini(true);
-        } else if (data.error && data.error.includes('GEMINI_API_KEY is not configured')) {
-          setHasServerGemini(false);
-        } else {
-          setHasServerGemini(true);
-        }
+        setHasServerGemini(data.hasServerKey === true);
       })
       .catch(() => setHasServerGemini(null));
 

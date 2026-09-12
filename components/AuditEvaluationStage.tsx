@@ -328,6 +328,7 @@ export function AuditEvaluationStage({
             criteria: demoBlueprint.criteria,
             objective: demoBlueprint.objective,
             fileBoundaries: demoBlueprint.fileBoundaries,
+            unauthorizedPaths: data.sanitizedResult.stats?.unauthorizedPaths || [],
             prMetadata: meta,
           }),
         });
@@ -447,6 +448,7 @@ export function AuditEvaluationStage({
           criteria: hydratedCriteria,
           objective: hydratedObjective,
           fileBoundaries: hydratedBoundaries,
+          unauthorizedPaths: sanitizedResult.stats?.unauthorizedPaths || [],
           prMetadata,
         }),
       });

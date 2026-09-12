@@ -46,6 +46,16 @@ export interface Blueprint {
   createdAt: string;
   sessionId?: string;
   compiledPrompt?: string;
+  /** Jules source resource name this blueprint was dispatched against. */
+  sourceName?: string;
+  /** Canonical Jules web console URL for the session. */
+  sessionUrl?: string;
+  /** Last observed Jules session state (QUEUED, IN_PROGRESS, COMPLETED, ...). */
+  sessionState?: string;
+  /** Pull request harvested from the session once Jules opens one. */
+  prUrl?: string;
+  prTitle?: string;
+  isRemediation?: boolean;
 }
 
 export interface DiffFileSummary {

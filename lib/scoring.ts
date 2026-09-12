@@ -63,8 +63,47 @@ export function computeScorecardMetrics(
 }
 
 /**
+ * Overrides the model's scope verdict with the sanitizer's deterministic glob result.
+ * The diff sanitizer mechanically matches every touched path against the declared
+ * boundaries, so it outranks Gemini's opinion on whether the diff stayed in scope.
+ *
+ * Contract: callers pass an array every time (`[]` = clean). The Array.isArray
+ * coercion below is defense against a bad caller, not the API.
+ */
+export function forceScopeIntegrity(
+  scopeIntegrity: ScopeIntegrity,
+  sanitizerUnauthorizedPaths: string[]
+): ScopeIntegrity {
+  const sanitizerPaths = Array.isArray(sanitizerUnauthorizedPaths)
+    ? sanitizerUnauthorizedPaths
+    : [];
+
+  const declared = Array.isArray(scopeIntegrity?.unauthorizedFiles)
+    ? scopeIntegrity.unauthorizedFiles
+    : [];
+  const unauthorizedFiles = Array.from(
+    new Set([...sanitizerPaths, ...declared].filter(Boolean))
+  );
+
+  const strictlyInScope = unauthorizedFiles.length === 0;
+  const explanation =
+    strictlyInScope || !scopeIntegrity?.explanation
+      ? scopeIntegrity?.explanation || ''
+      : `${scopeIntegrity.explanation} (Scope violation confirmed by diff sanitizer: ${unauthorizedFiles.join(', ')}.)`;
+
+  return {
+    ...scopeIntegrity,
+    strictlyInScope,
+    unauthorizedFiles,
+    explanation,
+  };
+}
+
+/**
  * Reconciles Gemini model evaluation output with deterministic scoring calculations.
  * Protects against model score drift or over-optimistic verdicts.
+ * Any sanitizer-flagged path forces strictlyInScope=false, the 35-pt penalty,
+ * and caps the verdict at NEEDS_REVISION/BLOCKED — never READY_TO_MERGE.
  */
 export function reconcileAuditReport(
   rawReport: {
@@ -72,20 +111,28 @@ export function reconcileAuditReport(
     scopeIntegrity: ScopeIntegrity;
     blastRadius: BlastRadius;
     mergeVerdict: MergeVerdict;
-  }
+  },
+  unauthorizedPaths: string[]
 ): {
   criteriaResults: CriterionResult[];
   scopeIntegrity: ScopeIntegrity;
   blastRadius: BlastRadius;
   mergeVerdict: MergeVerdict;
 } {
-  const metrics = computeScorecardMetrics(rawReport);
+  const paths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
+  const scopeIntegrity = forceScopeIntegrity(
+    rawReport.scopeIntegrity,
+    paths
+  );
+  const scoped = { ...rawReport, scopeIntegrity };
+
+  const metrics = computeScorecardMetrics(scoped);
 
   const finalScore = metrics.calculatedScore;
   const finalVerdict = metrics.expectedVerdict;
 
   return {
-    ...rawReport,
+    ...scoped,
     mergeVerdict: {
       ...rawReport.mergeVerdict,
       status: finalVerdict,

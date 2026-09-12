@@ -32,7 +32,7 @@
               |                                                    |                     |
               v                                                    v                     v
    Google Jules Cloud API                               GitHub REST API             Google Gemini
-   (https://jules.googleapis.com)                      (api.github.com)           (Gemini 2.5 Flash)
+   (https://jules.googleapis.com)                      (api.github.com)           (Gemini 3.8 Flash)
 ```
 
 ---
@@ -84,7 +84,7 @@ export function extractBlueprintFromMarkdown(content: string): Blueprint | null 
 LLMs have finite context windows and high token costs. Furthermore, large lockfile diffs (such as a 30,000-line `package-lock.json` change) trigger false positives and degrade model reasoning.
 
 #### Boundary Glob Matching Algorithm
-RepoPilot converts declared POSIX boundary globs into strict JavaScript `RegExp` objects with recursive wildcard support:
+RepoPilot converts declared POSIX boundary globs into strict JavaScript `RegExp` objects with recursive wildcard support. See the single implementation in `lib/diff-sanitizer.ts:globToRegex` (do not fork the snippet):
 
 ```typescript
 export function globToRegex(glob: string): RegExp {
@@ -126,7 +126,7 @@ If a sanitized diff exceeds `MAX_DIFF_CHARS` (default: 120,000 characters ~ 30,0
 
 ### 2.3 Gemini PR Audit Engine (`app/api/audit/evaluate/route.ts`)
 
-The evaluation engine leverages the Google Gen AI SDK (`@google/genai`) and `gemini-2.5-flash` with strict structured output schemas.
+The evaluation engine leverages the Google Gen AI SDK (`@google/genai`) and `gemini-3.8-flash` with strict structured output schemas, reconciled by `reconcileAuditReport(report, unauthorizedPaths)` so the sanitizer outranks the model on scope.
 
 #### Structured Schema Definition
 Using `Type.OBJECT` enforcement, Gemini is constrained to return a predictable JSON payload:
@@ -196,12 +196,9 @@ const responseSchema = {
 ```
 
 #### Deterministic Scoring Invariants
-1. **Scope Penalty**: If `scopeIntegrity.withinDeclaredBoundaries === false`, a mandatory 35-point penalty is applied, and the score is capped at $\le 50$.
-2. **Criteria Weighting**: Unmet functional criteria impose an 18-point deduction; partially met criteria impose an 8-point deduction.
-3. **Verdict Gates**:
-   - `overallScore >= 90` $\rightarrow$ `READY_TO_MERGE`
-   - `70 <= overallScore < 90` $\rightarrow$ `NEEDS_REVISION`
-   - `overallScore < 70` $\rightarrow$ `BLOCKED`
+1. **Scope Penalty**: If `scopeIntegrity.strictlyInScope === false`, `computeScorecardMetrics` applies a deterministic 35-point deduction (`forceScopeIntegrity` outranks the model; empty `unauthorizedPaths` = clean, omitted = unverified).
+2. **Criteria Weighting**: Compliance ratio = `(MET + 0.5*PARTIALLY_MET) / total`; scope penalty subtracted, clamped 0–100.
+3. **Verdict Gates**: derived from `computeScorecardMetrics` (`READY_TO_MERGE` only when in-scope, no UNMET, no PARTIALLY_MET, score ≥85).
 
 ---
 
@@ -213,14 +210,19 @@ Jules sessions are created via REST requests to `https://jules.googleapis.com/v1
 ```json
 {
   "prompt": "Full compiled markdown prompt with boundaries and embedded blueprint",
+  "title": "[RepoPilot] ...",
   "sourceContext": {
+    "source": "sources/xxx (bound via GET /v1alpha/sources, never invented)",
     "githubRepoContext": {
-      "repo": "owner/repo",
       "startingBranch": "jules/rate-limiter"
     }
-  }
+  },
+  "requirePlanApproval": false,
+  "automationMode": "AUTO_CREATE_PR (first-pass only; omitted on remediation)"
 }
 ```
+
+First-pass sessions request `AUTO_CREATE_PR`; remediation sessions omit `automationMode` so fixes push onto the audited branch. Dispatch returns `Blueprint{sourceName,sessionUrl,sessionState}` with honest empty `prUrl`; poll `GET /api/jules/session?id=` to harvest `state/prUrl/prTitle`.
 
 #### The `startingBranch` Preservation Invariant
 When dispatching an initial task:
@@ -290,9 +292,19 @@ Creates an asynchronous coding session with Google Jules or simulates a dry run.
   }
   ```
 - **Responses**:
-  - `200 OK`: `{ "success": true, "sessionId": "...", "sessionUrl": "...", "blueprint": {...} }`
+  - `200 OK`: `{ "success": true, "sessionId": "...", "sessionUrl": "...", "blueprint": {"sourceName": "...", "sessionUrl": "...", "sessionState": "...", "prUrl": null} }`
   - `400 Bad Request`: Validation failure.
   - `401 Unauthorized`: Missing or invalid Jules API key.
+  - `404`: Repo not in `GET /v1alpha/sources` (fail-closed, never invents source).
+
+---
+
+### `GET /api/jules/session?id=sessions/xxx`
+Reads a Jules session back via `getJulesSession`, harvesting `state` and `outputs[].pullRequest`.
+
+- **Headers**: `x-jules-api-key`
+- **Response**: `{ "success": true, "sessionId": "...", "sessionUrl": "...", "state": "...", "prUrl": "...", "prTitle": "..." }`
+- **Errors**: `401` no key, `400` no id, passthrough Jules status otherwise.
 
 ---
 
@@ -316,7 +328,7 @@ Discovers authorized GitHub repositories configured in the user's Jules workspac
 Retrieves and sanitizes a pull request diff from GitHub.
 
 - **Headers**:
-  - `x-github-token`: Optional GitHub PAT for private repositories.
+  - `x-github-pat`: Optional GitHub PAT for private repositories.
 - **Request Body**:
   ```json
   {
@@ -361,11 +373,13 @@ Executes Gemini structured verification of the sanitized diff against criteria.
       { "id": "1", "text": "Extracts client IP", "category": "functional" }
     ],
     "fileBoundaries": ["src/middleware/**"],
+    "unauthorizedPaths": ["package.json"],
     "repo": "owner/repo",
     "prTitle": "PR Title",
     "prNumber": 42
   }
   ```
+  `unauthorizedPaths` comes from `sanitizedResult.stats.unauthorizedPaths` and forces scope via `forceScopeIntegrity` (empty = clean, omitted = unverified).
 - **Response**:
   ```json
   {
@@ -388,7 +402,7 @@ Executes Gemini structured verification of the sanitized diff against criteria.
 
 ## 5. Security & Isolation Architecture
 
-1. **Ephemeral Key Transport**: Client-configured API keys are stored solely in the user's browser `localStorage` and dispatched over HTTPS headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-token`). They are never persisted in databases, file systems, or server logs.
+1. **Ephemeral Key Transport**: Client-configured API keys are stored solely in the user's browser `localStorage` and dispatched over HTTPS headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-pat`). They are never persisted in databases, file systems, or server logs.
 2. **Context Minimization**: Sensitive build artifacts, environment configuration files (`.env`), and keys are blocked by the sanitizer before forwarding to Gemini.
 3. **Strict Schema Type Casting**: Model responses cannot inject rogue executable scripts or malformed HTML because outputs are bound to standard JSON schemas and sanitized prior to rendering.
 
@@ -396,12 +410,11 @@ Executes Gemini structured verification of the sanitized diff against criteria.
 
 ## 6. Verification & Automated Test Coverage
 
-RepoPilot includes 36 automated unit and integration tests executing under **Vitest**:
+RepoPilot includes 75 automated unit and integration tests executing under **Vitest**:
 
 ```
-Test Suites: 7 passed, 7 total
-Tests:       36 passed, 36 total
-Duration:    ~2.5s
+Test Suites: 9 passed, 9 total
+Tests:       83 passed, 83 total
 ```
 
 Run test suite via:

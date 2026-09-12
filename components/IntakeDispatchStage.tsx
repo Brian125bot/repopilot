@@ -92,6 +92,7 @@ export function IntakeDispatchStage({
   // Dispatch state
   const [isDispatching, setIsDispatching] = React.useState(false);
   const [dispatchError, setDispatchError] = React.useState<string | null>(null);
+  const [dryRun, setDryRun] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const [previewMarkdown, setPreviewMarkdown] = React.useState('');
 
@@ -99,9 +100,12 @@ export function IntakeDispatchStage({
   const [confirmedBlueprint, setConfirmedBlueprint] = React.useState<Blueprint | null>(null);
   const [confirmedSessionId, setConfirmedSessionId] = React.useState<string | null>(null);
   const [confirmedSessionUrl, setConfirmedSessionUrl] = React.useState<string | null>(null);
+  const [confirmedSessionState, setConfirmedSessionState] = React.useState<string | null>(null);
   const [apiStatus, setApiStatus] = React.useState<string | null>(null);
   const [warningMessage, setWarningMessage] = React.useState<string | null>(null);
   const [copiedBlueprint, setCopiedBlueprint] = React.useState(false);
+  const [isRefreshingSession, setIsRefreshingSession] = React.useState(false);
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
 
   // Server Jules configuration check and connected sources
   const [hasServerJules, setHasServerJules] = React.useState<boolean | null>(null);
@@ -336,6 +340,7 @@ export function IntakeDispatchStage({
           fileBoundaries: parsedBoundaries,
           objective: objective.trim(),
           criteria,
+          dryRun,
         }),
       });
 
@@ -350,10 +355,18 @@ export function IntakeDispatchStage({
       setConfirmedSessionId(data.sessionId);
       setApiStatus(data.apiStatus);
       setWarningMessage(data.warningMessage);
+      // Prefer the canonical session URL from the dispatch payload; fall back to
+      // the raw Jules response, then to a constructed console URL.
       const sessionUrl =
+        data.sessionUrl ||
+        (blueprint as Blueprint)?.sessionUrl ||
         data.julesApiResponse?.url ||
         (data.sessionId ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, '')}` : null);
       setConfirmedSessionUrl(sessionUrl);
+      setConfirmedSessionState(
+        (blueprint as Blueprint)?.sessionState || data.sessionState || null
+      );
+      setRefreshError(null);
 
       // Save to client localStorage vault
       onDispatchSuccess(blueprint);
@@ -376,8 +389,46 @@ export function IntakeDispatchStage({
     setConfirmedBlueprint(null);
     setConfirmedSessionId(null);
     setConfirmedSessionUrl(null);
+    setConfirmedSessionState(null);
     setApiStatus(null);
     setWarningMessage(null);
+    setRefreshError(null);
+  };
+
+  const handleRefreshSession = async () => {
+    if (!confirmedSessionId) return;
+    setIsRefreshingSession(true);
+    setRefreshError(null);
+    try {
+      const headers: Record<string, string> = {};
+      if (julesKey) headers['x-jules-api-key'] = julesKey;
+      const res = await fetch(
+        `/api/jules/session?id=${encodeURIComponent(confirmedSessionId)}`,
+        { headers }
+      );
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to refresh Jules session.');
+      }
+      const patched: Blueprint = {
+        ...(confirmedBlueprint as Blueprint),
+        sessionId: data.sessionId || confirmedSessionId,
+        sessionUrl: data.sessionUrl || confirmedSessionUrl || undefined,
+        sessionState: data.state || undefined,
+        prUrl: data.prUrl || undefined,
+        prTitle: data.prTitle || undefined,
+      };
+      setConfirmedBlueprint(patched);
+      setConfirmedSessionId(patched.sessionId || confirmedSessionId);
+      if (patched.sessionUrl) setConfirmedSessionUrl(patched.sessionUrl);
+      if (patched.sessionState) setConfirmedSessionState(patched.sessionState);
+      // Reuse the existing save path so page.tsx activeBlueprint stays in sync.
+      onDispatchSuccess(patched);
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : 'Failed to refresh session.');
+    } finally {
+      setIsRefreshingSession(false);
+    }
   };
 
   return (
@@ -449,6 +500,18 @@ export function IntakeDispatchStage({
                   Open Active Session in Jules Console <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
+              {apiStatus === 'DISPATCHED_TO_JULES' && confirmedSessionId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefreshSession}
+                  disabled={isRefreshingSession}
+                  className="bg-white/10 border-white/40 text-white hover:bg-white/20 text-xs gap-1.5"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingSession ? 'animate-spin' : ''}`} />
+                  {isRefreshingSession ? 'Refreshing…' : 'Refresh session'}
+                </Button>
+              )}
               {apiStatus !== 'DISPATCHED_TO_JULES' && (
                 <Button
                   variant="outline"
@@ -480,6 +543,12 @@ export function IntakeDispatchStage({
                 <AlertDescription className="text-xs text-amber-800 leading-relaxed">
                   {warningMessage}
                 </AlertDescription>
+              </Alert>
+            )}
+            {refreshError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-xs">{refreshError}</AlertDescription>
               </Alert>
             )}
 
@@ -518,6 +587,32 @@ export function IntakeDispatchStage({
                 </a>
               </div>
             </div>
+
+            {(confirmedSessionState || confirmedBlueprint.prUrl || confirmedBlueprint.sessionUrl) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {confirmedSessionState && (
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2.5 py-1 font-mono text-slate-700 border border-slate-200">
+                    State: <strong>{confirmedSessionState}</strong>
+                  </span>
+                )}
+                {confirmedBlueprint.prUrl ? (
+                  <a
+                    href={confirmedBlueprint.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100"
+                  >
+                    {confirmedBlueprint.prTitle || 'Open pull request'} <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  apiStatus === 'DISPATCHED_TO_JULES' && (
+                    <span className="text-[11px] text-slate-500">
+                      No pull request harvested yet — use Refresh session after Jules opens one.
+                    </span>
+                  )
+                )}
+              </div>
+            )}
 
             <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -1160,6 +1255,19 @@ export function IntakeDispatchStage({
               >
                 API Credentials
               </button>
+
+              <label
+                className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer ml-1"
+                title="Simulate dispatch locally without calling Google Jules (no API key needed)"
+              >
+                <input
+                  type="checkbox"
+                  checked={dryRun}
+                  onChange={(e) => setDryRun(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
+                />
+                <span>Dry-run (no Jules key needed)</span>
+              </label>
             </div>
 
             <Button
@@ -1172,6 +1280,11 @@ export function IntakeDispatchStage({
                 <>
                   <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
                   <span>Compiling & Dispatching...</span>
+                </>
+              ) : dryRun ? (
+                <>
+                  <Send className="h-3.5 w-3.5" />
+                  <span>Simulate Dispatch (Dry Run)</span>
                 </>
               ) : (
                 <>

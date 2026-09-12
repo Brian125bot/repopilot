@@ -33,7 +33,7 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
   }
   -->
   ```
-- **Dispatch Engine (`/api/jules/dispatch`):** Communicates directly with Google Jules Cloud REST API (`https://jules.googleapis.com/v1alpha/sessions`). Supports a fallback dry-run mode that generates local blueprints for offline testing.
+- **Dispatch Engine (`/api/jules/dispatch`):** Binds `owner/repo` to a real `sources[].name` via `GET /v1alpha/sources` (fail-closed 404 `Source not connected in Jules`, never invents `sources/github/...`). First-pass requests `AUTO_CREATE_PR`; remediation omits `automationMode` with `startingBranch=headBranch`. Returns `Blueprint{sourceName,sessionUrl,sessionState}` with honest empty `prUrl`; poll via `GET /api/jules/session?id=`. Supports a fallback dry-run mode that generates local blueprints for offline testing.
 
 ### 2.2 Stage 2: Audit & Remediation (`AuditEvaluationStage.tsx` & `MergeScorecard.tsx`)
 - **Responsibility:** Evaluates candidate pull requests against the original contract.
@@ -46,7 +46,8 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
   - Strips lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, etc.) to conserve token budget.
   - Parses git diff hunks and calculates total additions/deletions.
 - **Gemini Structured Audit (`/api/audit/evaluate`):**
-  - Sends sanitized diff and acceptance criteria to Google Gemini.
+  - Sends sanitized diff, acceptance criteria, and sanitizer `unauthorizedPaths` to Google Gemini.
+  - `forceScopeIntegrity` lets the sanitizer outrank the model: any flagged path forces `strictlyInScope=false` (empty = clean, omitted = unverified).
   - Returns schema-validated JSON with:
     - Per-criterion verdicts (`MET`, `PARTIALLY_MET`, `UNMET`) and line-number references.
     - Scope integrity assessment and unauthorized files list.
@@ -76,9 +77,15 @@ sequenceDiagram
     %% Stage 1
     Developer->>UI: Input Repo, Scope Globs & Acceptance Criteria
     UI->>Server: POST /api/jules/dispatch (with contract)
-    Server->>Jules: POST /v1alpha/sessions (sourceContext, prompt)
-    Jules-->>Server: 200 OK (sessionId, sessionUrl)
-    Server-->>UI: Dispatched (Saved to Blueprint Vault)
+    Server->>Jules: GET /v1alpha/sources (bind sources[].name)
+    Server->>Jules: POST /v1alpha/sessions (sourceContext.source=sourceName, prompt, automationMode)
+    Jules-->>Server: 200 OK (sessionId, sessionUrl, state)
+    Server-->>UI: Dispatched with Blueprint{sourceName,sessionUrl,sessionState,prUrl:empty} (Saved to Blueprint Vault)
+    Developer->>UI: Refresh session on confirmation card
+    UI->>Server: GET /api/jules/session?id=sessions/xxx
+    Server->>Jules: GET /v1alpha/sessions/xxx
+    Jules-->>Server: state + outputs[].pullRequest
+    Server-->>UI: Patched Blueprint{sessionState,prUrl,prTitle}
 
     %% Asynchronous Jules Work
     Note over Jules,GitHub: Jules works in cloud, writes code, pushes branch & opens PR
@@ -88,10 +95,11 @@ sequenceDiagram
     UI->>Server: POST /api/audit/fetch-diff
     Server->>GitHub: GET /repos/:owner/:repo/pulls/:id
     GitHub-->>Server: PR Metadata, Body & Raw Diff
-    Server->>Server: Sanitize diff (filter lockfiles, match globs)
+    Server->>Server: Sanitize diff (filter lockfiles, match globs → unauthorizedPaths)
     Server-->>UI: Sanitized Diff & Hydrated Blueprint Criteria
 
-    UI->>Server: POST /api/audit/evaluate (Diff + Criteria)
+    UI->>Server: POST /api/audit/evaluate (Diff + Criteria + unauthorizedPaths)
+    Server->>Server: forceScopeIntegrity (sanitizer outranks model)
     Server->>Gemini: generateContent (Structured Schema)
     Gemini-->>Server: JSON Audit Report (Score, Evidence, Verdict)
     Server-->>UI: Structured Scorecard
@@ -119,7 +127,7 @@ To guarantee agent adherence to file boundaries, path matching must satisfy stri
 3. **Single wildcards (`*`):**
    - Matches characters strictly within a single directory segment: `[^/]*`.
 4. **Boundary Penalty Calculation:**
-   - Any modification to a file outside the declared boundary globs incurs an immediate 35-point penalty on the Merge Readiness Scorecard and caps the overall score at <= 50.
+   - Any modification to a file outside the declared boundary globs incurs a deterministic 35-point deduction via `computeScorecardMetrics` (`forceScopeIntegrity` outranks the model verdict).
 
 ---
 

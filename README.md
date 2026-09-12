@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-82%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-83%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -20,7 +20,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot organizes task contracts and manages the review loop when working with Google's Jules Cloud Coding Agent.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 82 automated unit & integration tests.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 83 automated unit & integration tests.
 - 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
 
 ---
@@ -114,7 +114,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the entire test suite (82 tests across 9 suites)
+# Run the entire test suite (83 tests across 9 suites)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -131,7 +131,7 @@ npm run test:watch
 | **Jules Session** | `jules-session.test.ts` | 7 | Session poll route, `harvestPullRequest`/`getJulesSession` harvest |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
-| **Audit Engine** | `audit-engine.test.ts` | 8 | Diff ingestion, error boundaries, `unauthorizedPaths` scope forcing |
+| **Audit Engine** | `audit-engine.test.ts` | 9 | Diff ingestion, error boundaries, `unauthorizedPaths` scope forcing |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
 | **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
 
@@ -163,9 +163,19 @@ npm test
 
 Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot application.
 
+### Hosted Use (Vercel, no server setup)
+
+RepoPilot runs fully hosted with **zero environment variables**. Each user brings their own keys in the browser:
+
+1. Deploy with the Vercel Next.js preset (`npm ci` → `npm run build`). No env vars required.
+2. Open the deployed URL. A welcome banner offers **Configure API keys** — Jules, Gemini, and GitHub PAT are entered in the in-app Settings modal, stored only in that browser's `localStorage`, and sent per-request via `x-jules-api-key`, `x-gemini-api-key`, `x-github-pat` headers. The server persists nothing, so one deployment serves many users.
+3. No Jules key yet? Tick **Dry-run (no Jules key needed)** on the Stage 1 dispatch card to simulate a dispatch locally, or use **Load Demo PR** in Stage 2.
+
 ---
 
 ## Environment Variables
+
+All optional. On a hosted deployment you can skip this section entirely and enter keys in the app's Settings modal instead.
 
 | Variable | Description | Required | Default |
 | :--- | :--- | :--- | :--- |
@@ -173,7 +183,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot applic
 | `JULES_API_KEY` | Google Jules API key for asynchronous cloud agent dispatch | Optional (dry-run available) | Client or Server |
 | `GITHUB_PAT` | GitHub Personal Access Token for private repository diffs | Optional (public repos work without PAT) | Optional |
 
-> **Note on Security:** Credentials can be saved in the client's local storage via the in-app Credentials modal. When configured, keys are sent in secure custom request headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-token`) and are never written to server logs.
+> **Note on Security:** Credentials can be saved in the client's local storage via the in-app Credentials modal. When configured, keys are sent in secure custom request headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-pat`) and are never written to server logs.
 
 ---
 

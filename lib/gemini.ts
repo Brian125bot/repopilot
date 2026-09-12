@@ -117,12 +117,15 @@ export async function evaluateDiffAgainstCriteria({
   criteria,
   objective,
   fileBoundaries,
+  unauthorizedPaths,
   customApiKey,
 }: {
   diff: string;
   criteria: AcceptanceCriterion[];
   objective?: string;
   fileBoundaries?: string[];
+  /** Deterministic out-of-scope paths from the diff sanitizer; forces scope verdict. Required — pass []. */
+  unauthorizedPaths: string[];
   customApiKey?: string;
 }): Promise<GeminiAuditReport> {
   const ai = getGeminiClient(customApiKey);
@@ -192,7 +195,8 @@ Please output the complete structured audit report.`;
   }
 
   const parsed = JSON.parse(text) as Omit<GeminiAuditReport, 'evaluatedAt'>;
-  const reconciled = reconcileAuditReport(parsed);
+  const paths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
+  const reconciled = reconcileAuditReport(parsed, paths);
 
   return {
     ...reconciled,

@@ -21,6 +21,9 @@ export default function RepoPilotPage() {
   const [geminiKey, setGeminiKey] = React.useState('');
   const [githubPat, setGithubPat] = React.useState('');
 
+  // First-run onboarding banner (passive, dismissible, localStorage-backed)
+  const [bannerDismissed, setBannerDismissed] = React.useState(true);
+
   // Blueprint history in localStorage
   const [blueprints, setBlueprints] = React.useState<Blueprint[]>([]);
   const [activeBlueprint, setActiveBlueprint] = React.useState<Blueprint | null>(null);
@@ -37,6 +40,9 @@ export default function RepoPilotPage() {
         if (storedJules) setJulesKey(storedJules);
         if (storedGemini) setGeminiKey(storedGemini);
         if (storedPat) setGithubPat(storedPat);
+        if (!localStorage.getItem('repopilot_onboarding_dismissed')) {
+          setBannerDismissed(false);
+        }
 
         if (storedBlueprints) {
           try {
@@ -55,6 +61,13 @@ export default function RepoPilotPage() {
     }, 0);
     return () => clearTimeout(timer);
   }, []);
+
+  const handleDismissBanner = () => {
+    setBannerDismissed(true);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('repopilot_onboarding_dismissed', '1');
+    }
+  };
 
   const handleSaveBlueprint = (bp: Blueprint) => {
     setActiveBlueprint(bp);
@@ -131,9 +144,35 @@ export default function RepoPilotPage() {
           </div>
         </div>
 
+        {/* First-run onboarding banner: passive, dismissible, no server keys needed */}
+        {!bannerDismissed && !julesKey && !geminiKey && !githubPat && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-indigo-50/70 rounded-xl p-3.5 border border-indigo-200/80 shadow-2xs text-xs text-slate-600">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-indigo-600 shrink-0" />
+              <span>
+                <strong className="text-slate-800">Welcome to RepoPilot.</strong>{' '}
+                No server setup needed — add your Jules, Gemini, and GitHub keys (stored only in this browser) or try Stage 1 in dry-run mode.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-xs font-semibold transition-colors"
+              >
+                Configure API keys
+              </button>
+              <button
+                onClick={handleDismissBanner}
+                className="px-3 py-1.5 text-slate-500 hover:text-slate-800 text-xs transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Dynamic Stage Render */}
-        {currentStage === 'stage1' ? (
-          <IntakeDispatchStage
+        {currentStage === 'stage1' ? (          <IntakeDispatchStage
             julesKey={julesKey}
             geminiKey={geminiKey}
             githubPat={githubPat}

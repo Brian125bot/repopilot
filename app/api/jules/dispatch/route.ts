@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
-import { createJulesSession } from '@/lib/jules';
+import { createJulesSession, resolveJulesSourceName, resolveAutomationMode } from '@/lib/jules';
 import { Blueprint, AcceptanceCriterion } from '@/types';
 
 interface DispatchRequestBody {
@@ -172,18 +172,42 @@ export async function POST(req: NextRequest) {
 
     let sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     let sessionUrl: string | undefined = undefined;
+    let sessionState: string | undefined = undefined;
+    let sourceName: string | undefined = undefined;
     let julesApiResponse: unknown = null;
 
     if (!dryRun && julesApiKey) {
+      // Bind owner/repo to a real sources[].name. Fail-closed: never invent a source path.
+      const resolvedSource = await resolveJulesSourceName(julesApiKey, cleanRepo);
+      if (!resolvedSource.ok) {
+        return NextResponse.json(
+          {
+            success: false,
+            dryRun: false,
+            error:
+              resolvedSource.error || 'Source not connected in Jules',
+            status: resolvedSource.status,
+            details: resolvedSource.details,
+            repo: cleanRepo,
+            targetBranch,
+          },
+          { status: resolvedSource.status || 404 }
+        );
+      }
+
+      sourceName = resolvedSource.sourceName;
       const sessionTitle = `[RepoPilot] ${objective.slice(0, 80)}`;
+      const automationMode = resolveAutomationMode(isRemediation);
       const julesResult = await createJulesSession({
         apiKey: julesApiKey,
+        sourceName: sourceName as string,
         repo: cleanRepo,
         startingBranch: effectiveStartingBranch,
         prompt: compiledPrompt,
         title: sessionTitle,
         requirePlanApproval: false,
-        automationMode: 'AUTO_CREATE_PR',
+        // Remediation omits automationMode; only first-pass requests AUTO_CREATE_PR.
+        ...(automationMode ? { automationMode } : {}),
       });
 
       if (!julesResult.ok) {
@@ -204,6 +228,7 @@ export async function POST(req: NextRequest) {
 
       sessionId = julesResult.sessionId || sessionId;
       sessionUrl = julesResult.sessionUrl;
+      sessionState = julesResult.state;
       julesApiResponse = julesResult.data;
     }
 
@@ -218,6 +243,13 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString(),
       sessionId,
       compiledPrompt,
+      sourceName,
+      sessionUrl,
+      sessionState,
+      // No PR harvested at dispatch time; populated later via GET /api/jules/session.
+      prUrl: undefined,
+      prTitle: undefined,
+      isRemediation,
     };
 
     return NextResponse.json({

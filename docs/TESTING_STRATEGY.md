@@ -44,12 +44,12 @@ All test files are organized in the `/__tests__/` directory:
 ├── jules-session.test.ts        # Session poll route + harvestPullRequest/getJulesSession (7)
 ├── github-status.test.ts        # PAT validation, scopes, rate limits (7)
 ├── remediation-workflow.test.ts # Closed-loop remediation, audited branch targeting (2)
-├── audit-engine.test.ts         # Ingestion, error boundaries, unauthorizedPaths forcing (8)
+├── audit-engine.test.ts         # Ingestion, error boundaries, unauthorizedPaths forcing (9)
 ├── gemini-scoring.test.ts       # Metrics, penalties, forced scope reconciliation (8)
 └── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
 ```
 
-Total: 82 tests across 9 suites (`npm test`).
+Total: 83 tests across 9 suites (`npm test`).
 
 ---
 

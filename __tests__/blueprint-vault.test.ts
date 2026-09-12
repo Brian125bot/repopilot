@@ -55,4 +55,23 @@ describe('Blueprint Vault & State Lifecycle', () => {
     expect(parsed.criteria).toEqual(original.criteria);
     expect(parsed.fileBoundaries).toEqual(original.fileBoundaries);
   });
+
+  it('merges Refresh session harvest without losing blueprint identity', () => {
+    const original = createSampleBlueprint('bp_refresh_1', 'acme/core-api');
+    const patched: Blueprint = {
+      ...original,
+      sessionId: 'sessions/session_77',
+      sessionUrl: 'https://jules.google.com/session/session_77',
+      sessionState: 'COMPLETED',
+      prUrl: 'https://github.com/acme/core-api/pull/42',
+      prTitle: 'Add limiter',
+    };
+
+    expect(patched.blueprintId).toBe(original.blueprintId);
+    expect(patched.repo).toBe(original.repo);
+    expect(patched.branchName).toBe(original.branchName);
+    expect(patched.criteria).toEqual(original.criteria);
+    expect(patched.sessionState).toBe('COMPLETED');
+    expect(patched.prUrl).toContain('/pull/42');
+  });
 });
