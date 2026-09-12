@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-47%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-82%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -20,7 +20,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot organizes task contracts and manages the review loop when working with Google's Jules Cloud Coding Agent.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 47 automated unit & integration tests.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 82 automated unit & integration tests.
 - 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
 
 ---
@@ -35,7 +35,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 
 **RepoPilot** is the **precision control plane and automated quality assurance layer** for Google Jules, introducing a strictly decoupled two-stage lifecycle:
 
-1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded cryptographic blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents with fail-closed error handling.
+1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents with fail-closed error handling.
 2. **Stage 2: Gemini PR Audit & Autonomous Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, developers can **1-click auto-dispatch** an autonomous remediation prompt instructing Jules to checkout and commit fixes directly to the audited branch.
 
 ---
@@ -114,7 +114,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the entire test suite (47 tests across 8 suites)
+# Run the entire test suite (82 tests across 9 suites)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -127,12 +127,13 @@ npm run test:watch
 | :--- | :--- | :--- | :--- |
 | **Prompt Compiler** | `prompt-compiler.test.ts` | 7 | Anti-drift markdown generation & blueprint comment embedding |
 | **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
-| **Jules Dispatch** | `jules-dispatch.test.ts` | 7 | API validation, fail-closed 401/404 handling, startingBranch resolution |
+| **Jules Dispatch** | `jules-dispatch.test.ts` | 25 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode |
+| **Jules Session** | `jules-session.test.ts` | 7 | Session poll route, `harvestPullRequest`/`getJulesSession` harvest |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
-| **Audit Engine** | `audit-engine.test.ts` | 4 | Diff ingestion, error boundaries, evaluation payload validation |
-| **Scoring Logic** | `gemini-scoring.test.ts` | 3 | Score algorithms, scope violation penalties, blast radius ratings |
-| **Blueprint Vault** | `blueprint-vault.test.ts` | 3 | Local storage serialization, recovery & deduplication |
+| **Audit Engine** | `audit-engine.test.ts` | 8 | Diff ingestion, error boundaries, `unauthorizedPaths` scope forcing |
+| **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
+| **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
 
 ---
 
@@ -146,9 +147,9 @@ npm run test:watch
 
 ```bash
 # 1. Clone repository and install dependencies
-git clone https://github.com/example/repopilot.git
+git clone https://github.com/Brian125bot/repopilot.git
 cd repopilot
-npm install
+npm ci
 
 # 2. (Optional) Configure environment variables in .env.local
 cp .env.example .env.local
@@ -201,6 +202,9 @@ Dispatches a new coding session to Google Jules or saves a local dry-run bluepri
 ### `GET /api/jules/sources`
 Lists authorized GitHub repositories connected to your Google Jules cloud account.
 
+### `GET /api/jules/session?id=sessions/xxx`
+Reads a Jules session back (`getJulesSession`), returning `sessionId`, `sessionUrl`, `state`, and harvested `prUrl/prTitle`. Fail-closed `401` without a key, `400` without an id. Use from the Stage-1 confirmation **Refresh session** button after dispatch.
+
 ### `GET /api/github/status`
 Validates a GitHub Personal Access Token (PAT) supplied via `x-github-pat` header or server environment, returning authenticated user identity, scopes, and hourly rate limit consumption.
 
@@ -208,7 +212,7 @@ Validates a GitHub Personal Access Token (PAT) supplied via `x-github-pat` heade
 Fetches a GitHub pull request diff, parses commit hunks, and applies noise-reduction filters.
 
 ### `POST /api/audit/evaluate`
-Audits the sanitized pull request diff against declared acceptance criteria and returns a structured scorecard.
+Audits the sanitized pull request diff against declared acceptance criteria and returns a structured scorecard. Accepts `unauthorizedPaths: string[]` from the sanitizer — any entry forces `scopeIntegrity.strictlyInScope=false` via `forceScopeIntegrity` (empty = clean, omitted = unverified).
 
 ---
 

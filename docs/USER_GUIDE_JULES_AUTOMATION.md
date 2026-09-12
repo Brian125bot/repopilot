@@ -59,13 +59,13 @@
 
 ## Why Use RepoPilot with Google Jules?
 
-| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Measurable Impact |
+| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Functional Guarantee |
 | :--- | :--- | :--- |
-| **Agent wanders into other modules** (e.g. touches `package.json` or modifies `tsconfig.json`) | Enforces strict path globs (e.g. `src/features/billing/**`) and flags unauthorized file touches | **99.4% boundary adherence** |
-| **Vague, untestable instructions** ("make the auth module secure") | Structures requirements into atomic criteria with testable categories (`functional`, `security`, `performance`) | **100% testable verification** |
-| **Manual PR review overhead** (engineers must read 400 lines of diff to verify 3 requirements) | Gemini automatically audits diff hunks against each criterion, producing pass/fail verdicts with line citations | **85% reduction in review time** |
-| **Remediation creates rogue branches** (re-prompting creates `jules/fix-2` instead of updating PR) | Automatically locks `startingBranch: prMetadata.headBranch` to push fixes directly onto the active PR | **Zero branch clutter or conflicts** |
-| **Lockfiles exhaust token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | **Up to 70% token savings** |
+| **Agent wanders into other modules** (e.g. touches `package.json` or modifies `tsconfig.json`) | Enforces strict path globs (e.g. `src/features/billing/**`) and flags unauthorized file touches | Deterministic rejection of out-of-scope file modifications |
+| **Vague, untestable instructions** ("make the auth module secure") | Structures requirements into atomic criteria with testable categories (`functional`, `security`, `performance`) | Every criterion receives explicit evidence and status |
+| **Manual PR review overhead** (engineers must read 400 lines of diff to verify 3 requirements) | Gemini automatically audits diff hunks against each criterion, producing pass/fail verdicts with line citations | Structured audit report with actionable recommendations and blocker breakdown |
+| **Remediation creates rogue branches** (re-prompting creates `jules/fix-2` instead of updating PR) | Automatically locks `startingBranch: prMetadata.headBranch` to push fixes directly onto the active PR | Commits directly to active PR branch with fail-closed API dispatch |
+| **Lockfiles exhaust token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Zero lockfile tokens forwarded to LLM evaluation context |
 
 ---
 
@@ -102,6 +102,8 @@ In the **Authorized File Boundaries** section:
 
 ### Step 4: Dispatch the Cloud Session
 Click **"Dispatch Session to Google Jules"**:
+- RepoPilot binds `owner/repo` to a real `sources[].name` via `GET /v1alpha/sources`. Unconnected repos fail closed with 404 — the source path is never invented.
+- First-pass sessions request `AUTO_CREATE_PR`; remediation sessions omit `automationMode` and lock `startingBranch` to the audited branch so fixes push onto the open PR.
 - RepoPilot compiles the markdown contract, appends the machine-readable blueprint comment:
   ```html
   <!-- AUDIT_BLUEPRINT
@@ -114,8 +116,8 @@ Click **"Dispatch Session to Google Jules"**:
   -->
   ```
 - Dispatches via asynchronous REST call to `https://jules.googleapis.com/v1alpha/sessions`.
-- Saves the session blueprint into your in-browser **Blueprint Vault** (`localStorage`).
-- Returns the Google Jules Cloud Session URL where you can monitor Jules executing live in Google's cloud infrastructure.
+- Saves the session blueprint (`sourceName`, `sessionUrl`, `sessionState`, honest empty `prUrl`) into your in-browser **Blueprint Vault** (`localStorage`).
+- Returns the Google Jules Cloud Session URL where you can monitor Jules executing live in Google's cloud infrastructure. Use **Refresh session** (`GET /api/jules/session?id=`) on the Stage-1 confirmation card to harvest `state`, `sessionUrl`, and `prUrl/prTitle` once Jules opens a PR.
 
 ---
 
@@ -142,8 +144,9 @@ RepoPilot submits the sanitized diff alongside the hydrated acceptance criteria 
   - **Evidence**: Concrete code snippets and exact line references from the diff.
   - **Reasoning**: Plain-English explanation of why the criterion passed or failed.
 - Evaluates scope integrity:
+  - The sanitizer's `unauthorizedPaths` are forwarded as `unauthorizedPaths` to `POST /api/audit/evaluate` and force the verdict via `forceScopeIntegrity` — Gemini cannot override a sanitizer-flagged file back to in-scope. An empty list means clean; omitted means unverified.
   - Lists any unauthorized files modified by Jules.
-  - Computes blast radius rating (`LOW`, `MEDIUM`, `HIGH`).
+  - Computes blast radius rating (`LOW`, `MEDIUM`, `HIGH`) with a 35-point scope penalty applied deterministically.
 - Computes overall **Merge Readiness Score (0-100)**:
   - **90-100 (Ready to Merge)**: All criteria met, zero out-of-scope files.
   - **70-89 (Needs Revision)**: Minor missing edge cases or formatting issues.
@@ -187,21 +190,9 @@ Every criterion should be verifiable by a unit test or static inspection.
 
 ---
 
-## ROI & Accuracy Benchmarks
+## Accuracy Benchmarks
 
-Based on real-world engineering evaluations of autonomous agent tasks:
-
-```
-+------------------------------------+------------------+-----------------------+
-| Metric                             | Raw Jules Prompt | RepoPilot + Jules     |
-+------------------------------------+------------------+-----------------------+
-| Boundary Adherence Rate            | 68.2%            | 99.4%                 |
-| Criteria Completion on First Pass  | 61.5%            | 88.7%                 |
-| Unsolicited File Modifications     | 2.4 files / PR   | 0.0 files / PR        |
-| Review & Verification Time         | 24 minutes       | 3.5 minutes (85% cut) |
-| Multi-Turn Branch Conflict Rate    | 34.0%            | 0.0% (locked branch)  |
-+------------------------------------+------------------+-----------------------+
-```
+First-pass rates are not measured yet; do not publish percentages until the outcome log exists.
 
 ---
 

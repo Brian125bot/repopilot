@@ -6,10 +6,12 @@ This document outlines the testing conventions, architectural philosophy, and ex
 
 ## 1. Test Architecture & Runner
 
-RepoPilot utilizes **Vitest 3.x/5.x** with native ES Modules (`.mjs`). Vitest was selected for:
-- **Instantaneous startup:** Tests execute in under 2.5 seconds across 7 parallel isolated workers.
+RepoPilot utilizes **Vitest 5.x** (`vitest@^5.0.0` + `vite@^7` required peer) with native ES Modules (`.mjs`). Vitest was selected for:
+- **Instantaneous startup:** Tests execute across 9 parallel isolated workers.
 - **Next.js & TypeScript Native Compatibility:** Zero custom transpilation overhead.
 - **In-Memory Network Isolation:** Eliminates brittle external API dependencies during automated verification.
+
+Install reproducibly with `npm ci` (`@types/node@^22` satisfies the vitest peer range, so no flags needed).
 
 ### Configuration (`vitest.config.mjs`)
 ```javascript
@@ -36,14 +38,18 @@ All test files are organized in the `/__tests__/` directory:
 
 ```
 /__tests__/
-├── prompt-compiler.test.ts      # Anti-drift contract generation & blueprint parsing
-├── diff-sanitizer.test.ts       # Glob boundary matching, lockfile exclusion, hunk parsing
-├── jules-dispatch.test.ts       # Jules API route validation, dry-run mode, startingBranch
-├── remediation-workflow.test.ts # Closed-loop remediation, audited branch targeting
-├── audit-engine.test.ts         # Ingestion, fetch-diff, and evaluation error boundaries
-├── gemini-scoring.test.ts       # Metric calculation, penalty weightings, blast radius
-└── blueprint-vault.test.ts      # Blueprint serialization, deduplication, state hydration
+├── prompt-compiler.test.ts      # Anti-drift contract generation & blueprint parsing (7)
+├── diff-sanitizer.test.ts       # Glob boundary matching, lockfile exclusion, hunk parsing (14)
+├── jules-dispatch.test.ts       # Dispatch validation, source binding, automationMode, fail-closed 401/404 (21)
+├── jules-session.test.ts        # Session poll route + harvestPullRequest/getJulesSession (7)
+├── github-status.test.ts        # PAT validation, scopes, rate limits (7)
+├── remediation-workflow.test.ts # Closed-loop remediation, audited branch targeting (2)
+├── audit-engine.test.ts         # Ingestion, error boundaries, unauthorizedPaths forcing (8)
+├── gemini-scoring.test.ts       # Metrics, penalties, forced scope reconciliation (8)
+└── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
 ```
+
+Total: 82 tests across 9 suites (`npm test`).
 
 ---
 
@@ -84,13 +90,21 @@ expect(res.status).toBe(200);
 ```
 
 ### Mocking Network Calls (`fetch`)
-Always use `vi.spyOn(globalThis, 'fetch')` with clean URL routing so both GitHub pre-checks and Jules endpoints are handled cleanly:
+Always use `vi.spyOn(globalThis, 'fetch')` with clean URL routing so source binding, session dispatch, and GitHub pre-checks are handled separately. Match `/v1alpha/sessions` for the dispatch payload (not bare `jules.googleapis.com`, which also matches `/v1alpha/sources` and has no body):
 
 ```typescript
 const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
   const url = typeof input === 'string' ? input : (input as { url: string }).url;
-  
-  if (url.includes('jules.googleapis.com')) {
+
+  if (url.includes('/v1alpha/sources')) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ sources: [{ name: 'sources/src_1', githubRepo: { owner: 'owner', repo: 'repo' } }] }),
+    } as unknown as Response;
+  }
+
+  if (url.includes('/v1alpha/sessions')) {
     return {
       ok: true,
       status: 200,
@@ -106,6 +120,8 @@ const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: 
   } as unknown as Response;
 });
 ```
+
+Tests import production functions from `lib/*` (e.g. `getJulesSession`, `harvestPullRequest`, `reconcileAuditReport`, `forceScopeIntegrity`); routes stay thin.
 
 ---
 
