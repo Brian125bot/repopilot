@@ -53,17 +53,17 @@ All test files are organized in the `/__tests__/` directory:
 ├── sample-contract.test.ts      # Empty Stage 1 defaults + Load sample (3)
 ├── job-status.test.ts           # idle / watching / PR ready / last verdict (5)
 ├── evaluate-timeout.test.ts     # Timeout retry payload (3)
-└── v1-release.test.ts           # 1.0.0 artifacts, CI, no credential logs (3)
+└── v1-release.test.ts           # 1.0.0 artifacts, local gate, no credential logs (3)
 ```
 
-Total: run `npm test` (1.0.0 CI also runs `tsc --noEmit`, `eslint .`, and `next build`).
+Total: run `npm test` locally; the full local gate is `npm ci && npm test && npx tsc --noEmit`.
 
 ---
 
 ## 3. How to Execute Tests
 
 ```bash
-# 1. Single run (CI mode)
+# 1. Single run (local)
 npm test
 
 # 2. Watch mode (Developer feedback loop)
@@ -134,7 +134,7 @@ Tests import production functions from `lib/*` (e.g. `getJulesSession`, `harvest
 
 ## 5. Writing New Tests for Future Features
 
-When developing new capabilities (e.g. GitHub Actions exporter, multi-repo support, or new evaluation metrics):
+When developing new capabilities (e.g. automation exporter, multi-repo support, or new evaluation metrics):
 
 1. **Create a corresponding file in `/__tests__/`**: Name it `<feature-name>.test.ts`.
 2. **Follow the Arrange-Act-Assert structure**.

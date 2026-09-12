@@ -43,9 +43,12 @@ import { WhyNextCard } from './scorecard/WhyNextCard';
 import { ScopeRiskCoverageGrid } from './scorecard/ScopeRiskCoverageGrid';
 import { CriteriaMatrix } from './scorecard/CriteriaMatrix';
 import {
+  buildFailureBrief,
   buildOutcomeRow,
   compileContinuationPrompt,
   recordOutcomeRow,
+  resolveContinueSessionId,
+  shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 
@@ -180,6 +183,41 @@ export function MergeScorecard({
   } | null>(null);
   const followUpSessionId = dispatchResult?.sessionId || blueprint?.sessionId || null;
 
+  // Continue-with-brief: primary blocked-audit action (POST /api/jules/message only).
+  const [isContinuing, setIsContinuing] = React.useState(false);
+  const [continueResult, setContinueResult] = React.useState<{
+    success: boolean;
+    sessionId?: string;
+    sessionUrl?: string | null;
+    error?: string;
+  } | null>(null);
+
+  const verdictForGate = grade.verdict;
+  const recentSessionId = dispatchResult?.sessionId || null;
+  const canOfferContinue = Boolean(
+    blueprint && shouldOfferContinueSession(verdictForGate, blueprint, recentSessionId)
+  );
+  const continueSessionId = blueprint
+    ? resolveContinueSessionId(blueprint, recentSessionId)
+    : null;
+  const continueFailed = Boolean(continueResult && !continueResult.success);
+  // Blocked audit without any session to continue: the only Jules action is a
+  // fresh brief-backed session (same continuation prompt via existing dispatch).
+  const showNewSessionStandalone = Boolean(
+    blueprint && verdictForGate !== 'READY_TO_MERGE' && !canOfferContinue
+  );
+
+  const continueBrief = React.useMemo(() => {
+    if (!blueprint) return null;
+    if (blueprint.lastBrief) return blueprint.lastBrief;
+    return buildFailureBrief(report, blueprint, report.scopeIntegrity?.unauthorizedFiles || []);
+  }, [blueprint, report]);
+
+  const continuePrompt = React.useMemo(() => {
+    if (!blueprint || !continueBrief) return '';
+    return compileContinuationPrompt({ blueprint, brief: continueBrief });
+  }, [blueprint, continueBrief]);
+
   // Active prompt in view or edit
   const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
 
@@ -196,6 +234,7 @@ export function MergeScorecard({
   };
 
   const handleSendFollowUp = async () => {
+    if (verdictForGate === 'READY_TO_MERGE') return;
     if (!followUpSessionId || !followUpText.trim()) return;
     setIsSendingFollowUp(true);
     setFollowUpResult(null);
@@ -233,12 +272,51 @@ export function MergeScorecard({
     }
   };
 
-  const handleDispatchRemediationToJules = async () => {
+  const handleContinueJulesSession = async () => {
+    if (verdictForGate === 'READY_TO_MERGE') return;
+    if (!blueprint || !continueSessionId || !continuePrompt) return;
+    setIsContinuing(true);
+    setContinueResult(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (julesKey) headers['x-jules-api-key'] = julesKey;
+      const res = await fetch('/api/jules/message', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sessionId: continueSessionId, prompt: continuePrompt }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to continue Jules session.');
+      }
+      setContinueResult({ success: true, sessionId: data.sessionId, sessionUrl: data.sessionUrl });
+      recordOutcomeRow(
+        buildOutcomeRow({
+          blueprint: { ...blueprint, sessionId: data.sessionId || continueSessionId },
+          turn: 'continuation',
+          usedPriorSession: true,
+        })
+      );
+    } catch (err) {
+      // Fail-closed: show error only. Never auto-create a session here.
+      setContinueResult({
+        success: false,
+        error: err instanceof Error ? err.message : 'Unknown error continuing Jules session.',
+      });
+    } finally {
+      setIsContinuing(false);
+    }
+  };
+
+  const handleDispatchRemediationToJules = async (promptOverride?: string) => {
+    if (verdictForGate === 'READY_TO_MERGE') return;
     setIsDispatching(true);
     setDispatchResult(null);
 
     try {
-      const promptToSend = customPromptText.trim() || defaultRemediationPrompt;
+      const promptToSend =
+        (promptOverride !== undefined ? promptOverride : customPromptText).trim() ||
+        defaultRemediationPrompt;
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -293,7 +371,7 @@ export function MergeScorecard({
       }
 
       // Outcome log: a brief-backed remediation opens a new session from memory.
-      if (blueprint?.lastBrief && data.sessionId) {
+      if (blueprint && data.sessionId) {
         recordOutcomeRow(
           buildOutcomeRow({
             blueprint: { ...blueprint, sessionId: data.sessionId },
@@ -312,6 +390,12 @@ export function MergeScorecard({
     } finally {
       setIsDispatching(false);
     }
+  };
+
+  const handleNewSessionWithBrief = async () => {
+    if (verdictForGate === 'READY_TO_MERGE') return;
+    if (!continuePrompt) return;
+    await handleDispatchRemediationToJules(continuePrompt);
   };
 
   const getVerdictStyle = (status: string): {
@@ -491,9 +575,10 @@ export function MergeScorecard({
                 <span>{copiedPrompt ? 'Prompt Copied!' : 'Copy Prompt'}</span>
               </Button>
 
+              {verdictForGate !== 'READY_TO_MERGE' && (
               <Button
                 size="sm"
-                onClick={handleDispatchRemediationToJules}
+                onClick={() => handleDispatchRemediationToJules()}
                 disabled={isDispatching}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 px-4 gap-2 shadow-xs transition-colors"
               >
@@ -509,6 +594,7 @@ export function MergeScorecard({
                   </>
                 )}
               </Button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -616,23 +702,82 @@ export function MergeScorecard({
                   <span>Troubleshoot Jules</span>
                 </Button>
 
-                <Button
-                  onClick={handleDispatchRemediationToJules}
-                  disabled={isDispatching}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
-                >
-                  {isDispatching ? (
-                    <>
-                      <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
-                      <span>Creating Jules Session on {auditedBranch}...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-3.5 w-3.5 fill-current" />
-                      <span>Auto-Dispatch Remediation to Jules</span>
-                    </>
-                  )}
-                </Button>
+                {verdictForGate === 'READY_TO_MERGE' ? null : canOfferContinue ? (
+                  <>
+                    <Button
+                      onClick={handleContinueJulesSession}
+                      disabled={isContinuing || !continueSessionId || !continuePrompt}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
+                    >
+                      {isContinuing ? (
+                        <>
+                          <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                          <span>Continuing Jules session...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="h-3.5 w-3.5 fill-current" />
+                          <span>Continue Jules session</span>
+                        </>
+                      )}
+                    </Button>
+                    {(continueFailed || showNewSessionStandalone) && (
+                      <Button
+                        onClick={handleNewSessionWithBrief}
+                        disabled={isDispatching || !continuePrompt}
+                        className="bg-white/10 hover:bg-white/20 text-white font-bold text-xs h-9 px-4 gap-2 border border-white/20 transition-all"
+                      >
+                        {isDispatching ? (
+                          <>
+                            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            <span>Creating new session...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5" />
+                            <span>New session with brief</span>
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </>
+                ) : showNewSessionStandalone ? (
+                  <Button
+                    onClick={handleNewSessionWithBrief}
+                    disabled={isDispatching || !continuePrompt}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
+                  >
+                    {isDispatching ? (
+                      <>
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                        <span>Creating new session...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5 fill-current" />
+                        <span>New session with brief</span>
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => handleDispatchRemediationToJules()}
+                    disabled={isDispatching}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
+                  >
+                    {isDispatching ? (
+                      <>
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                        <span>Creating Jules Session on {auditedBranch}...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5 fill-current" />
+                        <span>Auto-Dispatch Remediation to Jules</span>
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -696,6 +841,53 @@ export function MergeScorecard({
                         Diagnose Jules Error
                       </Button>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {continueResult && (
+              <div
+                className={`rounded-lg p-3.5 border transition-all ${
+                  continueResult.success
+                    ? 'bg-emerald-950/80 border-emerald-500 text-emerald-100'
+                    : 'bg-rose-950/80 border-rose-500 text-rose-100'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    {continueResult.success ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-xs text-white">
+                        {continueResult.success
+                          ? 'Continued Jules session with brief!'
+                          : 'Continue failed — no new session was created.'}
+                      </span>
+                      {continueResult.sessionId && (
+                        <span className="ml-2 text-[10px] font-mono bg-black/40 px-2 py-0.5 rounded border border-white/10 text-slate-300">
+                          ID: {continueResult.sessionId}
+                        </span>
+                      )}
+                      {!continueResult.success && continueResult.error && (
+                        <p className="text-[11px] text-white/80 leading-relaxed font-mono break-all">
+                          {continueResult.error}
+                        </p>
+                      )}
+                      {continueResult.success && continueResult.sessionUrl && (
+                        <a
+                          href={continueResult.sessionUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 text-[11px] underline text-emerald-200"
+                        >
+                          open session
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

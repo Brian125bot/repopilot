@@ -11,7 +11,7 @@
 - **Vague Acceptance Verification**: Human engineers must manually inspect dozens of changed files to determine whether all requirements were satisfied.
 - **Fragmented Review Cycles**: If an agent misses a requirement, re-prompting manually often creates rogue branches or overwrites good progress.
 
-**RepoPilot** is the dedicated **precision control plane and automated quality assurance layer** for Google Jules. By pairing mathematical boundary enforcement with automated post-PR Gemini evaluation, RepoPilot guarantees high accuracy, tight blast radii, and completely automated closed-loop remediation.
+**RepoPilot** is the dedicated **precision control plane and automated quality assurance layer** for Google Jules. By pairing mathematical boundary enforcement with automated post-PR Gemini evaluation, RepoPilot narrows blast radii and structures review — while the operator stays in the loop: every audit is read by a human, every message back to Jules is a click, and remediation runs through two explicit paths (**Continue Jules session** or **New session with brief**).
 
 ```
        +--------------------------------------------------------------------------------+
@@ -47,25 +47,25 @@
        |   | - Calculates blast radius  |     | - Line-number evidence extraction |     |
        |   +----------------------------+     +-----------------------------------+     |
        |                                                           |                    |
-       |                                    If Score < 80 (Blocked)|                    |
-       |                                                           v                    |
-       |   6. 1-CLICK AUTONOMOUS REMEDIATION                                            |
-       |   - Targets active PR branch directly (`startingBranch`)                       |
-       |   - Auto-dispatches fix session to Jules with code evidence & revert commands  |
-       +--------------------------------------------------------------------------------+
+        |                              If Needs Revision / Blocked|                    |
+        |                                                           v                    |
+        |   6. OPERATOR-APPROVED REMEDIATION (Continue-with-Brief)                       |
+        |   - Continue Jules session: brief -> same session (/api/jules/message)        |
+        |   - New session with brief: same brief, PR branch, no automationMode          |
+        +--------------------------------------------------------------------------------+
 ```
 
 ---
 
 ## Why Use RepoPilot with Google Jules?
 
-| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Functional Guarantee |
+| Challenge with Raw Jules Prompts | How RepoPilot Helps | What the Operator Reviews |
 | :--- | :--- | :--- |
-| **Agent wanders into other modules** (e.g. touches `package.json` or modifies `tsconfig.json`) | Enforces strict path globs (e.g. `src/features/billing/**`) and flags unauthorized file touches | Deterministic rejection of out-of-scope file modifications |
-| **Vague, untestable instructions** ("make the auth module secure") | Structures requirements into atomic criteria with testable categories (`functional`, `security`, `performance`) | Every criterion receives explicit evidence and status |
-| **Manual PR review overhead** (engineers must read 400 lines of diff to verify 3 requirements) | Gemini automatically audits diff hunks against each criterion, producing pass/fail verdicts with line citations | Structured audit report with actionable recommendations and blocker breakdown |
-| **Remediation creates rogue branches** (re-prompting creates `jules/fix-2` instead of updating PR) | Automatically locks `startingBranch: prMetadata.headBranch` to push fixes directly onto the active PR | Commits directly to active PR branch with fail-closed API dispatch |
-| **Lockfiles exhaust token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Zero lockfile tokens forwarded to LLM evaluation context |
+| **Agent wanders into other modules** (e.g. touches `package.json` or modifies `tsconfig.json`) | Enforces strict path globs (e.g. `src/features/billing/**`) and flags unauthorized file touches | Scorecard flags the files; the sanitizer verdict forces a scope penalty instead of a merge |
+| **Vague, untestable instructions** ("make the auth module secure") | Structures requirements into atomic criteria with testable categories (`functional`, `security`, `performance`) | Per-criterion evidence and status for the operator to review |
+| **Manual PR review overhead** (engineers must read 400 lines of diff to verify 3 requirements) | Gemini automatically audits diff hunks against each criterion, producing pass/fail verdicts with line citations | Structured audit report with recommendations and blocker breakdown — the operator still decides |
+| **Remediation creates rogue branches** (re-prompting creates `jules/fix-2` instead of updating PR) | Continue posts to the same session; new sessions lock `startingBranch: prMetadata.headBranch` onto the active PR | The operator picks **Continue Jules session** or **New session with brief**; each send is a click |
+| **Lockfiles exhaust token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Smaller, focused diffs forwarded to LLM evaluation |
 
 ---
 
@@ -98,7 +98,7 @@ In the **Authorized File Boundaries** section:
   src/middleware/**
   tests/middleware/**
   ```
-- **RepoPilot guarantees**: If Jules touches any file outside these patterns (like `package.json` or `src/server.ts`), RepoPilot's audit engine will immediately flag the infraction and penalize the merge scorecard.
+- **What RepoPilot does**: If Jules touches any file outside these patterns (like `package.json` or `src/server.ts`), RepoPilot's audit engine flags the infraction and applies the scope penalty on the merge scorecard for the operator to review.
 
 ### Step 4: Dispatch the Cloud Session
 Click **"Dispatch Session to Google Jules"**:
@@ -147,25 +147,25 @@ RepoPilot submits the sanitized diff alongside the hydrated acceptance criteria 
   - The sanitizer's `unauthorizedPaths` are forwarded as `unauthorizedPaths` to `POST /api/audit/evaluate` and force the verdict via `forceScopeIntegrity` — Gemini cannot override a sanitizer-flagged file back to in-scope. An empty list means clean; omitted means unverified.
   - Lists any unauthorized files modified by Jules.
   - Computes blast radius rating (`LOW`, `MEDIUM`, `HIGH`) with a 35-point scope penalty applied deterministically.
-- Computes overall **Merge Readiness Score (0-100)**:
-  - **90-100 (Ready to Merge)**: All criteria met, zero out-of-scope files.
-  - **70-89 (Needs Revision)**: Minor missing edge cases or formatting issues.
-  - **< 70 (Blocked)**: Critical criteria unmet or boundary violations detected.
+- Computes overall **Merge Readiness Score (0-100)** (`criteria − scope = total`, flat −35 scope penalty):
+  - **≥ 85 with all criteria MET and in scope (Ready to Merge)**: Nothing open; the operator decides whether to merge.
+  - **Needs Revision**: Open criteria, partial work, or out-of-scope files with score ≥ 40.
+  - **Blocked (score < 40 with UNMET or out-of-scope work)**: Address blockers before another send to Jules.
 
 ---
 
-## Closed-Loop Autonomous Remediation
+## Operator-in-the-Loop Remediation (Continue-with-Brief)
 
-When a PR receives a **Needs Revision** or **Blocked** verdict, do not waste time writing a new prompt from scratch:
+When a PR receives a **Needs Revision** or **Blocked** verdict, the operator picks one of two explicit paths from the **Merge Readiness Scorecard** in Stage 2. Nothing is sent to Jules without a click, and Evaluate stays a click too:
 
-1. Scroll to the **Merge Readiness Scorecard** in Stage 2.
-2. Click **"Auto-Dispatch Remediation to Jules"**.
-3. **What RepoPilot does automatically**:
+1. **Continue Jules session** — posts the FailureBrief (open criteria, remaining work, files to revert) back into the *same* session via `POST /api/jules/message`. Best when the session is still active.
+2. **New session with brief** — remediation dispatch carrying the *same* brief on the same PR branch (`startingBranch` = PR head, `automationMode` omitted). Use it when there is no session to continue, or after a Continue fails.
+3. **What RepoPilot prepares for either path**:
    - Extracts all unmet criteria and evidence citations.
    - Formulates explicit revert commands for any files outside the declared boundaries.
-   - **Locks `startingBranch: prMetadata.headBranch`**: Crucially ensures Jules checks out the active PR branch instead of branching from `main`.
-   - Dispatches a new Jules session that commits fixes directly to the open pull request!
-4. Once Jules pushes the remediation commit, click **"Re-Evaluate PR"** to see the score update.
+   - **Locks `startingBranch: prMetadata.headBranch`**: ensures Jules checks out the active PR branch instead of branching from `main`.
+4. COMPLETED sessions often reject follow-up messages — that fallback is expected; use **New session with brief**.
+5. Once Jules pushes the fix commit, click **Evaluate** again to see the score update.
 
 ---
 

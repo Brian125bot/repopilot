@@ -8,7 +8,7 @@
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
-**Decoupled Autonomous Agent Architecture with Mathematical Anti-Drift Boundary Enforcement and Closed-Loop Pull Request Remediation**
+**Decoupled Autonomous Agent Architecture with Mathematical Anti-Drift Boundary Enforcement and Operator-in-the-Loop Continue-with-Brief Remediation**
 
 </div>
 
@@ -21,7 +21,7 @@ RepoPilot **1.0.0** documentation:
 - 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: Settings keys → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: Architecture, diff parsing, glob compilation, hydration, Gemini schema, threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. CI runs `npm test`, `tsc`, `eslint`, and `next build`.
+- 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally: `npm ci && npm test && npx tsc --noEmit`.
 - 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
 - 🔐 **[SECURITY.md](./SECURITY.md)**: Browser localStorage keys; the server persists nothing.
 - 📄 **[LICENSE](./LICENSE)**: MIT.
@@ -39,19 +39,19 @@ RepoPilot **1.0.0** documentation:
 **RepoPilot** is the **precision control plane and automated quality assurance layer** for Google Jules, introducing a strictly decoupled two-stage lifecycle:
 
 1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents with fail-closed error handling.
-2. **Stage 2: Gemini PR Audit & Autonomous Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, developers can **1-click auto-dispatch** an autonomous remediation prompt instructing Jules to checkout and commit fixes directly to the audited branch.
+2. **Stage 2: Gemini PR Audit & Operator-Approved Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, the operator picks one of two explicit paths — **Continue Jules session** (posts the FailureBrief back into the same session via `POST /api/jules/message`) or **New session with brief** (remediation dispatch on the same PR branch, `automationMode` omitted). Nothing is sent to Jules without a click.
 
 ---
 
 ## Why Use RepoPilot with Google Jules?
 
-| Challenge with Raw Jules Prompts | How RepoPilot Solves It | Functional Guarantee |
+| Challenge with Raw Jules Prompts | How RepoPilot Helps | What the Operator Reviews |
 | :--- | :--- | :--- |
-| **Agent touches unrelated files** | Strict glob boundaries (`src/middleware/**`, `tests/**/*.test.ts`) parsed via regex without false prefix matches | Deterministic rejection of out-of-scope file modifications |
-| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | Every criterion receives explicit evidence and status (`MET`, `PARTIALLY_MET`, `UNMET`) |
-| **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with exact line citations | Structured audit report with actionable recommendations and blocker breakdown |
-| **Remediation creates rogue branches** | Auto-Remediation strictly preserves `startingBranch: prMetadata.headBranch` | Commits directly to active PR branch with fail-closed API dispatch |
-| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Zero lockfile tokens forwarded to LLM evaluation context |
+| **Agent touches unrelated files** | Strict glob boundaries (`src/middleware/**`, `tests/**/*.test.ts`) parsed via regex without false prefix matches | Scorecard flags out-of-scope files; the sanitizer verdict forces a −35 scope penalty (never READY) |
+| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | Per-criterion evidence and status (`MET`, `PARTIALLY_MET`, `UNMET`) in the audit report for review |
+| **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with line citations | Structured audit report with recommendations and blocker breakdown — the operator still decides |
+| **Remediation creates rogue branches** | Continue posts to the same session; new sessions lock `startingBranch` to the PR head branch | The operator picks **Continue Jules session** or **New session with brief**; each send is a click |
+| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Smaller, focused diffs forwarded to LLM evaluation |
 
 ---
 
@@ -106,9 +106,11 @@ RepoPilot **1.0.0** documentation:
 - Per-criterion verification (`MET`, `PARTIALLY_MET`, `UNMET`) with `satisfiedAspects` (what holds) / `remainingWork` (concrete gap) and validated `path:lines` refs (`unverifiedReferences` = “cited, not in diff”).
 - Severity-grounded change risk (`LOW` ≤149 lines, `MEDIUM` 150–500 or non-critical drift, `HIGH` >500 or critical files) with `grounded` badge, `criteria − scope = total` breakdown, `Why this grade` + `Next` decision, and category rollup (`functional`/`security`/`testing`/`constraint`).
 
-### 4. 1-Click Autonomous Remediation Loop
-- If the PR needs revision or is blocked, RepoPilot constructs a specialized remediation prompt.
-- **Audited Branch Preservation**: Explicitly targets `startingBranch` so Jules commits fixes directly to the active PR branch instead of creating rogue branches.
+### 4. Operator-in-the-Loop Continue-with-Brief
+- If the PR needs revision or is blocked, RepoPilot builds a FailureBrief (open criteria, remaining work, files to revert) and offers two explicit paths:
+  - **Continue Jules session** — posts the brief back into the same session (`POST /api/jules/message`). COMPLETED sessions may reject follow-ups; that fallback is expected.
+  - **New session with brief** — remediation dispatch on the same PR branch (`startingBranch` = head, `automationMode` omitted) carrying the same brief.
+- **Audited Branch Preservation**: Both paths target `startingBranch` so Jules commits fixes directly to the active PR branch instead of creating rogue branches. Evaluate stays a click — re-run the audit after Jules pushes.
 
 ---
 
@@ -117,7 +119,7 @@ RepoPilot **1.0.0** documentation:
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the test suite (227 tests across 22 files)
+# Run the test suite (315 tests across 35 files)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -140,7 +142,7 @@ npm run test:watch
 | **Server Grade** | `audit-server-grade.test.ts` | 8 | Server single-truth sync, union paths, grade→brief→prompt wiring |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
 | **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
-| **Outcome Memory** | `outcome-memory.test.ts` | 11 | FailureBrief build + continuation prompt caps |
+| **Outcome Memory** | `outcome-memory.test.ts` | 14 | FailureBrief build + continuation prompt caps + continue-session helpers |
 | **Outcome Log** | `outcome-log.test.ts` | 9 | Append/cap-50/turns/update/export, no aggregates |
 | **PR lookup** | `github-pr-lookup.test.ts` | 5 | PR URL / branch ingest parsers, pulls-by-head |
 | **Session poll** | `session-poll.test.ts` | 6 | Tab-visible 15s/20min poll stop conditions |
@@ -148,7 +150,7 @@ npm run test:watch
 | **Sample contract** | `sample-contract.test.ts` | 3 | Empty Stage 1 defaults, Load sample rate-limiter |
 | **Job status** | `job-status.test.ts` | 5 | idle / watching / PR ready / last verdict |
 | **Evaluate timeout** | `evaluate-timeout.test.ts` | 3 | Timeout → retry payload, maxDuration |
-| **1.0 release** | `v1-release.test.ts` | 3 | Version, LICENSE, SECURITY, CI, no credential logs |
+| **1.0 release** | `v1-release.test.ts` | 3 | Version, LICENSE, SECURITY, golden path, no credential logs |
 
 ---
 
@@ -180,7 +182,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot applic
 
 ### After 1.0
 
-Not in this release: GitHub Action CI gating, auto-merge, webhooks/Cron, accounts/teams, multi-agent arbitration, auto-evaluate when a PR appears.
+Not in this release: auto-merge, webhooks/Cron, accounts/teams, multi-agent arbitration, auto-evaluate when a PR appears.
 
 ### Hosted Use (Vercel, no server setup)
 

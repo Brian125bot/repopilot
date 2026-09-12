@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 
 describe('RepoPilot 1.0 release artifacts', () => {
-  it('declares version 1.0.0 and keeps Gemini User-Agent RepoPilot/1.0', () => {
+  it('declares version 1.0.1 and keeps Gemini User-Agent RepoPilot/1.0', () => {
     const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string };
-    expect(pkg.version).toBe('1.0.0');
+    expect(pkg.version).toBe('1.0.1');
     const gemini = readFileSync('lib/gemini.ts', 'utf8');
     expect(gemini).toContain("'User-Agent': 'RepoPilot/1.0'");
     expect(gemini).not.toContain('aistudio-build');
@@ -12,7 +12,7 @@ describe('RepoPilot 1.0 release artifacts', () => {
     expect(evaluate).toMatch(/export const maxDuration = 60/);
   });
 
-  it('ships LICENSE, SECURITY note, golden path, and CI lint+build', () => {
+  it('ships LICENSE, SECURITY note, and golden path', () => {
     expect(existsSync('LICENSE')).toBe(true);
     expect(existsSync('SECURITY.md')).toBe(true);
     const security = readFileSync('SECURITY.md', 'utf8');
@@ -25,11 +25,6 @@ describe('RepoPilot 1.0 release artifacts', () => {
     expect(golden).toMatch(/Evaluate/i);
     expect(golden).toMatch(/same-branch|audited PR branch/i);
     expect(golden).toMatch(/Two stages/i);
-    const ci = readFileSync('.github/workflows/ci.yml', 'utf8');
-    expect(ci).toContain('npm test');
-    expect(ci).toContain('tsc --noEmit');
-    expect(ci).toContain('eslint');
-    expect(ci).toContain('next build');
   });
 
   it('does not log credential header names as values in API routes', () => {

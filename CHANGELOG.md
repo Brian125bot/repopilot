@@ -1,6 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- 1.0.0 froze the two-stage loop and the Outcome Memory libraries (`buildFailureBrief`, `compileContinuationPrompt`, outcome log turns).
+- Continue-with-brief wired as the primary blocked-audit action: **Continue Jules session** (`POST /api/jules/message` + FailureBrief) with **New session with brief** fallback (remediation dispatch, same brief, same PR branch, `automationMode` omitted). Operator stays in the loop; Evaluate is still a click.
+- GitHub Actions removed. Gate: `npm test && npx tsc --noEmit`.
+
 ## Unreleased — grounded audit grade
+
+- Removed GitHub Actions workflow; verification is local npm test && tsc.
 
 Server single truth for merge readiness: `report.grade` computed in `/api/audit/evaluate` via `attachAuditGrade()` (UI renders it, recomputes only for old cached reports).
 
@@ -9,7 +17,7 @@ Server single truth for merge readiness: `report.grade` computed in `/api/audit/
 - Accuracy: sanitizer-outranks-model scope union (`unionUnauthorizedPaths`), `path:lines` validation (`unverifiedReferences` = “cited, not in diff”), truncation contract (sanitizer 100k / evaluate 80k, `diffFacts.truncated/shownChars` + UI warning).
 - Relevance: severity-grounded change risk (critical files → `HIGH`, non-critical drift → `MEDIUM`, volume bands otherwise), `Why this grade[≤3]` + `Next: merge/revert_scope/remediate/blocked`, enriched remediation prompt (`Score`, `Next`, `Change Risk`, `Remaining`/`Satisfied`/`Category`), grade-aware `FailureBrief` and outcome log.
 - UI split: `MergeScorecard` orchestrates new `components/scorecard/{ScoreHeader,WhyNextCard,ScopeRiskCoverageGrid,CriteriaMatrix}`.
-- Tests: `audit-grade` (34) + `audit-server-grade` (8) cover normalization, severity boundaries (149/150/500/501), validation, truncation, and grade→brief→prompt wiring. Full suite 227+ tests green with `tsc`, `eslint`, `next build`.
+- Tests: `audit-grade` (34) + `audit-server-grade` (8) cover normalization, severity boundaries (149/150/500/501), validation, truncation, and grade→brief→prompt wiring. Full suite green under the local gate (`npm ci && npm test && npx tsc --noEmit`).
 
 ## 1.0.0
 
@@ -20,5 +28,5 @@ First curated release of the Jules → audit loop.
 - Operator copy: dispatch, wait for PR, audit, fix. Two stages remain.
 - Session watch (15s, 20 min, tab-visible) and GitHub PR lookup by head branch.
 - Gemini User-Agent `RepoPilot/1.0`. Evaluate route `maxDuration` 60s with retryable timeout.
-- CI: `npm test`, `tsc --noEmit`, `eslint .`, `next build`.
+- Local gate: `npm ci && npm test && npx tsc --noEmit`.
 - LICENSE (MIT), SECURITY.md, [golden path](./docs/GOLDEN_PATH.md).

@@ -4,6 +4,8 @@ import {
   buildFailureBrief,
   compileContinuationPrompt,
   extractPathsFromReferences,
+  resolveContinueSessionId,
+  shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
 
 const blueprint: Blueprint = {
@@ -237,5 +239,33 @@ describe('compileContinuationPrompt', () => {
     const [header, ...rest] = prompt.split('\n');
     expect(header).toContain('bp_outcome_1');
     expect(rest.join('\n').length).toBeLessThanOrEqual(4100);
+  });
+});
+
+describe('shouldOfferContinueSession / resolveContinueSessionId', () => {
+  const withSession = { sessionId: 'sessions/abc123' };
+  const withoutSession = { sessionId: '' };
+  const whitespaceSession = { sessionId: '   ' };
+
+  it('offers continue only for NEEDS_REVISION/BLOCKED with a session id', () => {
+    expect(shouldOfferContinueSession('NEEDS_REVISION', withSession)).toBe(true);
+    expect(shouldOfferContinueSession('BLOCKED', withSession)).toBe(true);
+    expect(shouldOfferContinueSession('READY_TO_MERGE', withSession)).toBe(false);
+    expect(shouldOfferContinueSession('NEEDS_REVISION', withoutSession)).toBe(false);
+    expect(shouldOfferContinueSession('BLOCKED', whitespaceSession)).toBe(false);
+    expect(shouldOfferContinueSession('BLOCKED', null)).toBe(false);
+    expect(shouldOfferContinueSession(null, withSession)).toBe(false);
+  });
+
+  it('falls back to a recently dispatched session id', () => {
+    expect(shouldOfferContinueSession('BLOCKED', withoutSession, 'sessions/new456')).toBe(true);
+    expect(shouldOfferContinueSession('READY_TO_MERGE', withoutSession, 'sessions/new456')).toBe(false);
+  });
+
+  it('resolves the most recent session id, never inventing one', () => {
+    expect(resolveContinueSessionId(withSession, 'sessions/new456')).toBe('sessions/new456');
+    expect(resolveContinueSessionId(withSession, null)).toBe('sessions/abc123');
+    expect(resolveContinueSessionId(withoutSession, null)).toBeNull();
+    expect(resolveContinueSessionId(null, null)).toBeNull();
   });
 });

@@ -208,6 +208,35 @@ export function compileContinuationPrompt(input: {
 }
 
 /**
+ * Primary blocked-audit gate: offer "Continue Jules session" only when the
+ * audit is actionable (NEEDS_REVISION or BLOCKED) AND an existing session
+ * exists to continue. READY_TO_MERGE never offers continue (must not call Jules).
+ */
+export function shouldOfferContinueSession(
+  verdict: FailureBrief['verdict'] | GeminiAuditReport['mergeVerdict']['status'] | string | null | undefined,
+  blueprint?: Pick<Blueprint, 'sessionId'> | null,
+  recentSessionId?: string | null
+): boolean {
+  const actionable = verdict === 'NEEDS_REVISION' || verdict === 'BLOCKED';
+  const sessionId =
+    (recentSessionId || '').trim() || (blueprint?.sessionId || '').trim();
+  return actionable && sessionId.length > 0;
+}
+
+/**
+ * Resolve the session to continue: the just-dispatched session when present,
+ * else the audited blueprint session (never a fresh id).
+ */
+export function resolveContinueSessionId(
+  blueprint?: Pick<Blueprint, 'sessionId'> | null,
+  recentSessionId?: string | null
+): string | null {
+  const id =
+    (recentSessionId || '').trim() || (blueprint?.sessionId || '').trim();
+  return id ? id : null;
+}
+
+/**
  * Builds one outcome-log row. Verdict fields stay empty until an audit
  * completes them via updateOutcomeRow — nothing is invented up front.
  */
