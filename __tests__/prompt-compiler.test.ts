@@ -51,12 +51,53 @@ describe('Prompt Compiler & Anti-Drift Contract Engine', () => {
     expect(compiled).toContain('Minimal Diff Principle');
   });
 
-  it('formats acceptance criteria with numeric indices and criterion IDs', () => {
+  it('formats acceptance criteria with numeric indices, criterion IDs, and categories', () => {
     const compiled = compileJulesPrompt(sampleInput, 'bp_test_12345');
 
-    expect(compiled).toContain('1. [CRIT-crit-1] Extract client IP address with fallback to X-Forwarded-For');
-    expect(compiled).toContain('2. [CRIT-crit-2] Enforce Redis token-bucket rate limit of 60 req/min');
-    expect(compiled).toContain('3. [CRIT-crit-3] Do not modify package.json or root configuration files');
+    expect(compiled).toContain('1. [CRIT-crit-1][functional] Extract client IP address with fallback to X-Forwarded-For');
+    expect(compiled).toContain('2. [CRIT-crit-2][functional] Enforce Redis token-bucket rate limit of 60 req/min');
+    expect(compiled).toContain('3. [CRIT-crit-3][constraint] Do not modify package.json or root configuration files');
+  });
+
+  it('preserves rationale as Why lines so Jules does not deprioritize testing/constraint rows', () => {
+    const compiled = compileJulesPrompt(
+      {
+        ...sampleInput,
+        criteria: [
+          { id: '1', text: 'Unit tests cover burst + expiry', category: 'testing', rationale: 'Prevents regression' },
+        ],
+      },
+      'bp_why_1'
+    );
+    expect(compiled).toContain('[testing]');
+    expect(compiled).toContain('Why: Prevents regression');
+  });
+
+  it('adds repo grounding, explicit DO-NOT list, and self-check DoD when repoContext is supplied', () => {
+    const compiled = compileJulesPrompt(
+      {
+        ...sampleInput,
+        repoContext: {
+          repo: 'acme-corp/api-gateway',
+          primaryLanguage: 'TypeScript',
+          treePreview: ['src/middleware/rate-limit.ts', 'tests/rate-limit.test.ts', 'package.json'],
+          treePaths: ['src/middleware/rate-limit.ts', 'tests/rate-limit.test.ts', 'package.json'],
+          keyFiles: {
+            testCommand: 'npm test',
+            framework: 'Next.js',
+            packageManager: 'npm',
+          } as never,
+        },
+        testCommand: 'npm test',
+      },
+      'bp_grounded_1'
+    );
+    expect(compiled).toContain('## 0. Repo Grounding');
+    expect(compiled).toContain('Read first');
+    expect(compiled).toContain('`npm test`');
+    expect(compiled).toContain('DO NOT touch');
+    expect(compiled).toContain('Definition of Done + Self-Check Before PR');
+    expect(compiled).toContain('git status');
   });
 
   it('embeds a valid JSON serialized AUDIT_BLUEPRINT comment block', () => {

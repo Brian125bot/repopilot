@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRouteError } from '@/lib/safe-log';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
+import { preDispatchGate } from '@/lib/contract-lint';
 import {
   createJulesSession,
   resolveJulesSourceName,
   resolveAutomationMode,
   sanitizeJulesCredential,
 } from '@/lib/jules';
-import { Blueprint, AcceptanceCriterion } from '@/types';
+import { Blueprint, AcceptanceCriterion, RepoInspectionResult } from '@/types';
 
 interface DispatchRequestBody {
   repo: string;
@@ -22,6 +23,9 @@ interface DispatchRequestBody {
   prNumber?: number;
   prUrl?: string;
   dryRun?: boolean;
+  /** Deep repo grounding for first-pass prompt enrichment (P1). Optional for back-compat. */
+  repoContext?: Partial<RepoInspectionResult> | null;
+  testCommand?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -40,6 +44,8 @@ export async function POST(req: NextRequest) {
       isRemediation = false,
       prNumber,
       dryRun = false,
+      repoContext = null,
+      testCommand = '',
     } = body;
 
     if (!repo || !repo.includes('/')) {
@@ -135,9 +141,35 @@ export async function POST(req: NextRequest) {
       ? fileBoundaries.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
+    // P0 pre-dispatch gate: fail-closed on structural errors, warn on quality risks.
+    // Remediation keeps the legacy path (audit already diagnosed the work).
+    let dispatchWarnings: string[] = [];
+    if (!isRemediation && !(customPrompt && customPrompt.trim().length > 0)) {
+      const treePaths =
+        (repoContext as { treePaths?: string[] } | null)?.treePaths ||
+        (repoContext?.treePreview as string[] | undefined) ||
+        [];
+      const gate = preDispatchGate({
+        repo: cleanRepo,
+        objective: objective.trim(),
+        criteria,
+        boundaries: parsedBoundaries,
+        treePaths,
+      });
+      if (!gate.ok) {
+        return NextResponse.json(
+          { success: false, error: gate.errors.join(' '), warnings: gate.warnings },
+          { status: 400 }
+        );
+      }
+      dispatchWarnings = gate.warnings;
+    }
+
     const blueprintId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    // Compile anti-drift Markdown contract or use custom remediation prompt
+    // Compile anti-drift Markdown contract or use custom remediation prompt.
+    // First-pass prompts carry repo grounding (stack, files-to-read, test command,
+    // explicit DO-NOT list, category + Why, DoD self-check) to maximize one-shot success.
     const compiledPrompt =
       customPrompt && customPrompt.trim().length > 0
         ? customPrompt.trim()
@@ -149,6 +181,8 @@ export async function POST(req: NextRequest) {
               fileBoundaries: parsedBoundaries,
               objective: objective.trim(),
               criteria,
+              repoContext: isRemediation ? null : repoContext,
+              testCommand: isRemediation ? '' : testCommand,
             },
             blueprintId
           );
@@ -274,6 +308,7 @@ export async function POST(req: NextRequest) {
       julesApiResponse,
       githubUrl: `https://github.com/${cleanRepo}`,
       dispatchedAt: new Date().toISOString(),
+      warnings: dispatchWarnings.length > 0 ? dispatchWarnings : undefined,
     });
   } catch (error) {
     logRouteError('/api/jules/dispatch', error);

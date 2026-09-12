@@ -34,6 +34,13 @@ import { ContractPreviewModal } from './ContractPreviewModal';
 import { JulesTroubleshootModal, JulesSourceSummary } from './JulesTroubleshootModal';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { findJulesSource } from '@/lib/jules';
+import {
+  checkBoundariesAgainstTree,
+  lintCriteria,
+  lintObjective,
+  preDispatchGate,
+} from '@/lib/contract-lint';
+import { buildFirstPassFeatures, recordOutcomeRowWithFeatures } from '@/lib/first-pass-analytics';
 import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
 import { applySessionSnapshotToBlueprint } from '@/lib/session-poll';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
@@ -162,6 +169,36 @@ export function IntakeDispatchStage({
     return findJulesSource(julesSources, cleanCurrentRepo);
   }, [cleanCurrentRepo, julesSources]);
 
+  // P0 live lint: verb + where + verification for objective, falsifiable + balanced criteria.
+  // Non-blocking — same gate runs fail-closed on the server at dispatch.
+  const objectiveLint = React.useMemo(
+    () => (objective.trim() ? lintObjective(objective) : null),
+    [objective]
+  );
+
+  const criteriaLint = React.useMemo(
+    () => (criteria.length > 0 ? lintCriteria(criteria) : null),
+    [criteria]
+  );
+
+  const parsedBoundariesPreview = React.useMemo(
+    () =>
+      fileBoundaries
+        .split(',')
+        .map((b) => b.trim())
+        .filter(Boolean),
+    [fileBoundaries]
+  );
+
+  const boundaryLint = React.useMemo(() => {
+    if (parsedBoundariesPreview.length === 0) return null;
+    const tree =
+      (repoInspection as { treePaths?: string[] } | null)?.treePaths ||
+      repoInspection?.treePreview ||
+      [];
+    return checkBoundariesAgainstTree(parsedBoundariesPreview, tree);
+  }, [parsedBoundariesPreview, repoInspection]);
+
   // Trigger repository inspection
   const handleInspectRepo = React.useCallback(async (targetRepo: string) => {
     if (!targetRepo || !targetRepo.includes('/')) return;
@@ -287,6 +324,8 @@ export function IntakeDispatchStage({
       .map((b) => b.trim())
       .filter(Boolean);
 
+    const testCommand =
+      (repoInspection?.keyFiles as { testCommand?: string } | undefined)?.testCommand?.trim() || '';
     const compiled = compileJulesPrompt(
       {
         repo: repo.trim(),
@@ -295,6 +334,8 @@ export function IntakeDispatchStage({
         fileBoundaries: parsedBoundaries,
         objective: objective.trim(),
         criteria,
+        repoContext: repoInspection,
+        testCommand,
       },
       'bp_preview_contract'
     );
@@ -318,6 +359,29 @@ export function IntakeDispatchStage({
       return;
     }
 
+    const parsedBoundaries = fileBoundaries
+      .split(',')
+      .map((b) => b.trim())
+      .filter(Boolean);
+
+    // P0 client-side gate: instant feedback before spending a Jules session.
+    // Server re-runs the same gate fail-closed; warnings never block dispatch.
+    const treePaths =
+      (repoInspection as { treePaths?: string[] } | null)?.treePaths ||
+      repoInspection?.treePreview ||
+      [];
+    const clientGate = preDispatchGate({
+      repo: repo.trim(),
+      objective: objective.trim(),
+      criteria,
+      boundaries: parsedBoundaries,
+      treePaths,
+    });
+    if (!clientGate.ok) {
+      setDispatchError(clientGate.errors.join(' '));
+      return;
+    }
+
     setIsDispatching(true);
 
     try {
@@ -327,10 +391,8 @@ export function IntakeDispatchStage({
       if (julesKey) headers['x-jules-api-key'] = julesKey;
       if (githubPat) headers['x-github-pat'] = githubPat;
 
-      const parsedBoundaries = fileBoundaries
-        .split(',')
-        .map((b) => b.trim())
-        .filter(Boolean);
+      const testCommand =
+        (repoInspection?.keyFiles as { testCommand?: string } | undefined)?.testCommand?.trim() || '';
 
       const response = await fetch('/api/jules/dispatch', {
         method: 'POST',
@@ -343,6 +405,8 @@ export function IntakeDispatchStage({
           objective: objective.trim(),
           criteria,
           dryRun,
+          repoContext: repoInspection,
+          testCommand,
         }),
       });
 
@@ -361,7 +425,13 @@ export function IntakeDispatchStage({
       setConfirmedBlueprint(blueprint);
       setConfirmedSessionId(data.sessionId);
       setApiStatus(data.apiStatus);
-      setWarningMessage(data.warningMessage);
+      // Surface P0 quality warnings (client gate + server gate) without blocking success.
+      const serverWarnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
+      const combinedWarnings = [...clientGate.warnings, ...serverWarnings].filter(Boolean);
+      setWarningMessage(
+        data.warningMessage ||
+          (combinedWarnings.length > 0 ? `First-pass risks: ${combinedWarnings.slice(0, 3).join(' ')}` : null)
+      );
       // Prefer the canonical session URL from the dispatch payload; fall back to
       // the raw Jules response, then to a constructed console URL.
       const sessionUrl =
@@ -377,8 +447,20 @@ export function IntakeDispatchStage({
 
       // Save to client localStorage vault
       onDispatchSuccess(blueprint);
-      // Outcome log: live creates open an initial turn (no verdict yet).
+      // Outcome log + P2 learning loop: live creates open an initial turn (no verdict yet)
+      // enriched with first-pass features for later READY-vs-rework analysis.
       if (!dryRun) {
+        const features = buildFirstPassFeatures({
+          blueprint,
+          repoInspection,
+          boundaries: parsedBoundaries,
+          warnings: combinedWarnings,
+        });
+        recordOutcomeRowWithFeatures(
+          buildOutcomeRow({ blueprint, turn: 'initial', usedPriorSession: false }),
+          features
+        );
+      } else {
         recordOutcomeRow(buildOutcomeRow({ blueprint, turn: 'initial', usedPriorSession: false }));
       }
     } catch (err) {
@@ -960,6 +1042,28 @@ export function IntakeDispatchStage({
                             {dep}
                           </span>
                         ))}
+                        {(repoInspection.keyFiles as { framework?: string; testCommand?: string; packageManager?: string }).framework &&
+                          (repoInspection.keyFiles as { framework?: string }).framework !== 'unknown' && (
+                            <span className="rounded bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 font-mono text-[10px] text-indigo-700">
+                              {(repoInspection.keyFiles as { framework?: string }).framework}
+                            </span>
+                          )}
+                      </div>
+                    )}
+                    {((repoInspection.keyFiles as { testCommand?: string } | undefined)?.testCommand ||
+                      (repoInspection as { treePaths?: string[] }).treePaths) && (
+                      <div className="flex items-center gap-1.5 flex-wrap pt-0.5 text-[10px] text-slate-500">
+                        {(repoInspection.keyFiles as { testCommand?: string } | undefined)?.testCommand && (
+                          <span>
+                            Test: <code className="font-mono text-slate-700">{(repoInspection.keyFiles as { testCommand?: string }).testCommand}</code>
+                          </span>
+                        )}
+                        {(repoInspection as { treePaths?: string[]; treeTruncated?: boolean }).treePaths && (
+                          <span className="font-mono">
+                            {(repoInspection as { treePaths?: string[] }).treePaths?.length || 0} paths indexed
+                            {(repoInspection as { treeTruncated?: boolean }).treeTruncated ? ' (truncated)' : ''}
+                          </span>
+                        )}
                       </div>
                     )}
 
@@ -1024,6 +1128,16 @@ export function IntakeDispatchStage({
                     </button>
                   ))}
                 </div>
+                {objectiveLint && !objectiveLint.ok && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1">
+                    <p className="font-semibold">Objective needs sharpening for first-pass success:</p>
+                    <ul className="list-disc list-inside space-y-0.5">
+                      {objectiveLint.issues.slice(0, 3).map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1157,6 +1271,34 @@ export function IntakeDispatchStage({
                   </Badge>
                 </div>
               </div>
+              {criteriaLint && !criteriaLint.ok && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1">
+                  <p className="font-semibold">Criteria need tightening before dispatch:</p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {criteriaLint.global.slice(0, 2).map((g) => (
+                      <li key={g}>{g}</li>
+                    ))}
+                    {criteriaLint.issues.slice(0, 2).map((iss) => (
+                      <li key={iss.id}>
+                        Criterion {iss.id}: {iss.messages[0]}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {boundaryLint && boundaryLint.some((b) => b.existsInTree === false) && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-2.5 text-[11px] text-red-900 space-y-1">
+                  <p className="font-semibold">Boundary misses real repo paths:</p>
+                  <ul className="list-disc list-inside space-y-0.5">
+                    {boundaryLint
+                      .filter((b) => b.existsInTree === false)
+                      .slice(0, 3)
+                      .map((b) => (
+                        <li key={b.boundary}>“{b.boundary}” matches 0 paths — verify before dispatch.</li>
+                      ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Criteria List */}
               <div className="space-y-2">

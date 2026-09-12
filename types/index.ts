@@ -16,6 +16,10 @@ export interface RepoInspectionResult {
   primaryLanguage?: string;
   topics?: string[];
   treePreview?: string[];
+  /** Recursive path list (up to ~150) for boundary validation + files-to-read. Falls back to root preview when truncated. */
+  treePaths?: string[];
+  /** True when treePaths is a full recursive listing vs root-only fallback. */
+  treeTruncated?: boolean;
   keyFiles?: {
     hasPackageJson?: boolean;
     hasTsConfig?: boolean;
@@ -23,6 +27,14 @@ export interface RepoInspectionResult {
     hasTests?: boolean;
     dependenciesSummary?: string[];
     readmeExcerpt?: string;
+    /** npm scripts relevant to first-pass (test/lint/build) extracted from package.json. */
+    scriptsSummary?: Record<string, string>;
+    /** Detected test command Jules should run before opening the PR. */
+    testCommand?: string;
+    /** Detected framework (next/express/fastify/nest/unknown). */
+    framework?: string;
+    /** Detected package manager (npm/yarn/pnpm/bun). */
+    packageManager?: string;
   };
   isReachable: boolean;
   visibility?: 'public' | 'private' | 'mock' | 'unknown';

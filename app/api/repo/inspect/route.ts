@@ -2,6 +2,46 @@ import { NextRequest, NextResponse } from 'next/server';
 import { RepoInspectionResult } from '@/types';
 import { logRouteError } from '@/lib/safe-log';
 
+const TREE_CAP = 150;
+const TREE_PREVIEW_CAP = 25;
+
+function detectPackageManager(rootNames: string[], treePaths: string[]): string {
+  const names = new Set([...rootNames.map((n) => n.toLowerCase()), ...treePaths.map((p) => p.toLowerCase())]);
+  const has = (suffix: string) => [...names].some((n) => n === suffix || n.endsWith(`/${suffix}`));
+  if (has('pnpm-lock.yaml')) return 'pnpm';
+  if (has('yarn.lock')) return 'yarn';
+  if (has('bun.lockb') || has('bun.lock')) return 'bun';
+  return 'npm';
+}
+
+function detectFramework(deps: string[]): string {
+  const lower = deps.map((d) => d.toLowerCase());
+  const find = (sub: string) => lower.find((d) => d.includes(sub));
+  if (find('next')) return 'Next.js';
+  if (find('nest')) return 'NestJS';
+  if (find('fastify')) return 'Fastify';
+  if (find('express')) return 'Express';
+  if (find('react')) return 'React';
+  if (find('vue')) return 'Vue';
+  if (find('svelte')) return 'Svelte';
+  return 'unknown';
+}
+
+function detectTestCommand(scripts: Record<string, string>, pm: string, deps: string[]): string {
+  if (scripts.test && scripts.test.trim()) {
+    // Prefer the repo's own test entrypoint via its package manager.
+    if (pm === 'pnpm') return 'pnpm test';
+    if (pm === 'yarn') return 'yarn test';
+    if (pm === 'bun') return 'bun test';
+    return 'npm test';
+  }
+  const lowerDeps = deps.map((d) => d.toLowerCase()).join(' ');
+  if (lowerDeps.includes('vitest')) return pm === 'npm' ? 'npx vitest run' : `${pm} vitest run`;
+  if (lowerDeps.includes('jest')) return pm === 'npm' ? 'npx jest' : `${pm} jest`;
+  if (lowerDeps.includes('playwright')) return pm === 'npm' ? 'npx playwright test' : `${pm} playwright test`;
+  return '';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { repo } = (await req.json()) as { repo: string };
@@ -53,6 +93,8 @@ export async function POST(req: NextRequest) {
           ? 'GitHub API rate limit exceeded for unauthenticated requests. Add a GitHub PAT in Settings to unlock 5,000 req/hr.'
           : errorData.message || `GitHub returned HTTP ${repoRes.status}`,
         treePreview: ['src/', 'tests/', 'README.md'],
+        treePaths: ['src/', 'tests/', 'README.md'],
+        treeTruncated: false,
         primaryLanguage: 'TypeScript',
       };
 
@@ -60,25 +102,32 @@ export async function POST(req: NextRequest) {
     }
 
     const repoData = await repoRes.json();
+    const defaultBranch: string = repoData.default_branch || 'main';
 
-    // 2. Fetch root contents to discover structure
+    // 2. Fetch root contents to discover structure (UI preview + lockfile signals)
     const contentsRes = await fetch(
       `https://api.github.com/repos/${owner}/${repoName}/contents`,
       { headers, next: { revalidate: 300 } }
     );
 
     let treePreview: string[] = [];
+    let rootNames: string[] = [];
     const keyFiles = {
       hasPackageJson: false,
       hasTsConfig: false,
       hasDocker: false,
       hasTests: false,
       dependenciesSummary: [] as string[],
+      scriptsSummary: {} as Record<string, string>,
+      testCommand: '',
+      framework: 'unknown',
+      packageManager: 'npm',
     };
 
     if (contentsRes.ok) {
       const contentsData = await contentsRes.json();
       if (Array.isArray(contentsData)) {
+        rootNames = contentsData.map((item: { name: string }) => item.name);
         treePreview = contentsData.map((item: { name: string; type: string }) =>
           item.type === 'dir' ? `${item.name}/` : item.name
         );
@@ -92,7 +141,7 @@ export async function POST(req: NextRequest) {
           ['tests', 'test', '__tests__', 'spec'].includes(i.name)
         );
 
-        // If package.json exists, attempt to inspect package.json for key dependencies
+        // If package.json exists, attempt to inspect scripts + deps for test command + framework.
         if (keyFiles.hasPackageJson) {
           try {
             const pkgRes = await fetch(
@@ -126,11 +175,22 @@ export async function POST(req: NextRequest) {
                   'jest',
                   'zod',
                 ];
-                keyFiles.dependenciesSummary = Object.keys(allDeps)
+                const depNames = Object.keys(allDeps);
+                keyFiles.dependenciesSummary = depNames
                   .filter((dep) =>
                     majorFrameworks.some((mf) => dep.toLowerCase().includes(mf))
                   )
                   .slice(0, 8);
+                const scripts: Record<string, string> = parsed.scripts || {};
+                const keepScripts: Record<string, string> = {};
+                for (const k of ['test', 'lint', 'build', 'typecheck', 'type-check']) {
+                  if (typeof scripts[k] === 'string' && scripts[k].trim()) {
+                    keepScripts[k] = scripts[k].trim().slice(0, 120);
+                  }
+                }
+                keyFiles.scriptsSummary = keepScripts;
+                // Framework + test command need tree for pm detection — filled after tree fetch.
+                (keyFiles as { _depNames?: string[] })._depNames = depNames;
               }
             }
           } catch {
@@ -140,15 +200,64 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 3. Recursive tree for boundary validation + files-to-read (P1 deep fetch).
+    // Falls back to root preview when the trees API is unavailable (large/private/rate-limited).
+    let treePaths: string[] = [];
+    let treeTruncated = false;
+    try {
+      const treeRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repoName}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
+        { headers, next: { revalidate: 300 } }
+      );
+      if (treeRes.ok) {
+        const treeData = await treeRes.json();
+        const truncated = treeData.truncated === true;
+        const entries: { path?: string; type?: string }[] = Array.isArray(treeData.tree)
+          ? treeData.tree
+          : [];
+        const blobs = entries
+          .filter((e) => e.type === 'blob' && typeof e.path === 'string')
+          .map((e) => e.path as string)
+          .filter((p) => !p.startsWith('.git/'));
+        treeTruncated = truncated || blobs.length > TREE_CAP;
+        treePaths = blobs.slice(0, TREE_CAP);
+        if (!keyFiles.hasTests) {
+          keyFiles.hasTests = blobs.some((p) =>
+            /(^|\/)(tests?|__tests__|spec)(\/|$)/i.test(p) || /\.test\.|\.spec\./i.test(p)
+          );
+        }
+      }
+    } catch {
+      // Ignore — fallback below covers it.
+    }
+    if (treePaths.length === 0) {
+      treePaths = treePreview.slice(0, TREE_CAP);
+      treeTruncated = false;
+    }
+
+    // 4. Derive package manager / framework / test command now that tree + deps are known.
+    const depNames =
+      (keyFiles as unknown as { _depNames?: string[] })._depNames ||
+      keyFiles.dependenciesSummary ||
+      [];
+    delete (keyFiles as unknown as { _depNames?: string[] })._depNames;
+    keyFiles.packageManager = detectPackageManager(rootNames, treePaths);
+    keyFiles.framework = detectFramework(depNames);
+    const scriptsSummary = keyFiles.scriptsSummary || {};
+    const scriptsRecord: Record<string, string> = scriptsSummary;
+    keyFiles.testCommand = detectTestCommand(scriptsRecord, keyFiles.packageManager, depNames);
+
     const inspection: RepoInspectionResult = {
       repo: `${owner}/${repoName}`,
       name: repoData.name,
       owner: repoData.owner?.login || owner,
       description: repoData.description || undefined,
-      defaultBranch: repoData.default_branch || 'main',
+      defaultBranch,
       primaryLanguage: repoData.language || undefined,
       topics: repoData.topics || [],
-      treePreview: treePreview.slice(0, 25),
+      treePreview: treePreview.slice(0, TREE_PREVIEW_CAP),
+      treePaths,
+      treeTruncated,
       keyFiles,
       isReachable: true,
       visibility: repoData.private ? 'private' : 'public',

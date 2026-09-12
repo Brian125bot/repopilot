@@ -291,26 +291,60 @@ export async function generateAcceptanceCriteria({
 }): Promise<GeneratedCriteriaResponse> {
   const ai = getGeminiClient(customApiKey);
 
+  const keyFiles = repoContext?.keyFiles as
+    | {
+        dependenciesSummary?: string[];
+        scriptsSummary?: Record<string, string>;
+        testCommand?: string;
+        framework?: string;
+        packageManager?: string;
+        hasTests?: boolean;
+      }
+    | undefined;
+  const treePaths = (repoContext as { treePaths?: string[] } | undefined)?.treePaths;
+  const treeTruncated = (repoContext as { treeTruncated?: boolean } | undefined)?.treeTruncated;
+  const treeForPrompt =
+    Array.isArray(treePaths) && treePaths.length > 0
+      ? treePaths.slice(0, 100)
+      : repoContext?.treePreview?.slice(0, 30) || [];
+  const scriptsSummary = keyFiles?.scriptsSummary || {};
+  const scriptsLine =
+    Object.keys(scriptsSummary).length > 0
+      ? Object.entries(scriptsSummary)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(' · ')
+      : 'Not detected';
+
   const contextDetails = repoContext
     ? `
 - Target Repository: ${repo}
 - Description: ${repoContext.description || 'Not provided'}
 - Primary Language: ${repoContext.primaryLanguage || 'Unknown'}
+- Framework: ${keyFiles?.framework || 'unknown'}
 - Default Branch: ${repoContext.defaultBranch || 'main'}
 - Topics: ${repoContext.topics ? repoContext.topics.join(', ') : 'None'}
-- Key Structure / Files Preview:
-  ${repoContext.treePreview ? repoContext.treePreview.slice(0, 30).map((f) => `  * ${f}`).join('\n') : '  * Directory tree not directly indexed'}
+- Package Manager: ${keyFiles?.packageManager || 'npm'}
+- Test Command: ${keyFiles?.testCommand || 'Not detected — tell Jules to use the repo\u2019s documented test command'}
+- Has Tests Dir: ${keyFiles?.hasTests ? 'yes' : 'no / unknown'}
+- Scripts: ${scriptsLine}
+- Recursive Tree (${treeForPrompt.length} paths${treeTruncated ? ', truncated' : ''}):
+  ${treeForPrompt.length > 0 ? treeForPrompt.map((f) => `  * ${f}`).join('\n') : '  * Directory tree not directly indexed'}
 - Detected Dependencies & Environment:
-  ${repoContext.keyFiles?.dependenciesSummary?.length ? repoContext.keyFiles.dependenciesSummary.join(', ') : 'Standard repository configuration'}
+  ${keyFiles?.dependenciesSummary?.length ? keyFiles.dependenciesSummary.join(', ') : 'Standard repository configuration'}
 `
     : `Target Repository: ${repo} (Assume idiomatic conventions for this repo's likely domain).`;
 
-  const modeInstructions = {
-    standard: 'Provide a comprehensive, balanced matrix covering core functionality, unit testing, security constraints, and boundary limitations.',
-    security: 'Emphasize defense-in-depth, input validation, authentication/authorization checks, rate limiting, credential safety, and safe error handling without data leaks.',
-    testing: 'Emphasize comprehensive test coverage: unit tests for core algorithms, mock integration tests, failure modes, boundary condition tests, and regression guardrails.',
-    strict: 'Emphasize minimal blast radius, zero extraneous file modifications, backward compatibility, zero breaking schema changes, and strict adherence to declared boundaries.',
-  }[mode] || 'Provide a balanced engineering matrix.';
+  const strictBoundarySuffix =
+    'Regardless of mode, enforce minimal blast radius: zero extraneous file modifications, no lockfile/config drift, backward compatibility, and file boundaries that match real repo paths.';
+  const modeInstructions =
+    (
+      {
+        standard: 'Provide a comprehensive, balanced matrix covering core functionality, unit testing, security constraints, and boundary limitations.',
+        security: 'Emphasize defense-in-depth, input validation, authentication/authorization checks, rate limiting, credential safety, and safe error handling without data leaks.',
+        testing: 'Emphasize comprehensive test coverage: unit tests for core algorithms, mock integration tests, failure modes, boundary condition tests, and regression guardrails.',
+        strict: 'Emphasize minimal blast radius, zero extraneous file modifications, backward compatibility, zero breaking schema changes, and strict adherence to declared boundaries.',
+      }[mode] || 'Provide a balanced engineering matrix.'
+    ) + ` ${strictBoundarySuffix}`;
 
   const systemInstruction = `You are RepoPilot Criteria Architect, a Staff Principal Software Engineer and Code Review Authority.
 Your mission is to analyze a developer's task objective AND the target repository's current state/architecture to automatically establish:
@@ -320,14 +354,16 @@ Your mission is to analyze a developer's task objective AND the target repositor
 4. An executive rationale and detected architecture summary.
 
 Guidelines:
-- Every criterion must be falsifiable and verifiable from code inspection or test output. Avoid vague statements like "Code should be clean" or "Make it fast".
-- Write specific criteria: specify exact function/class names, parameters, HTTP status codes, error types, or test suites where relevant.
+- Every criterion must be falsifiable and verifiable from code inspection or test output. Avoid vague statements like "Code should be clean" or "Make it fast". Each criterion needs where (file/glob) + how-verified (test name, HTTP code, function signature).
+- Write specific criteria: specify exact function/class names, parameters, HTTP status codes, error types, or test suites where relevant. Reference real paths from the recursive tree above — never invent files.
+- Balance the matrix: include at least one functional, one testing, and one constraint criterion. Add security when the objective touches auth/input/crypto/rate-limiting.
 - Categorize each criterion accurately:
   * 'functional': Core business logic or API behavior
   * 'security': Input sanitization, authorization, crypto, or leak prevention
   * 'testing': Explicit automated test requirements (unit, mock, or integration)
   * 'constraint': Boundaries, package management rules, or non-regression limits
-- Recommend concise, practical file boundaries matching the repo's language and project structure (e.g., for Next.js: app/api/**, lib/**; for Go: pkg/**, cmd/**).
+- Recommend concise, practical file boundaries that match REAL repo paths from the tree (prefer existing files/dirs; e.g., for Next.js: app/api/**, lib/**; for Go: pkg/**, cmd/**). Never recommend a path with zero tree matches.
+- Include the repo's test command in at least one testing criterion when known.
 - Mode Focus: ${modeInstructions}`;
 
   const prompt = `Please establish the Acceptance Criteria Matrix and boundary parameters for the following task:
@@ -367,6 +403,32 @@ Generate the complete criteria matrix now.`;
     id: c.id || String(idx + 1),
     category: c.category || 'functional',
   }));
+
+  // P0 safety net: guarantee functional + testing + constraint so first-pass
+  // never ships without tests or drift protection, even if the model skimps.
+  // Caps at 7 total to avoid diluting focus.
+  const hasCategory = (cat: string) =>
+    parsed.criteria.some((c) => (c.category || 'functional') === cat);
+  const testCommand =
+    (repoContext?.keyFiles as { testCommand?: string } | undefined)?.testCommand?.trim() || '';
+  if (!hasCategory('testing') && parsed.criteria.length < 7) {
+    parsed.criteria.push({
+      id: String(parsed.criteria.length + 1),
+      text: testCommand
+        ? `Unit tests cover the new behavior and run green via \`${testCommand}\``
+        : 'Unit tests cover the new behavior including happy-path, failure modes, and boundary conditions',
+      category: 'testing',
+      rationale: 'First-pass PRs without tests fail audit; tests prove the behavior.',
+    });
+  }
+  if (!hasCategory('constraint') && parsed.criteria.length < 7) {
+    parsed.criteria.push({
+      id: String(parsed.criteria.length + 1),
+      text: 'Zero modifications outside declared file boundaries and no dependency manifest changes unless explicitly required',
+      category: 'constraint',
+      rationale: 'Prevents scope drift, the top first-pass failure mode.',
+    });
+  }
 
   return parsed;
 }
