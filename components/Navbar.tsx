@@ -5,7 +5,7 @@ import { Compass, Key, FolderArchive, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { GitHubStatusIndicator } from './GitHubStatusIndicator';
-import { deriveJobStatus, jobStatusDetail, type JobStatusLabel } from '@/lib/job-status';
+import { deriveJobStatus, jobChromeTone, jobStatusDetail, type JobStatusLabel } from '@/lib/job-status';
 import { Blueprint } from '@/types';
 
 interface NavbarProps {
@@ -33,12 +33,15 @@ export function Navbar({
 }: NavbarProps) {
   const jobLabel: JobStatusLabel = deriveJobStatus(activeBlueprint);
   const jobDetail = jobStatusDetail(activeBlueprint);
+  const chromeTone = jobChromeTone(activeBlueprint);
   const jobTone =
-    jobLabel === 'PR ready' || jobLabel === 'last verdict'
+    chromeTone === 'positive'
       ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-      : jobLabel === 'watching'
+      : chromeTone === 'caution' || chromeTone === 'watching'
         ? 'bg-amber-50 text-amber-900 border-amber-200'
-        : 'bg-slate-50 text-slate-600 border-slate-200';
+        : chromeTone === 'danger'
+          ? 'bg-red-50 text-red-800 border-red-200'
+          : 'bg-slate-50 text-slate-600 border-slate-200';
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
@@ -102,12 +105,20 @@ export function Navbar({
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                jobLabel === 'watching' ? 'bg-amber-500 animate-pulse' : jobLabel === 'idle' ? 'bg-slate-400' : 'bg-emerald-500'
+                jobLabel === 'watching'
+                  ? 'bg-amber-500 animate-pulse'
+                  : chromeTone === 'danger'
+                    ? 'bg-red-500'
+                    : chromeTone === 'caution'
+                      ? 'bg-amber-500'
+                      : jobLabel === 'idle'
+                        ? 'bg-slate-400'
+                        : 'bg-emerald-500'
               }`}
             />
             {jobLabel}
-            {jobLabel === 'last verdict' && activeBlueprint?.lastBrief?.verdict ? (
-              <span className="normal-case font-mono font-medium">· {activeBlueprint.lastBrief.verdict}</span>
+            {jobLabel === 'last verdict' ? (
+              <span className="normal-case font-mono font-medium">· {jobDetail}</span>
             ) : null}
           </span>
           {/* Real-time GitHub Connection Status Indicator */}

@@ -536,14 +536,20 @@ export function AuditEvaluationStage({
 
       setAuditReport(data.report);
       // Outcome log: complete the row for this blueprint with the audit outcome.
+      // Prefer server grade truth (report.grade) when present; fall back to legacy mergeVerdict.
       if (hydratedBlueprint) {
         const completed = data.report as GeminiAuditReport;
+        const gradeVerdict = completed.grade?.verdict ?? completed.mergeVerdict.status;
+        const gradeScore = completed.grade?.overallScore ?? completed.mergeVerdict.overallScore;
         updateStoredOutcomeRow(
           { blueprintId: hydratedBlueprint.blueprintId, sessionId: hydratedBlueprint.sessionId },
           {
-            verdict: completed.mergeVerdict.status,
-            score: completed.mergeVerdict.overallScore,
-            unauthorizedCount: sanitizedResult.stats?.unauthorizedPaths?.length ?? 0,
+            verdict: gradeVerdict,
+            score: gradeScore,
+            unauthorizedCount:
+              completed.grade?.diffFacts?.unauthorizedCount ??
+              sanitizedResult.stats?.unauthorizedPaths?.length ??
+              0,
             unmetIds: (completed.criteriaResults || [])
               .filter((c) => c.status !== 'MET')
               .map((c) => c.id),
@@ -1171,6 +1177,16 @@ export function AuditEvaluationStage({
           onViewDiff={() => setDiffModalOpen(true)}
           onOpenSettings={onOpenSettings}
           onSaveBlueprint={onSaveBlueprint}
+          diffFacts={
+            sanitizedResult
+              ? {
+                  filesTouched: sanitizedResult.stats.totalFilesTouched,
+                  linesAdded: sanitizedResult.stats.linesAdded,
+                  linesRemoved: sanitizedResult.stats.linesRemoved,
+                  unauthorizedCount: sanitizedResult.stats.unauthorizedPaths.length,
+                }
+              : auditReport.diffFacts
+          }
         />
       )}
 

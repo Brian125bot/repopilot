@@ -1,4 +1,5 @@
 import { Blueprint, FailureBrief, GeminiAuditReport, OutcomeTurn } from '@/types';
+import { sortCriteriaForDecision, unionUnauthorizedPaths } from '@/lib/scoring';
 
 export const MAX_REQUIRED_FIXES = 7;
 export const MAX_CONTINUATION_CHARS = 4000;
@@ -43,12 +44,17 @@ export function extractPathsFromReferences(references: string[]): string[] {
 }
 
 /**
- * Builds a compact FailureBrief from a reconciled audit report, the dispatched
- * blueprint, and the sanitizer's unauthorized paths (required array).
- * The unauthorized union is add-only: client paths ∪ model-flagged files.
+ * Builds a compact FailureBrief from a reconciled + graded audit report, the
+ * dispatched blueprint, and the sanitizer's unauthorized paths (required array).
+ * The unauthorized union is add-only via unionUnauthorizedPaths:
+ * client paths ∪ model-flagged files ∪ grade diffFacts paths.
  * doNotTouch is that union plus paths cited only by MET criteria evidence
  * (parsed from lineReferences already on the report); without such paths it
  * is exactly the unauthorized union. No path is ever invented.
+ * requiredFixes prefers remainingWork (the concrete gap) ordered UNMET →
+ * PARTIAL via sortCriteriaForDecision; evidenceById prefers satisfiedAspects
+ * (what already holds) so continuation prompts seal progress instead of
+ * re-describing failures.
  */
 export function buildFailureBrief(
   report: GeminiAuditReport,
@@ -56,11 +62,12 @@ export function buildFailureBrief(
   unauthorizedPaths: string[],
   turn?: OutcomeTurn
 ): FailureBrief {
-  const clientPaths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
-  const modelPaths = Array.isArray(report.scopeIntegrity?.unauthorizedFiles)
-    ? report.scopeIntegrity.unauthorizedFiles
-    : [];
-  const unionPaths = Array.from(new Set([...clientPaths, ...modelPaths].filter(Boolean)));
+  const unionPaths = unionUnauthorizedPaths(
+    unauthorizedPaths,
+    report.scopeIntegrity?.unauthorizedFiles,
+    report.grade?.diffFacts?.unauthorizedPaths,
+    report.diffFacts?.unauthorizedPaths
+  );
 
   const criteria = report.criteriaResults || [];
   const unmetIds = criteria.filter((c) => c.status === 'UNMET').map((c) => c.id);
@@ -74,33 +81,49 @@ export function buildFailureBrief(
       if (!metPaths.includes(path)) metPaths.push(path);
     }
   }
-  const doNotTouch = Array.from(new Set([...unionPaths, ...metPaths]));
+  const doNotTouch = unionUnauthorizedPaths(unionPaths, metPaths);
 
-  const open = [
-    ...criteria.filter((c) => c.status === 'UNMET'),
-    ...criteria.filter((c) => c.status === 'PARTIALLY_MET'),
-  ];
-  const requiredFixes = open
-    .slice(0, MAX_REQUIRED_FIXES)
-    .map(
-      (c) =>
-        `[${c.status}] Criterion ${c.id}: ${oneLine(c.criterion)} — Evidence: ${snippet(
-          c.evidence || '',
-          EVIDENCE_SNIPPET_CHARS
-        )}`
-    );
+  // Decision-first: UNMET, then PARTIAL — same order the scorecard renders.
+  const open = sortCriteriaForDecision(criteria.filter((c) => c.status !== 'MET'));
+  const requiredFixes = open.slice(0, MAX_REQUIRED_FIXES).map((c) => {
+    const head = `[${c.status}] Criterion ${c.id}: ${oneLine(c.criterion)}`;
+    if (c.status === 'PARTIALLY_MET') {
+      const satisfied = snippet(
+        c.satisfiedAspects || c.evidence || '',
+        EVIDENCE_SNIPPET_CHARS
+      );
+      const remaining = snippet(
+        c.remainingWork || c.evidence || '',
+        EVIDENCE_SNIPPET_CHARS
+      );
+      const satisfiedPart = satisfied ? ` — Satisfied: ${satisfied}` : '';
+      const remainingPart = remaining ? ` → Remaining: ${remaining}` : '';
+      return `${head}${satisfiedPart}${remainingPart}`;
+    }
+    const remaining = snippet(c.remainingWork || c.evidence || '', EVIDENCE_SNIPPET_CHARS);
+    return remaining ? `${head} — Remaining: ${remaining}` : head;
+  });
 
   const evidenceById: Record<string, string> = {};
   for (const criterion of criteria) {
-    evidenceById[criterion.id] = snippet(criterion.evidence || '', EVIDENCE_SNIPPET_CHARS);
+    // Prefer what-holds for MET/PARTIAL so follow-ups don't reopen progress.
+    const holds =
+      criterion.status === 'UNMET'
+        ? criterion.remainingWork || criterion.evidence
+        : criterion.satisfiedAspects || criterion.evidence;
+    evidenceById[criterion.id] = snippet(holds || '', EVIDENCE_SNIPPET_CHARS);
   }
+
+  // Prefer server grade truth when present; fall back to legacy mergeVerdict.
+  const verdict = report.grade?.verdict ?? report.mergeVerdict.status;
+  const score = report.grade?.overallScore ?? report.mergeVerdict.overallScore;
 
   return {
     sessionId: blueprint.sessionId,
     sessionState: blueprint.sessionState,
     prUrl: blueprint.prUrl,
-    verdict: report.mergeVerdict.status,
-    score: report.mergeVerdict.overallScore,
+    verdict,
+    score,
     unmetIds,
     partialIds,
     metIds,

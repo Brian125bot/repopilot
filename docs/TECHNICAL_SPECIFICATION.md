@@ -126,79 +126,93 @@ If a sanitized diff exceeds `MAX_DIFF_CHARS` (default: 120,000 characters ~ 30,0
 
 ### 2.3 Gemini PR Audit Engine (`app/api/audit/evaluate/route.ts`)
 
-The evaluation engine leverages the Google Gen AI SDK (`@google/genai`) and `gemini-3.8-flash` with strict structured output schemas, reconciled by `reconcileAuditReport(report, unauthorizedPaths)` so the sanitizer outranks the model on scope.
+The evaluation engine leverages the Google Gen AI SDK (`@google/genai`) and `gemini-3.8-flash` with strict structured output schemas. Single truth lives on the server: `reconcileAuditReport()` forces scope, then `attachAuditGrade()` stamps categories, validates line refs, builds the grade, and syncs `mergeVerdict` from the grade. The UI renders `report.grade` and recomputes client-side only for old cached reports without one.
 
 #### Structured Schema Definition
-Using `Type.OBJECT` enforcement, Gemini is constrained to return a predictable JSON payload:
+Using `Type.OBJECT` enforcement, Gemini is constrained to return a predictable JSON payload. The model authors prose and per-criterion gaps — never the official score:
 
 ```typescript
 const responseSchema = {
   type: Type.OBJECT,
   properties: {
-    overallScore: { type: Type.INTEGER, description: "Score from 0 to 100" },
-    verdict: {
-      type: Type.STRING,
-      enum: ["READY_TO_MERGE", "NEEDS_REVISION", "BLOCKED"],
-    },
-    summary: { type: Type.STRING },
-    blastRadius: {
-      type: Type.STRING,
-      enum: ["LOW", "MEDIUM", "HIGH"],
-    },
-    criteriaEvaluations: {
+    criteriaResults: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
         properties: {
-          id: { type: Type.STRING },
-          text: { type: Type.STRING },
-          status: {
-            type: Type.STRING,
-            enum: ["MET", "PARTIALLY_MET", "UNMET"],
-          },
+          id: { type: Type.STRING }, // e.g. "1", "CRIT-1" — normalized server-side
+          criterion: { type: Type.STRING },
+          status: { type: Type.STRING, enum: ["MET", "PARTIALLY_MET", "UNMET"] },
           evidence: { type: Type.STRING },
-          reasoning: { type: Type.STRING },
-          lineReferences: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-          },
+          lineReferences: { type: Type.ARRAY, items: { type: Type.STRING } }, // "path:lines" only, never invented
+          satisfiedAspects: { type: Type.STRING }, // MET/PARTIAL: what holds (max ~300 chars)
+          remainingWork: { type: Type.STRING },    // PARTIAL/UNMET: concrete gap (max ~300 chars)
         },
-        required: ["id", "text", "status", "evidence", "reasoning"],
+        required: ["id", "criterion", "status", "evidence", "lineReferences"],
       },
     },
     scopeIntegrity: {
       type: Type.OBJECT,
       properties: {
-        withinDeclaredBoundaries: { type: Type.BOOLEAN },
-        unauthorizedFiles: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING },
-        },
-        boundaryAuditSummary: { type: Type.STRING },
+        strictlyInScope: { type: Type.BOOLEAN },
+        unauthorizedFiles: { type: Type.ARRAY, items: { type: Type.STRING } },
+        explanation: { type: Type.STRING },
       },
-      required: ["withinDeclaredBoundaries", "unauthorizedFiles"],
+      required: ["strictlyInScope", "unauthorizedFiles", "explanation"],
     },
-    actionableDirectives: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
+    blastRadius: {
+      type: Type.OBJECT,
+      properties: {
+        rating: { type: Type.STRING, enum: ["LOW", "MEDIUM", "HIGH"] },
+        explanation: { type: Type.STRING }, // prose only — server grounds the badge
+      },
+      required: ["rating", "explanation"],
+    },
+    mergeVerdict: {
+      type: Type.OBJECT,
+      properties: {
+        status: { type: Type.STRING, enum: ["READY_TO_MERGE", "NEEDS_REVISION", "BLOCKED"] },
+        overallScore: { type: Type.INTEGER },
+        keyBlockers: { type: Type.ARRAY, items: { type: Type.STRING } },
+        actionableFeedbackForAgent: { type: Type.STRING },
+      },
+      required: ["status", "overallScore", "keyBlockers", "actionableFeedbackForAgent"],
     },
   },
-  required: [
-    "overallScore",
-    "verdict",
-    "summary",
-    "blastRadius",
-    "criteriaEvaluations",
-    "scopeIntegrity",
-    "actionableDirectives",
-  ],
+  required: ["criteriaResults", "scopeIntegrity", "blastRadius", "mergeVerdict"],
 };
 ```
 
+Server-stamped envelope (not model-authored):
+
+```typescript
+interface AuditDiffFacts {
+  filesTouched: number; linesAdded: number; linesRemoved: number;
+  unauthorizedCount: number;
+  truncated?: boolean; shownChars?: number;
+  touchedPaths?: string[]; unauthorizedPaths?: string[];
+}
+interface AuditGrade {
+  met: number; partial: number; unmet: number; total: number;
+  criteriaScore: number; scopePenalty: number; overallScore: number;
+  verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
+  scoreParts: { criteria: number; scope: number; total: number }; // criteria − scope = total
+  categoryRollup: Record<'functional'|'security'|'testing'|'constraint', { met: number; partial: number; unmet: number; total: number }>;
+  diffFacts?: AuditDiffFacts;
+  blast: { rating: 'LOW'|'MEDIUM'|'HIGH'; explanation: string; grounded: boolean };
+  nextDecision: 'merge' | 'revert_scope' | 'remediate' | 'blocked';
+  why: string[]; // max 3 human-readable reasons
+}
+```
+
 #### Deterministic Scoring Invariants
-1. **Scope Penalty**: If `scopeIntegrity.strictlyInScope === false`, `computeScorecardMetrics` applies a deterministic 35-point deduction (`forceScopeIntegrity` outranks the model; empty `unauthorizedPaths` = clean, omitted = unverified).
-2. **Criteria Weighting**: Compliance ratio = `(MET + 0.5*PARTIALLY_MET) / total`; scope penalty subtracted, clamped 0–100.
-3. **Verdict Gates**: derived from `computeScorecardMetrics` (`READY_TO_MERGE` only when in-scope, no UNMET, no PARTIALLY_MET, score ≥85).
+1. **Single headline math** (`computeScorecardMetrics`, sole owner): compliance = `(MET + 0.5*PARTIALLY_MET) / total`; `overall = round(compliance*100 − scopePenalty)`, clamped 0–100. `buildAuditGrade()` derives from it — never duplicated.
+2. **Scope Penalty**: If `scopeIntegrity.strictlyInScope === false`, flat −35 (`forceScopeIntegrity` outranks the model; `unionUnauthorizedPaths()` is add-only — empty `[]` = clean, omitted = unverified).
+3. **Verdict Gates**: `READY_TO_MERGE` only when in-scope, no UNMET, no PARTIAL, score ≥85; `BLOCKED` when score <40 with out-of-scope or any UNMET; else `NEEDS_REVISION`.
+4. **Category join**: `normalizeCriterionId()` strips `CRIT-`/`criterion-`/zero-padding/case before map lookup; blueprint wins, unknown ids fall back to row category then `functional` (no positional guessing).
+5. **Severity-grounded blast** (`groundBlastRating`): critical unauthorized (`package.json`, lockfiles, `Dockerfile`, `.env`, build configs, migrations, `auth`/`security`) → `HIGH`; non-critical unauthorized → at least `MEDIUM` (`HIGH` only past 500 lines); in-scope volume uses 150/500 bands. `grounded:true` only with `diffFacts`.
+6. **Line-ref validation**: `partitionLineReferences()` intersects `path:` tokens against sanitizer `touchedPaths`; misses become `unverifiedReferences` (“cited, not in diff”) without failing the audit. Empty `touchedPaths` disables validation for back-compat.
+7. **Truncation contract**: sanitizer default 100k chars, evaluate slice `MAX_EVALUATE_DIFF_CHARS=80000`. `diffFacts.truncated/shownChars` records either cut; UI warns “risk may be understated”.
 
 ---
 

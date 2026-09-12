@@ -45,14 +45,15 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
   - Identifies out-of-scope files using glob regex conversion supporting recursive wildcards (`**`).
   - Strips lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, etc.) to conserve token budget.
   - Parses git diff hunks and calculates total additions/deletions.
-- **Gemini Structured Audit (`/api/audit/evaluate`):**
-  - Sends sanitized diff, acceptance criteria, and sanitizer `unauthorizedPaths` to Google Gemini.
-  - `forceScopeIntegrity` lets the sanitizer outrank the model: any flagged path forces `strictlyInScope=false` (empty = clean, omitted = unverified).
+- **Gemini Structured Audit (`/api/audit/evaluate` — server single truth):**
+  - Sends sanitized diff (first 80k chars, `truncated` flagged), acceptance criteria, and unioned `unauthorizedPaths` to Google Gemini.
+  - `forceScopeIntegrity` lets the sanitizer outrank the model: any flagged path forces `strictlyInScope=false` (empty = clean, omitted = unverified; `unionUnauthorizedPaths()` is add-only).
+  - `attachAuditGrade()` then stamps Stage 1 categories by normalized id, validates `path:lines` refs against sanitizer `touchedPaths` (`unverifiedReferences` = “cited, not in diff”), builds `AuditGrade`, and syncs `mergeVerdict` from the grade. UI renders `report.grade`.
   - Returns schema-validated JSON with:
-    - Per-criterion verdicts (`MET`, `PARTIALLY_MET`, `UNMET`) and line-number references.
-    - Scope integrity assessment and unauthorized files list.
-    - Blast radius rating (`LOW`, `MEDIUM`, `HIGH`).
-    - Merge readiness score (0-100) and definitive verdict (`READY_TO_MERGE`, `NEEDS_REVISION`, `BLOCKED`).
+    - Per-criterion verdicts (`MET`, `PARTIALLY_MET`, `UNMET`) plus `satisfiedAspects` (what holds) / `remainingWork` (concrete gap) and validated line-number references.
+    - Scope integrity assessment and unauthorized files list with flat −35 penalty (`criteria − scope = total`).
+    - Severity-grounded change risk (`LOW` ≤149 lines, `MEDIUM` 150–500 or non-critical scope drift, `HIGH` >500 or critical files: `package.json`/lockfiles/`Dockerfile`/`.env`/configs/migrations/`auth`/`security`).
+    - Merge readiness score (0-100), `why[≤3]` reasons, `nextDecision` (`merge`/`revert_scope`/`remediate`/`blocked`), category rollup (`functional`/`security`/`testing`/`constraint`), and definitive verdict (`READY_TO_MERGE`, `NEEDS_REVISION`, `BLOCKED`).
 - **Autonomous Remediation Loop:**
   - When a PR requires revision, the scorecard compiles an actionable markdown prompt embedding:
     - Crucial branch checkout directive (`startingBranch: pr.headBranch`).
@@ -127,7 +128,11 @@ To guarantee agent adherence to file boundaries, path matching must satisfy stri
 3. **Single wildcards (`*`):**
    - Matches characters strictly within a single directory segment: `[^/]*`.
 4. **Boundary Penalty Calculation:**
-   - Any modification to a file outside the declared boundary globs incurs a deterministic 35-point deduction via `computeScorecardMetrics` (`forceScopeIntegrity` outranks the model verdict).
+    - Any modification to a file outside the declared boundary globs incurs a deterministic 35-point deduction via `computeScorecardMetrics` (sole headline-math owner; `buildAuditGrade()` derives from it; `forceScopeIntegrity` outranks the model verdict). Scorecard prints `criteria − scope = total`.
+5. **Change-Risk Severity:**
+    - Critical unauthorized paths (manifests, lockfiles, containers, secrets, build configs, migrations, auth/security) force `HIGH`. Non-critical drift (e.g. lone `README.md`) softens to `MEDIUM` — merge-blocking is preserved via `revert_scope` + `−35` + never-`READY`, even when risk is not `HIGH`.
+6. **Next-Decision Mapping:**
+    - `READY_TO_MERGE` → `merge`; unauthorized >0 → `revert_scope`; `BLOCKED` → `blocked`; else `remediate`. Rendered as `Next: <sentence> <branch>` with `Why this grade[≤3]` above it.
 
 ---
 

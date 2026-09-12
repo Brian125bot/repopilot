@@ -304,7 +304,7 @@ describe('quality: compileRemediationPrompt (first-pass)', () => {
 });
 
 describe('quality: buildFailureBrief', () => {
-  it('orders requiredFixes UNMET then PARTIAL, each with id, status, criterion, evidence', () => {
+  it('orders requiredFixes UNMET then PARTIAL, each with id, status, criterion, remaining work', () => {
     const report = buildReport({
       criteriaResults: [
         criterion({
@@ -312,18 +312,22 @@ describe('quality: buildFailureBrief', () => {
           criterion: 'Partial first in the report',
           status: 'PARTIALLY_MET',
           evidence: 'Still missing the burst case',
+          satisfiedAspects: 'Happy path done',
+          remainingWork: 'Add burst case',
         }),
         criterion({
           id: 'u',
           criterion: 'Unmet second in the report',
           status: 'UNMET',
           evidence: 'TTL fallback absent',
+          remainingWork: 'Add TTL fallback',
         }),
         criterion({
           id: 'm',
           criterion: 'Already good',
           status: 'MET',
           evidence: 'Keep this',
+          satisfiedAspects: 'Fully in place',
           lineReferences: ['src/keep.ts:1'],
         }),
       ],
@@ -334,13 +338,18 @@ describe('quality: buildFailureBrief', () => {
     expect(brief.partialIds).toEqual(['p']);
     expect(brief.metIds).toEqual(['m']);
     expect(brief.requiredFixes).toHaveLength(2);
-    expect(brief.requiredFixes[0]).toMatch(/^\[UNMET\] Criterion u: Unmet second in the report — Evidence: TTL fallback absent$/);
-    expect(brief.requiredFixes[1]).toMatch(
-      /^\[PARTIALLY_MET\] Criterion p: Partial first in the report — Evidence: Still missing the burst case$/
+    expect(brief.requiredFixes[0]).toMatch(
+      /^\[UNMET\] Criterion u: Unmet second in the report — Remaining: Add TTL fallback$/
     );
+    expect(brief.requiredFixes[1]).toMatch(
+      /^\[PARTIALLY_MET\] Criterion p: Partial first in the report — Satisfied: Happy path done → Remaining: Add burst case$/
+    );
+    // evidenceById prefers what-holds for PARTIAL/MET, gap for UNMET.
+    expect(brief.evidenceById?.['p']).toContain('Happy path done');
+    expect(brief.evidenceById?.['u']).toContain('Add TTL fallback');
   });
 
-  it('flattens newlines and caps evidence snippets at 240 chars', () => {
+  it('flattens newlines and caps remaining-work snippets at 240 chars', () => {
     const longEvidence = `line one\nline two\n${'z'.repeat(400)}`;
     const brief = buildFailureBrief(
       buildReport({
@@ -359,8 +368,8 @@ describe('quality: buildFailureBrief', () => {
 
     expect(brief.requiredFixes[0]).not.toMatch(/\n/);
     expect(brief.requiredFixes[0]).toContain('line one line two');
-    const evidencePart = brief.requiredFixes[0].split(' — Evidence: ')[1];
-    expect(evidencePart.length).toBeLessThanOrEqual(EVIDENCE_SNIPPET_CHARS);
+    const remainingPart = brief.requiredFixes[0].split(' — Remaining: ')[1];
+    expect(remainingPart.length).toBeLessThanOrEqual(EVIDENCE_SNIPPET_CHARS);
     expect(brief.evidenceById?.['2']?.length).toBeLessThanOrEqual(EVIDENCE_SNIPPET_CHARS);
   });
 
@@ -478,7 +487,7 @@ describe('shipped-contract inventory (characterization)', () => {
     expect(flags.metSealed).toBe(false);
   });
 
-  it('first-pass currently preserves report order instead of UNMET-before-PARTIAL', () => {
+  it('first-pass now ranks UNMET before PARTIAL (decision order)', () => {
     const report = buildReport({
       criteriaResults: [
         criterion({ id: '3', criterion: 'Partial first', status: 'PARTIALLY_MET', evidence: 'gap' }),
@@ -488,8 +497,8 @@ describe('shipped-contract inventory (characterization)', () => {
     const prompt = firstPass(report);
     const flags = scorePrompt(prompt, report);
 
-    expect(flags.rankedUnmetBeforePartial).toBe(false);
-    expect(prompt.indexOf('[PARTIALLY_MET] Criterion 3')).toBeLessThan(prompt.indexOf('[UNMET] Criterion 2'));
+    expect(flags.rankedUnmetBeforePartial).toBe(true);
+    expect(prompt.indexOf('[UNMET] Criterion 2')).toBeLessThan(prompt.indexOf('[PARTIALLY_MET] Criterion 3'));
   });
 
   it('continuation currently omits lineReferences and does not print doNotTouch MET paths as reverts', () => {

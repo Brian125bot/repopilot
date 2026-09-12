@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { deriveJobStatus } from '@/lib/job-status';
+import { deriveJobStatus, jobChromeTone, jobStatusDetail } from '@/lib/job-status';
 import { Blueprint, FailureBrief } from '@/types';
 
 const base = (): Blueprint => ({
@@ -65,8 +65,26 @@ describe('deriveJobStatus', () => {
   it('shows the four labels in the navbar chrome and uses 1.0.0 as the version mark', () => {
     const nav = readFileSync('components/Navbar.tsx', 'utf8');
     expect(nav).toContain('deriveJobStatus');
+    expect(nav).toContain('jobChromeTone');
     expect(nav).toContain('1.0.0');
     expect(nav).not.toContain('V1 Decoupled');
     expect(nav).not.toContain('0.2.0');
+  });
+});
+
+describe('jobStatusDetail and chrome tone', () => {
+  it('includes lastBrief score next to the verdict', () => {
+    const bp = {
+      ...base(),
+      lastBrief: brief('NEEDS_REVISION'),
+    };
+    expect(jobStatusDetail(bp)).toBe('NEEDS_REVISION · 70');
+  });
+
+  it('uses caution for NEEDS_REVISION and danger for BLOCKED last verdicts', () => {
+    expect(jobChromeTone({ ...base(), lastBrief: brief('READY_TO_MERGE') })).toBe('positive');
+    expect(jobChromeTone({ ...base(), lastBrief: brief('NEEDS_REVISION') })).toBe('caution');
+    expect(jobChromeTone({ ...base(), lastBrief: brief('BLOCKED') })).toBe('danger');
+    expect(jobChromeTone({ ...base(), sessionId: 'sessions/abc' })).toBe('watching');
   });
 });

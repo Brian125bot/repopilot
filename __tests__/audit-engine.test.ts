@@ -319,6 +319,13 @@ describe('Audit Engine & Evaluation Pipeline', () => {
       );
       const data = await res.json();
       expect(data.report.scopeIntegrity.strictlyInScope).toBe(true);
+      expect(data.report.diffFacts).toEqual(
+        expect.objectContaining({
+          filesTouched: expect.any(Number),
+          linesAdded: expect.any(Number),
+          linesRemoved: expect.any(Number),
+        })
+      );
     });
 
     it('re-derives unauthorized paths when the client omits them (union is add-only)', async () => {

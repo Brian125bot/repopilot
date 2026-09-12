@@ -27,6 +27,7 @@ describe('Autonomous Remediation Workflow & Branch Safety', () => {
         criterion: 'Sliding window algorithm enforces 60 requests per minute ceiling',
         status: 'PARTIALLY_MET',
         evidence: 'Window slides correctly, but expiry calculation lacks 60-second TTL fallback',
+        remainingWork: 'Add 60-second TTL fallback in the sliding window',
         lineReferences: ['src/middleware/rate-limiter.ts:45-52'],
       },
       {
@@ -80,5 +81,6 @@ describe('Autonomous Remediation Workflow & Branch Safety', () => {
     expect(defaultRemediationPrompt).toContain('Unauthorized file modification: package.json must be reverted');
     expect(defaultRemediationPrompt).toContain('Criterion 2 incomplete');
     expect(defaultRemediationPrompt).toContain('**Unauthorized Files to Revert:** package.json');
+    expect(defaultRemediationPrompt).toContain('Remaining: Add 60-second TTL fallback in the sliding window');
   });
 });

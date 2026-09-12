@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { evaluateDiffAgainstCriteria } from '@/lib/gemini';
+import { evaluateDiffAgainstCriteria, MAX_EVALUATE_DIFF_CHARS } from '@/lib/gemini';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
-import { AcceptanceCriterion } from '@/types';
+import { AcceptanceCriterion, AuditDiffFacts } from '@/types';
+import { unionUnauthorizedPaths } from '@/lib/scoring';
 import { evaluateFailurePayload } from '@/lib/evaluate-timeout';
 import { logRouteError } from '@/lib/safe-log';
 
@@ -35,19 +36,62 @@ export async function POST(req: NextRequest) {
     const headerGeminiKey = req.headers.get('x-gemini-api-key');
     const customApiKey = headerGeminiKey || undefined;
 
-    // Union is add-only: re-derived hits first, then client-only extras.
+    // Union is add-only: re-derived hits ∪ client extras ∪ (later) model flags.
     // The client list is the only witness for lockfile/secret hunks stripped
     // from the sanitized text, so an empty client list never clears re-derived hits.
     const clientPaths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
     let derivedPaths: string[] = [];
-    if (Array.isArray(fileBoundaries) && fileBoundaries.length > 0 && diff.includes('diff --git')) {
+    let touchedPaths: string[] = [];
+    let sanitizerTruncated = false;
+    let diffFacts: AuditDiffFacts | undefined;
+    if (typeof diff === 'string' && diff.includes('diff --git')) {
       try {
-        derivedPaths = sanitizeUnifiedDiff(diff, fileBoundaries).stats.unauthorizedPaths ?? [];
+        const sanitized = sanitizeUnifiedDiff(
+          diff,
+          Array.isArray(fileBoundaries) ? fileBoundaries : []
+        );
+        derivedPaths = sanitized.stats.unauthorizedPaths ?? [];
+        touchedPaths = sanitized.stats.touchedPaths ?? [];
+        sanitizerTruncated = sanitized.isTruncated;
+        const forcedSoFar = unionUnauthorizedPaths(derivedPaths, clientPaths);
+        diffFacts = {
+          filesTouched: sanitized.stats.totalFilesTouched,
+          linesAdded: sanitized.stats.linesAdded,
+          linesRemoved: sanitized.stats.linesRemoved,
+          unauthorizedCount: forcedSoFar.length,
+          truncated: sanitizerTruncated || diff.length > MAX_EVALUATE_DIFF_CHARS,
+          shownChars: Math.min(diff.length, MAX_EVALUATE_DIFF_CHARS),
+          touchedPaths,
+          unauthorizedPaths: forcedSoFar,
+        };
       } catch {
         derivedPaths = [];
       }
     }
-    const forcedPaths = Array.from(new Set([...derivedPaths, ...clientPaths].filter(Boolean)));
+    const forcedPaths = unionUnauthorizedPaths(derivedPaths, clientPaths);
+    if (diffFacts) {
+      diffFacts = {
+        ...diffFacts,
+        unauthorizedCount: forcedPaths.length,
+        unauthorizedPaths: forcedPaths,
+        truncated: sanitizerTruncated || diff.length > MAX_EVALUATE_DIFF_CHARS,
+        shownChars: Math.min(diff.length, MAX_EVALUATE_DIFF_CHARS),
+        touchedPaths: touchedPaths.length > 0 ? touchedPaths : diffFacts.touchedPaths,
+      };
+    } else if (forcedPaths.length > 0) {
+      // Non-git diff (e.g. already-sanitized text): still carry the client union
+      // so severity grounding and Next-decision see the same violation count.
+      diffFacts = {
+        filesTouched: 0,
+        linesAdded: 0,
+        linesRemoved: 0,
+        unauthorizedCount: forcedPaths.length,
+        truncated: diff.length > MAX_EVALUATE_DIFF_CHARS,
+        shownChars: Math.min(diff.length, MAX_EVALUATE_DIFF_CHARS),
+        touchedPaths: [],
+        unauthorizedPaths: forcedPaths,
+      };
+    }
 
     const report = await evaluateDiffAgainstCriteria({
       diff,
@@ -56,7 +100,11 @@ export async function POST(req: NextRequest) {
       fileBoundaries,
       unauthorizedPaths: forcedPaths,
       customApiKey,
+      diffFacts,
+      touchedPaths,
     });
+
+    if (diffFacts && !report.diffFacts) report.diffFacts = diffFacts;
 
     // Attach PR context if available
     if (prMetadata) {

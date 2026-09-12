@@ -1,4 +1,9 @@
 import { Blueprint, AcceptanceCriterion, GeminiAuditReport } from '@/types';
+import {
+  buildAuditGrade,
+  nextDecisionSentence,
+  sortCriteriaForDecision,
+} from '@/lib/scoring';
 
 export interface PromptCompilerInput {
   repo: string;
@@ -107,6 +112,17 @@ export function compileRemediationPrompt(input: RemediationPromptInput): string 
   const { targetBranch, baseBranch = 'main', prNumber, prUrl, report, fileBoundaries } = input;
   const { criteriaResults, scopeIntegrity, mergeVerdict } = report;
 
+  // Grade truth when the server attached it; otherwise derive the same math
+  // locally so the prompt never contradicts the scorecard.
+  const grade =
+    report.grade ??
+    buildAuditGrade(report, {
+      diffFacts: report.diffFacts,
+    });
+  const verdict = grade.verdict;
+  const score = grade.overallScore;
+  const nextStep = nextDecisionSentence(grade.nextDecision, targetBranch);
+
   const prReference = prNumber
     ? `active Pull Request #${prNumber}`
     : prUrl
@@ -123,11 +139,25 @@ export function compileRemediationPrompt(input: RemediationPromptInput): string 
       ? mergeVerdict.keyBlockers.map((b, i) => `${i + 1}. ${b}`).join('\n')
       : '1. None identified.';
 
+  // Decision-first: UNMET, then PARTIAL. Each open row carries Remaining (the
+  // concrete gap) and, for PARTIAL, Satisfied (what to preserve).
+  const openRanked = sortCriteriaForDecision(
+    (criteriaResults || []).filter((c) => c.status !== 'MET')
+  );
   const unmetCriteriaSection =
     criteriaResults && criteriaResults.length > 0
-      ? criteriaResults
-          .filter((c) => c.status !== 'MET')
-          .map((c) => `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Evidence: ${c.evidence}`)
+      ? openRanked
+          .map((c) => {
+            const remaining = (c.remainingWork || '').trim()
+              ? `\n  Remaining: ${c.remainingWork!.trim()}`
+              : '';
+            const satisfied =
+              c.status === 'PARTIALLY_MET' && (c.satisfiedAspects || '').trim()
+                ? `\n  Satisfied (preserve): ${c.satisfiedAspects!.trim()}`
+                : '';
+            const category = c.category ? `\n  Category: ${c.category}` : '';
+            return `- [${c.status}] Criterion ${c.id}: ${c.criterion}\n  Evidence: ${c.evidence}${satisfied}${remaining}${category}`;
+          })
           .join('\n') || '- All declared criteria were satisfied.'
       : '- No explicit criteria recorded.';
 
@@ -135,6 +165,10 @@ export function compileRemediationPrompt(input: RemediationPromptInput): string 
     fileBoundaries && fileBoundaries.length > 0
       ? `\n\n#### Authorized File Boundaries:\n${fileBoundaries.map((f) => `- \`${f}\``).join('\n')}`
       : '';
+
+  const changeRiskLine = grade.diffFacts
+    ? `\n- **Change Risk:** ${grade.blast.rating} — ${grade.diffFacts.filesTouched} files, +${grade.diffFacts.linesAdded}/−${grade.diffFacts.linesRemoved}${grade.diffFacts.truncated ? ' (diff truncated; risk may be understated)' : ''}${grade.blast.grounded ? '' : ' (model estimate — line stats unavailable)'}`
+    : '';
 
   return `### CRITICAL BRANCH WORKFLOW DIRECTIVE:
 You are assigned to remediate ${prReference}:
@@ -148,13 +182,15 @@ DO NOT create an alternate branch or start over from the base branch (${baseBran
 ---
 
 ### Audit Findings & Blockers:
-- **Verdict:** ${mergeVerdict.status} (${mergeVerdict.overallScore}/100)
-- **Scope Integrity:** ${scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}${unauthorizedSection}
+- **Verdict:** ${verdict} (${score}/100)
+- **Score:** ${grade.scoreParts.criteria} criteria − ${grade.scoreParts.scope} scope = ${score}
+- **Next:** ${nextStep}
+- **Scope Integrity:** ${scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}${unauthorizedSection}${changeRiskLine}
 
 #### Key Blockers:
 ${blockersSection}
 
-#### Unmet / Partially Met Acceptance Criteria:
+#### Unmet / Partially Met Acceptance Criteria (decision order):
 ${unmetCriteriaSection}
 
 #### Required Actionable Changes:

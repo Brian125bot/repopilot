@@ -1,7 +1,9 @@
+export type CriterionCategory = 'functional' | 'security' | 'testing' | 'constraint';
+
 export interface AcceptanceCriterion {
   id: string;
   text: string;
-  category?: 'functional' | 'security' | 'testing' | 'constraint';
+  category?: CriterionCategory;
   rationale?: string;
 }
 
@@ -114,6 +116,61 @@ export interface CriterionResult {
   status: 'MET' | 'PARTIALLY_MET' | 'UNMET';
   evidence: string;
   lineReferences: string[];
+  /** Joined from the Stage 1 criterion id — not a model-authored field. */
+  category?: CriterionCategory;
+  /** What already holds (MET / PARTIAL). Optional so older reports still parse. */
+  satisfiedAspects?: string;
+  /** What is still missing (PARTIAL / UNMET). Optional so older reports still parse. */
+  remainingWork?: string;
+  /** Refs whose path token is absent from sanitizer touchedPaths. Never fails the audit — UI shows “cited, not in diff”. */
+  unverifiedReferences?: string[];
+}
+
+export interface AuditDiffFacts {
+  filesTouched: number;
+  linesAdded: number;
+  linesRemoved: number;
+  unauthorizedCount: number;
+  /** True when the sanitizer truncated or the evaluate slice cut the diff sent to the model. */
+  truncated?: boolean;
+  /** Chars of diff text actually sent to the model (<= sanitized length). */
+  shownChars?: number;
+  /** Sanitizer touched paths (authoritative list for line-ref validation). */
+  touchedPaths?: string[];
+  /** Union of unauthorized paths (sanitizer ∪ client ∪ model) at grade time. */
+  unauthorizedPaths?: string[];
+}
+
+export interface ScoreParts {
+  criteria: number;
+  scope: number;
+  total: number;
+}
+
+export interface CategoryCounts {
+  met: number;
+  partial: number;
+  unmet: number;
+  total: number;
+}
+
+export type NextAuditDecision = 'merge' | 'revert_scope' | 'remediate' | 'blocked';
+
+export interface AuditGrade {
+  met: number;
+  partial: number;
+  unmet: number;
+  total: number;
+  criteriaScore: number;
+  scopePenalty: number;
+  overallScore: number;
+  verdict: MergeVerdict['status'];
+  scoreParts: ScoreParts;
+  categoryRollup: Record<CriterionCategory, CategoryCounts>;
+  diffFacts?: AuditDiffFacts;
+  blast: { rating: BlastRadius['rating']; explanation: string; grounded: boolean };
+  nextDecision: NextAuditDecision;
+  why: string[];
 }
 
 export interface ScopeIntegrity {
@@ -147,6 +204,10 @@ export interface GeminiAuditReport {
   prUrl?: string;
   baseBranch?: string;
   headBranch?: string;
+  /** Sanitizer file/line facts stamped at evaluate time. */
+  diffFacts?: AuditDiffFacts;
+  /** Server-computed single truth. UI renders this; recompute client-side only when missing (old cached reports). */
+  grade?: AuditGrade;
 }
 
 export interface PRMetadata {

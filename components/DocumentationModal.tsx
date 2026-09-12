@@ -436,32 +436,43 @@ export function DocumentationModal({ open, onClose }: DocumentationModalProps) {
                 <div>
                   <h3 className="text-xl font-bold text-slate-900">Gemini PR Audit & Merge Readiness Scorecard</h3>
                   <p className="text-sm text-slate-600 mt-1 leading-relaxed">
-                    The audit engine analyzes sanitized PR diffs against the declared acceptance criteria using Gemini with strict JSON schema validation.
+                    The audit engine analyzes sanitized PR diffs against the declared acceptance criteria using Gemini with strict JSON schema validation. The model authors prose and per-criterion gaps; the server computes the official <strong>grade</strong> (`criteria − scope = total`) and the UI renders it.
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-950">
                     <div className="font-bold text-xs">READY TO MERGE</div>
-                    <div className="text-[11px] text-emerald-800 mt-1">Score: 85 - 100</div>
-                    <div className="text-[11px] text-emerald-700 mt-1">100% criteria verified with code evidence, zero scope violations, low blast radius.</div>
+                    <div className="text-[11px] text-emerald-800 mt-1">In-scope, no UNMET, no PARTIAL, score ≥ 85</div>
+                    <div className="text-[11px] text-emerald-700 mt-1">Headline score is criteria fulfillment minus a flat −35 if any unauthorized path. Change risk is shown beside the score, not inside it.</div>
                   </div>
                   <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-950">
                     <div className="font-bold text-xs">NEEDS REVISION</div>
-                    <div className="text-[11px] text-amber-800 mt-1">Score: 50 - 84</div>
-                    <div className="text-[11px] text-amber-700 mt-1">Partial criteria coverage or non-critical scope violations requiring minor agent adjustments.</div>
+                    <div className="text-[11px] text-amber-800 mt-1">Open criteria, PARTIAL work, or out-of-scope files with score ≥ 40</div>
+                    <div className="text-[11px] text-amber-700 mt-1">Next step is usually revert out-of-scope files, then remediate remaining criteria on the audited branch.</div>
                   </div>
                   <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-950">
                     <div className="font-bold text-xs">BLOCKED</div>
-                    <div className="text-[11px] text-red-800 mt-1">Score: 0 - 49</div>
-                    <div className="text-[11px] text-red-700 mt-1">Critical criteria unmet, heavy scope drift, or unauthorized root config modifications.</div>
+                    <div className="text-[11px] text-red-800 mt-1">Score &lt; 40 when out-of-scope or any UNMET</div>
+                    <div className="text-[11px] text-red-700 mt-1">Do not merge. Address blockers before another dispatch. One unauthorized file is enough to prevent READY.</div>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-slate-900">How to read the grade</h4>
+                  <ul className="text-xs text-slate-600 leading-relaxed list-disc list-inside space-y-1">
+                    <li><strong>Score:</strong> <span className="font-mono">criteria − scope = total</span> (PARTIAL counts half, out-of-scope costs −35).</li>
+                    <li><strong>Change risk:</strong> severity-grounded — critical files (<span className="font-mono">package.json</span>, lockfiles, <span className="font-mono">Dockerfile</span>, <span className="font-mono">.env</span>, configs, migrations, auth/security) force HIGH; non-critical drift is MEDIUM; otherwise volume bands 150/500. <span className="font-mono">· model</span> means line stats were unavailable.</li>
+                    <li><strong>Why / Next:</strong> up to 3 reasons plus <span className="font-mono">merge / revert_scope / remediate / blocked</span> with the audited branch.</li>
+                    <li><strong>Criteria:</strong> decision order UNMET → PARTIAL → MET, categories joined from Stage 1 (<span className="font-mono">CRIT-1/01/1</span> normalize). <span className="font-mono">· unverified</span> refs were cited but absent from the diff.</li>
+                    <li><strong>Truncated:</strong> diffs cut for token budget warn “risk may be understated” — fetch the full diff before merging a borderline score.</li>
+                  </ul>
                 </div>
 
                 <div className="space-y-2">
                   <h4 className="text-sm font-semibold text-slate-900">Automated Remediation Loop</h4>
                   <p className="text-xs text-slate-600 leading-relaxed">
-                    When issues are found, the scorecard constructs an actionable markdown remediation contract containing line-by-line code evidence, list of files to revert, and explicit branch directives. The user can edit the prompt or click <strong>Auto-Dispatch to Jules Session</strong> to dispatch the fix immediately.
+                    When issues are found, the scorecard constructs an actionable markdown remediation contract containing line-by-line code evidence, <strong>Remaining</strong> gaps (and <strong>Satisfied</strong> progress for PARTIAL), list of files to revert, change-risk context, and explicit branch directives. The user can edit the prompt or click <strong>Auto-Dispatch to Jules Session</strong> to dispatch the fix immediately.
                   </p>
                 </div>
               </div>

@@ -30,10 +30,18 @@ import {
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
-import { GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
+import { AuditDiffFacts, CriterionCategory, GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
 import { compileRemediationPrompt } from '@/lib/prompt-compiler';
+import {
+  buildAuditGrade,
+  formatScorecardSummary,
+  sortCriteriaForDecision,
+} from '@/lib/scoring';
+import { ScoreHeader } from './scorecard/ScoreHeader';
+import { WhyNextCard } from './scorecard/WhyNextCard';
+import { ScopeRiskCoverageGrid } from './scorecard/ScopeRiskCoverageGrid';
+import { CriteriaMatrix } from './scorecard/CriteriaMatrix';
 import {
   buildOutcomeRow,
   compileContinuationPrompt,
@@ -53,6 +61,7 @@ interface MergeScorecardProps {
   onViewDiff?: () => void;
   onOpenSettings?: () => void;
   onSaveBlueprint?: (blueprint: Blueprint) => void;
+  diffFacts?: AuditDiffFacts | null;
 }
 
 export function MergeScorecard({
@@ -67,6 +76,7 @@ export function MergeScorecard({
   onViewDiff,
   onOpenSettings,
   onSaveBlueprint,
+  diffFacts = null,
 }: MergeScorecardProps) {
   const [copiedPrompt, setCopiedPrompt] = React.useState(false);
   const [copiedSummary, setCopiedSummary] = React.useState(false);
@@ -88,7 +98,26 @@ export function MergeScorecard({
   const [isEditingPrompt, setIsEditingPrompt] = React.useState(false);
   const [customPromptText, setCustomPromptText] = React.useState<string>('');
 
-  const { criteriaResults, scopeIntegrity, blastRadius, mergeVerdict } = report;
+  const { criteriaResults, scopeIntegrity, mergeVerdict } = report;
+
+  // Server single truth: render report.grade when the evaluate route attached
+  // it. Recompute client-side only for old cached reports without a grade.
+  const grade = React.useMemo(
+    () =>
+      report.grade ??
+      buildAuditGrade(report, {
+        criteria: blueprint?.criteria,
+        diffFacts: diffFacts || report.diffFacts,
+        touchedPaths: (diffFacts || report.diffFacts)?.touchedPaths,
+        unauthorizedPaths: (diffFacts || report.diffFacts)?.unauthorizedPaths,
+      }),
+    [report, blueprint?.criteria, diffFacts]
+  );
+
+  const rankedCriteria = React.useMemo(
+    () => sortCriteriaForDecision(criteriaResults || []),
+    [criteriaResults]
+  );
 
   // Resolve target audited branch
   const auditedBranch = React.useMemo(() => {
@@ -234,7 +263,7 @@ export function MergeScorecard({
           criteria: criteriaResults.map((c) => ({
             id: String(c.id),
             text: c.criterion,
-            category: 'functional',
+            category: c.category || 'functional',
           })),
         }),
       });
@@ -329,167 +358,37 @@ export function MergeScorecard({
     }
   };
 
-  const verdictStyle = getVerdictStyle(mergeVerdict.status);
-  const VerdictIcon = verdictStyle.icon;
+  const verdictStyle = getVerdictStyle(grade.verdict);
 
   const handleCopyScorecardSummary = () => {
-    const summary = `RepoPilot Scorecard: ${mergeVerdict.status} (${mergeVerdict.overallScore}/100)
-Criteria Met: ${criteriaResults.filter((c) => c.status === 'MET').length}/${criteriaResults.length}
-Scope Integrity: ${scopeIntegrity.strictlyInScope ? 'In Scope' : 'Violated'}
-Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
-    navigator.clipboard.writeText(summary);
+    navigator.clipboard.writeText(formatScorecardSummary(grade, report));
     setCopiedSummary(true);
     setTimeout(() => setCopiedSummary(false), 2000);
   };
 
+  const categoryBadgeClass = (category?: CriterionCategory) =>
+    category === 'security'
+      ? 'bg-red-50 text-red-800 border-red-200'
+      : category === 'testing'
+        ? 'bg-sky-50 text-sky-800 border-sky-200'
+        : category === 'constraint'
+          ? 'bg-amber-50 text-amber-900 border-amber-200'
+          : 'bg-slate-50 text-slate-700 border-slate-200';
+
   return (
     <div className="space-y-6 animate-in fade-in-50 duration-300">
-      {/* 1. High Visibility Scorecard Header */}
-      <Card className={`border overflow-hidden shadow-sm ${verdictStyle.bg}`}>
-        <div className="p-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            {/* Left: PR Context & Verdict */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge
-                  variant={verdictStyle.badge}
-                  className="px-3 py-1 text-xs font-bold tracking-wide gap-1.5 uppercase shadow-xs"
-                >
-                  <VerdictIcon className="h-4 w-4" />
-                  {verdictStyle.label}
-                </Badge>
-                {prMetadata?.number ? (
-                  <a
-                    href={prMetadata.htmlUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-mono text-slate-700 hover:text-indigo-600 underline underline-offset-2"
-                  >
-                    <GitPullRequest className="h-3.5 w-3.5" />
-                    PR #{prMetadata.number}
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                ) : null}
-              </div>
-
-              <h2 className="text-xl font-bold text-slate-900 tracking-tight leading-tight">
-                {prMetadata?.title || report.prTitle || 'Pull Request Evaluation'}
-              </h2>
-
-              <div className="flex items-center gap-4 text-xs text-slate-600 flex-wrap">
-                <span>
-                  Author: <strong className="text-slate-900">@{prMetadata?.author || report.prAuthor || 'jules-agent'}</strong>
-                </span>
-                <span>•</span>
-                <span>
-                  Evaluated:{' '}
-                  <strong className="text-slate-900">
-                    {report.evaluatedAt
-                      ? new Date(report.evaluatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : 'Recently'}
-                  </strong>
-                </span>
-                {prMetadata?.headBranch && (
-                  <>
-                    <span>•</span>
-                    <span className="font-mono bg-white/80 px-1.5 py-0.5 rounded border border-slate-200">
-                      {prMetadata.baseBranch} ← {prMetadata.headBranch}
-                    </span>
-                  </>
-                )}
-              </div>
-
-              {blueprint && (
-                <div className="flex items-center gap-2 text-xs bg-white/95 border border-indigo-200/90 text-slate-800 px-3 py-1.5 rounded-lg shadow-2xs font-mono flex-wrap mt-1">
-                  <Database className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
-                  <span className="text-slate-500 font-sans text-xs font-medium">Evaluated Contract:</span>
-                  <strong className="text-indigo-950 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 font-bold">
-                    {blueprint.blueprintId}
-                  </strong>
-                  <span className="text-slate-300">•</span>
-                  <span className="text-indigo-700 font-sans text-[11px] font-semibold">
-                    {hydrationSource === 'LOCAL_VAULT'
-                      ? 'Hydrated from Vault Cache'
-                      : hydrationSource === 'EMBEDDED_COMMENT'
-                      ? 'Extracted from PR <!-- AUDIT_BLUEPRINT -->'
-                      : hydrationSource === 'DEMO'
-                      ? 'Sample Demo Specification'
-                      : 'Custom / Ad-Hoc Specification'}
-                  </span>
-                  {blueprint.repo && (
-                    <>
-                      <span className="text-slate-300 hidden sm:inline">•</span>
-                      <span className="text-slate-600 font-sans text-[11px] hidden sm:inline">
-                        Target: <strong className="text-slate-800">{blueprint.repo}</strong> ({blueprint.branchName})
-                      </span>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Right: Radial / Circular Score Gauge */}
-            <div className="flex items-center gap-5 bg-white/90 rounded-2xl p-4 border border-slate-200/80 shadow-xs shrink-0 self-start md:self-auto">
-              <div className="relative flex items-center justify-center">
-                <svg className="w-20 h-20 transform -rotate-90" viewBox="0 0 36 36">
-                  <path
-                    className="text-slate-100"
-                    strokeWidth="3.5"
-                    stroke="currentColor"
-                    fill="none"
-                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  />
-                  <path
-                    className={verdictStyle.textColor}
-                    strokeDasharray={`${mergeVerdict.overallScore}, 100`}
-                    strokeWidth="3.5"
-                    strokeLinecap="round"
-                    stroke="currentColor"
-                    fill="none"
-                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center justify-center">
-                  <span className="text-2xl font-black text-slate-900 tracking-tight leading-none">
-                    {mergeVerdict.overallScore}
-                  </span>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">/ 100</span>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="text-xs font-semibold text-slate-900">Merge Readiness Score</div>
-                <div className="text-[11px] text-slate-500">
-                  {mergeVerdict.overallScore >= 90
-                    ? 'Exemplary compliance'
-                    : mergeVerdict.overallScore >= 60
-                    ? 'Requires minor corrections'
-                    : 'Critical violations detected'}
-                </div>
-                <div className="flex items-center gap-1.5 pt-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleCopyScorecardSummary}
-                    className="h-6 px-2 text-[11px] text-slate-600 hover:bg-slate-100"
-                  >
-                    {copiedSummary ? <Check className="h-3 w-3 text-emerald-600 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                    {copiedSummary ? 'Copied' : 'Share Score'}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Linear progress bar baseline */}
-        <div className="h-1.5 w-full bg-slate-200/50">
-          <div
-            className={`h-full ${verdictStyle.progressColor} transition-all duration-700`}
-            style={{ width: `${mergeVerdict.overallScore}%` }}
-          />
-        </div>
-      </Card>
+      <ScoreHeader
+        report={report}
+        prMetadata={prMetadata}
+        blueprint={blueprint}
+        hydrationSource={hydrationSource}
+        grade={grade}
+        auditedBranch={auditedBranch}
+        verdictStyle={verdictStyle}
+        copiedSummary={copiedSummary}
+        onCopySummary={handleCopyScorecardSummary}
+      />
+      <WhyNextCard grade={grade} auditedBranch={auditedBranch} />
 
       {/* Scope Drift Warning Callout */}
       {!scopeIntegrity.strictlyInScope && (
@@ -514,49 +413,11 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
         </Alert>
       )}
 
-      {/* Blast Radius & Scope Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Scope Integrity Card */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              {scopeIntegrity.strictlyInScope ? (
-                <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              ) : (
-                <ShieldAlert className="h-4 w-4 text-red-600" />
-              )}
-              Scope Integrity
-            </span>
-            <Badge variant={scopeIntegrity.strictlyInScope ? 'success' : 'destructive'} className="text-[10px]">
-              {scopeIntegrity.strictlyInScope ? 'Zero Boundary Violations' : 'Anti-Drift Tripped'}
-            </Badge>
-          </div>
-          <p className="text-xs text-slate-700 leading-relaxed">{scopeIntegrity.explanation}</p>
-        </div>
-
-        {/* Blast Radius Risk Card */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <Flame className="h-4 w-4 text-amber-500" />
-              Blast Radius Rating
-            </span>
-            <Badge
-              variant={
-                blastRadius.rating === 'LOW'
-                  ? 'success'
-                  : blastRadius.rating === 'MEDIUM'
-                  ? 'warning'
-                  : 'destructive'
-              }
-              className="text-[10px] font-bold"
-            >
-              {blastRadius.rating} RISK
-            </Badge>
-          </div>
-          <p className="text-xs text-slate-700 leading-relaxed">{blastRadius.explanation}</p>
-        </div>
-      </div>
+      <ScopeRiskCoverageGrid
+        report={report}
+        grade={grade}
+        categoryBadgeClass={categoryBadgeClass}
+      />
 
       {/* Key Blockers Callout if any */}
       {mergeVerdict.keyBlockers.length > 0 && (
@@ -580,116 +441,11 @@ Blast Radius: ${blastRadius.rating} (${blastRadius.explanation})`;
         </Card>
       )}
 
-      {/* 2. Acceptance Criteria Validation Table */}
-      <Card className="border-slate-200 shadow-sm overflow-hidden">
-        <CardHeader className="border-b border-slate-100 bg-slate-50/50 py-4 px-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-bold text-slate-900">
-                Criteria Validation Matrix
-              </CardTitle>
-              <CardDescription className="text-xs">
-                Audited against unified code diff using Gemini structured evaluation.
-              </CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">
-                <strong className="text-emerald-700">
-                  {criteriaResults.filter((c) => c.status === 'MET').length}
-                </strong>{' '}
-                of {criteriaResults.length} Met
-              </span>
-            </div>
-          </div>
-        </CardHeader>
-
-        <div className="divide-y divide-slate-100">
-          {criteriaResults.map((result, idx) => {
-            const statusConfig = {
-              MET: {
-                badge: 'success' as const,
-                label: 'MET',
-                icon: CheckCircle2,
-                rowBg: 'hover:bg-emerald-50/20',
-              },
-              PARTIALLY_MET: {
-                badge: 'warning' as const,
-                label: 'PARTIAL',
-                icon: AlertTriangle,
-                rowBg: 'hover:bg-amber-50/20',
-              },
-              UNMET: {
-                badge: 'destructive' as const,
-                label: 'UNMET',
-                icon: XCircle,
-                rowBg: 'hover:bg-red-50/20',
-              },
-            }[result.status] || {
-              badge: 'secondary' as const,
-              label: result.status,
-              icon: AlertCircle,
-              rowBg: '',
-            };
-
-            const StatusIcon = statusConfig.icon;
-
-            return (
-              <div key={result.id || idx} className={`p-4 sm:p-5 transition-colors ${statusConfig.rowBg}`}>
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                  {/* Left Column: ID, Criterion, Evidence */}
-                  <div className="space-y-2 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-slate-100 text-[10px] font-bold text-slate-700 font-mono">
-                        {idx + 1}
-                      </span>
-                      <p className="text-xs font-semibold text-slate-900">{result.criterion}</p>
-                    </div>
-
-                    {/* Evidence Quote */}
-                    <div className="pl-7">
-                      <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-200/80 text-xs text-slate-700 space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                          Audit Evidence & Rationale:
-                        </span>
-                        <p className="leading-relaxed">{result.evidence}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right Column: Status Badge & Line References */}
-                  <div className="sm:text-right shrink-0 pl-7 sm:pl-0 space-y-2">
-                    <Badge
-                      variant={statusConfig.badge}
-                      className="gap-1 text-[11px] font-bold uppercase tracking-wider"
-                    >
-                      <StatusIcon className="h-3 w-3" />
-                      {statusConfig.label}
-                    </Badge>
-
-                    {result.lineReferences && result.lineReferences.length > 0 && (
-                      <div className="space-y-1">
-                        <span className="text-[10px] text-slate-400 font-medium block">
-                          Line References:
-                        </span>
-                        <div className="flex flex-col sm:items-end gap-1">
-                          {result.lineReferences.map((ref, rIdx) => (
-                            <span
-                              key={rIdx}
-                              className="font-mono text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded"
-                            >
-                              {ref}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+      <CriteriaMatrix
+        rankedCriteria={rankedCriteria}
+        grade={grade}
+        categoryBadgeClass={categoryBadgeClass}
+      />
 
       {/* 3. Actionable Agent Remediation Prompt Section with Automated Jules Dispatch */}
       <Card className="border-indigo-200 bg-indigo-50/20 shadow-sm overflow-hidden">

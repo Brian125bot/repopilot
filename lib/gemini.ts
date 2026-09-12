@@ -1,6 +1,9 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { AcceptanceCriterion, GeminiAuditReport, GeneratedCriteriaResponse, RepoInspectionResult } from '@/types';
-import { reconcileAuditReport } from '@/lib/scoring';
+import { AcceptanceCriterion, AuditDiffFacts, GeminiAuditReport, GeneratedCriteriaResponse, RepoInspectionResult } from '@/types';
+import { attachAuditGrade, reconcileAuditReport } from '@/lib/scoring';
+
+/** Char cap for the diff slice sent to Gemini. Keep in sync with lib/scoring.ts MAX_EVALUATE_DIFF_CHARS and sanitizer default (100k). */
+export const MAX_EVALUATE_DIFF_CHARS = 80000;
 
 export function getGeminiClient(customApiKey?: string): GoogleGenAI {
   const key = customApiKey || process.env.GEMINI_API_KEY;
@@ -42,6 +45,14 @@ const auditEvaluationSchema = {
             type: Type.ARRAY,
             items: { type: Type.STRING },
             description: 'File and line numbers or hunk headers where implementation occurs (e.g. ["src/auth.ts:45-52"]).',
+          },
+          satisfiedAspects: {
+            type: Type.STRING,
+            description: 'For MET or PARTIALLY_MET: what already holds in the diff. Empty string if nothing holds.',
+          },
+          remainingWork: {
+            type: Type.STRING,
+            description: 'For PARTIALLY_MET or UNMET: the concrete gap still missing. Empty string if MET.',
           },
         },
         required: ['id', 'criterion', 'status', 'evidence', 'lineReferences'],
@@ -119,6 +130,8 @@ export async function evaluateDiffAgainstCriteria({
   fileBoundaries,
   unauthorizedPaths,
   customApiKey,
+  diffFacts,
+  touchedPaths,
 }: {
   diff: string;
   criteria: AcceptanceCriterion[];
@@ -127,6 +140,8 @@ export async function evaluateDiffAgainstCriteria({
   /** Deterministic out-of-scope paths from the diff sanitizer; forces scope verdict. Required — pass []. */
   unauthorizedPaths: string[];
   customApiKey?: string;
+  diffFacts?: AuditDiffFacts;
+  touchedPaths?: string[];
 }): Promise<GeminiAuditReport> {
   const ai = getGeminiClient(customApiKey);
 
@@ -146,21 +161,24 @@ Your job is to rigorously evaluate a git diff against an explicit Stage 1 Bluepr
 3. Declared File Boundaries & Anti-Drift Directives (no unauthorized files, no lockfile tampering, no extraneous refactoring).
 
 Evaluation Guidelines:
-- Mark a criterion 'MET' ONLY if there is clear, concrete code implementation or tests in the diff fulfilling it.
-- Mark 'PARTIALLY_MET' if the intent is partially implemented but misses edge cases, error handling, or tests.
-- Mark 'UNMET' if the feature is completely missing or non-functional.
+- Mark a criterion 'MET' ONLY if there is clear, concrete code implementation or tests in the diff fulfilling it. Fill 'satisfiedAspects' with what holds (1-2 sentences, max ~300 chars). Leave 'remainingWork' empty.
+- Mark 'PARTIALLY_MET' if the intent is partially implemented but misses edge cases, error handling, or tests. Fill BOTH 'satisfiedAspects' (what already holds) and 'remainingWork' (the concrete gap, file + change needed). Each max ~300 chars, never empty.
+- Mark 'UNMET' if the feature is completely missing or non-functional. Put what is absent in 'remainingWork' (concrete file + change needed, max ~300 chars). Leave 'satisfiedAspects' empty.
 - In 'evidence', cite specific code patterns, function names, and logic paths found in the diff.
-- In 'lineReferences', cite affected filenames and approximate line ranges or hunk indicators.
+- In 'lineReferences', cite ONLY files present in the diff using 'path:lines' form (e.g. ["src/auth.ts:45-52"]). Never invent paths. Leave empty rather than guessing.
 - In 'scopeIntegrity', strictly check if files in the diff violate the declared file boundaries.
-- In 'blastRadius', evaluate the regression risk:
+- In 'blastRadius', describe regression risk in prose. Line-volume bands for the UI (not your merge score):
   * LOW: small, well-isolated changes (< 150 lines, focused files)
-  * MEDIUM: moderate changes (150-500 lines or multiple core files)
-  * HIGH: massive changes (> 500 lines, wide architectural impact, or critical files touched)
-- In 'mergeVerdict', compute a fair 0-100 score:
-  * 90-100 & all criteria MET & strictly in scope -> 'READY_TO_MERGE'
-  * 60-89 or minor criteria unmet -> 'NEEDS_REVISION'
-  * < 60 or major criteria unmet or unauthorized files/lockfile violations -> 'BLOCKED'
+  * MEDIUM: moderate changes (150-500 lines or multiple core files, or non-critical out-of-scope docs/tests)
+  * HIGH: massive changes (> 500 lines, wide architectural impact) or critical files touched (package.json, lockfiles, Dockerfile, .env, build configs, migrations, auth/security)
+- Do not author the official merge score or verdict. RepoPilot recomputes those from criterion statuses plus the diff sanitizer (unauthorized files never READY; PARTIAL counts as half; −35 if any out-of-scope path). Still fill mergeVerdict fields: keyBlockers and actionableFeedbackForAgent must be concrete.
 - In 'actionableFeedbackForAgent', write an uncompromising, ready-to-paste markdown remediation instruction tailored for the code generation agent.`;
+
+  const shownDiff = diff.slice(0, MAX_EVALUATE_DIFF_CHARS);
+  const truncatedNote =
+    diff.length > MAX_EVALUATE_DIFF_CHARS
+      ? `\n[NOTE: diff truncated to first ${MAX_EVALUATE_DIFF_CHARS.toLocaleString()} of ${diff.length.toLocaleString()} chars for token budget. Judge only what is shown.]`
+      : '';
 
   const prompt = `Please audit the following Pull Request Diff against the Blueprint specifications:
 
@@ -173,8 +191,8 @@ ${boundariesText}
 === ACCEPTANCE CRITERIA MATRIX ===
 ${criteriaText}
 
-=== SANITIZED PULL REQUEST DIFF ===
-${diff.slice(0, 80000)}
+=== SANITIZED PULL REQUEST DIFF ===${truncatedNote}
+${shownDiff}
 
 Please output the complete structured audit report.`;
 
@@ -198,8 +216,17 @@ Please output the complete structured audit report.`;
   const paths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
   const reconciled = reconcileAuditReport(parsed, paths);
 
+  // Server single truth: stamp categories, validate line refs, build grade,
+  // and sync mergeVerdict from grade. UI renders report.grade when present.
+  const graded = attachAuditGrade(reconciled, {
+    criteria,
+    diffFacts,
+    touchedPaths,
+    unauthorizedPaths: paths,
+  });
+
   return {
-    ...reconciled,
+    ...graded,
     evaluatedAt: new Date().toISOString(),
   };
 }

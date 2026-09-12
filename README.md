@@ -101,10 +101,10 @@ RepoPilot **1.0.0** documentation:
 - Built-in GitHub organization repository authorization checker (`/api/jules/sources`).
 - Local dry-run simulation mode when developing offline or without an API key.
 
-### 3. Gemini Structured Output PR Audit
-- Automated evaluation using strict JSON schema validation.
-- Per-criterion verification (`MET`, `PARTIALLY_MET`, `UNMET`) with specific line-number evidence.
-- Blast radius rating (`LOW`, `MEDIUM`, `HIGH`) and actionable agent directives.
+### 3. Gemini Structured Output PR Audit (server-graded)
+- Automated evaluation using strict JSON schema validation; the model authors prose + gaps, the server authors the score.
+- Per-criterion verification (`MET`, `PARTIALLY_MET`, `UNMET`) with `satisfiedAspects` (what holds) / `remainingWork` (concrete gap) and validated `path:lines` refs (`unverifiedReferences` = “cited, not in diff”).
+- Severity-grounded change risk (`LOW` ≤149 lines, `MEDIUM` 150–500 or non-critical drift, `HIGH` >500 or critical files) with `grounded` badge, `criteria − scope = total` breakdown, `Why this grade` + `Next` decision, and category rollup (`functional`/`security`/`testing`/`constraint`).
 
 ### 4. 1-Click Autonomous Remediation Loop
 - If the PR needs revision or is blocked, RepoPilot constructs a specialized remediation prompt.
@@ -117,7 +117,7 @@ RepoPilot **1.0.0** documentation:
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the test suite (164 tests across 19 files)
+# Run the test suite (227 tests across 22 files)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -135,7 +135,9 @@ npm run test:watch
 | **Jules Message** | `jules-message.test.ts` | 8 | Follow-up `:sendMessage` lib + route, fail-closed 401/400/404 |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
-| **Audit Engine** | `audit-engine.test.ts` | 13 | Diff ingestion, branch→PR lookup, evaluate timeout retry |
+| **Audit Engine** | `audit-engine.test.ts` | 13 | Diff ingestion, branch→PR lookup, evaluate timeout retry, diffFacts stamping |
+| **Audit Grade** | `audit-grade.test.ts` | 34 | Normalized category join, severity blast, line-ref validation, grade math, truncated summaries |
+| **Server Grade** | `audit-server-grade.test.ts` | 8 | Server single-truth sync, union paths, grade→brief→prompt wiring |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
 | **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
 | **Outcome Memory** | `outcome-memory.test.ts` | 11 | FailureBrief build + continuation prompt caps |
