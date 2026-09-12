@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logRouteError } from '@/lib/safe-log';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import {
   createJulesSession,
@@ -275,7 +276,7 @@ export async function POST(req: NextRequest) {
       dispatchedAt: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('Error in /api/jules/dispatch:', error);
+    logRouteError('/api/jules/dispatch', error);
     return NextResponse.json(
       {
         success: false,

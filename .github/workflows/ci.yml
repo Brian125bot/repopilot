@@ -16,3 +16,5 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx tsc --noEmit
+      - run: npx eslint .
+      - run: npx next build

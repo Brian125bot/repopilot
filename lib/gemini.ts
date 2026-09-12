@@ -12,7 +12,7 @@ export function getGeminiClient(customApiKey?: string): GoogleGenAI {
     apiKey: key,
     httpOptions: {
       headers: {
-        'User-Agent': 'aistudio-build',
+        'User-Agent': 'RepoPilot/1.0',
       },
     },
   });

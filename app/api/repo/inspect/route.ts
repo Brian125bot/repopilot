@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RepoInspectionResult } from '@/types';
+import { logRouteError } from '@/lib/safe-log';
 
 export async function POST(req: NextRequest) {
   try {
@@ -156,7 +157,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(inspection);
   } catch (error: unknown) {
     const err = error as { message?: string };
-    console.error('Error inspecting repository:', err);
+    logRouteError('/api/repo/inspect', err);
     return NextResponse.json(
       { error: err.message || 'Failed to inspect repository state.' },
       { status: 500 }

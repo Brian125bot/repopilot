@@ -37,6 +37,7 @@ import { findJulesSource } from '@/lib/jules';
 import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
 import { applySessionSnapshotToBlueprint } from '@/lib/session-poll';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
+import { emptyStage1Defaults, SAMPLE_RATE_LIMITER_CONTRACT } from '@/lib/sample-contract';
 import { Blueprint, AcceptanceCriterion, RepoInspectionResult, GeneratedCriteriaResponse } from '@/types';
 import type { SessionPollAction } from '@/lib/session-poll';
 
@@ -57,20 +58,14 @@ export function IntakeDispatchStage({
   onNavigateToStage2,
   onOpenSettings,
 }: IntakeDispatchStageProps) {
+  const stage1Defaults = emptyStage1Defaults();
+
   // 1. Primary Inputs (Repo Target & Objective FIRST)
-  const [repo, setRepo] = React.useState('acme-corp/api-gateway');
-  const [objective, setObjective] = React.useState(
-    'Implement an IP-based sliding window rate limiter middleware backed by Redis. Return HTTP 429 with standard RateLimit-* headers when threshold (60 req/min) is exceeded.'
-  );
+  const [repo, setRepo] = React.useState(stage1Defaults.repo);
+  const [objective, setObjective] = React.useState(stage1Defaults.objective);
 
   // 2. Acceptance Criteria & AI Generation State
-  const [criteria, setCriteria] = React.useState<AcceptanceCriterion[]>([
-    { id: '1', text: 'Middleware extracts client IP correctly with support for X-Forwarded-For', category: 'functional', rationale: 'Required for reverse-proxy routing' },
-    { id: '2', text: 'Sliding window algorithm enforces 60 requests per minute ceiling', category: 'functional', rationale: 'Prevents burst window exploitation' },
-    { id: '3', text: 'Returns HTTP 429 Too Many Requests with RateLimit-Limit, RateLimit-Remaining, and Retry-After headers', category: 'functional', rationale: 'Standard IETF rate-limit header compliance' },
-    { id: '4', text: 'Unit tests cover under-limit, burst limit, and window expiry states', category: 'testing', rationale: 'Ensures algorithmic reliability under concurrency' },
-    { id: '5', text: 'Zero modifications to package.json dependencies or existing unrelated route handlers', category: 'constraint', rationale: 'Strict anti-drift boundary compliance' },
-  ]);
+  const [criteria, setCriteria] = React.useState<AcceptanceCriterion[]>(stage1Defaults.criteria);
 
   const [aiMode, setAiMode] = React.useState<'standard' | 'security' | 'testing' | 'strict'>('standard');
   const [autoApplyBoundaries, setAutoApplyBoundaries] = React.useState(true);
@@ -79,11 +74,9 @@ export function IntakeDispatchStage({
   const [detectedArch, setDetectedArch] = React.useState<string | null>(null);
 
   // 3. Scope & Branch Parameters
-  const [baseBranch, setBaseBranch] = React.useState('main');
-  const [branchName, setBranchName] = React.useState('jules/rate-limiter-redis');
-  const [fileBoundaries, setFileBoundaries] = React.useState(
-    'src/middleware/rate-limiter.ts, src/config/redis.ts, tests/rate-limiter.test.ts'
-  );
+  const [baseBranch, setBaseBranch] = React.useState(stage1Defaults.baseBranch);
+  const [branchName, setBranchName] = React.useState(stage1Defaults.branchName);
+  const [fileBoundaries, setFileBoundaries] = React.useState(stage1Defaults.fileBoundaries);
 
   // 4. Repo State Inspection
   const [repoInspection, setRepoInspection] = React.useState<RepoInspectionResult | null>(null);
@@ -414,6 +407,17 @@ export function IntakeDispatchStage({
     setPollStatus(null);
   };
 
+  const handleLoadSample = () => {
+    const sample = SAMPLE_RATE_LIMITER_CONTRACT;
+    setRepo(sample.repo);
+    setObjective(sample.objective);
+    setCriteria(sample.criteria);
+    setBaseBranch(sample.baseBranch);
+    setBranchName(sample.branchName);
+    setFileBoundaries(sample.fileBoundaries);
+    setDispatchError(null);
+  };
+
   React.useEffect(() => {
     confirmedBlueprintRef.current = confirmedBlueprint;
   }, [confirmedBlueprint]);
@@ -527,13 +531,13 @@ export function IntakeDispatchStage({
               <div>
                 <h3 className="font-bold text-base leading-tight">
                   {apiStatus === 'DISPATCHED_TO_JULES'
-                    ? 'Stage 1 Job Dispatched to Google Jules Cloud'
-                    : 'Dispatched with Local Contract Fallback (HTTP 404 / 401)'}
+                    ? 'Dispatched. Wait for the PR, then audit.'
+                    : 'Dispatch saved locally. Jules was not reached.'}
                 </h3>
                 <p className="text-white/90 text-xs">
                   {apiStatus === 'DISPATCHED_TO_JULES'
-                    ? 'Autonomous agent session initialized at jules.googleapis.com. Jules is working on the target branch.'
-                    : 'Google Jules API rejected direct session creation. Blueprint contract is safely recorded in your vault.'}
+                    ? 'Jules is working on the target branch. When a pull request opens, audit it in Stage 2.'
+                    : 'The contract is in your vault. Fix credentials and dispatch again, or paste a PR in Stage 2.'}
                 </p>
               </div>
             </div>
@@ -676,7 +680,7 @@ export function IntakeDispatchStage({
                 <div className="flex items-center gap-2">
                   <Shield className="h-4 w-4 text-indigo-600" />
                   <span className="font-semibold text-xs text-slate-800">
-                    Stateless Hydration Contract Token
+                    Contract Jules will put in the PR
                   </span>
                 </div>
                 <Button
@@ -691,8 +695,7 @@ export function IntakeDispatchStage({
               </div>
 
               <p className="text-xs text-slate-600 leading-relaxed">
-                The agent is instructed to embed this exact blueprint inside the GitHub Pull Request description.
-                When the PR is submitted, Stage 2 will automatically extract the criteria matrix for audit without needing any active database or connection.
+                Jules includes this contract in the pull request description. Stage 2 reads it to audit and, if needed, fix on the same branch.
               </p>
 
               <div className="bg-slate-900 text-slate-100 p-3 rounded-lg font-mono text-[11px] overflow-x-auto">
@@ -737,13 +740,23 @@ export function IntakeDispatchStage({
                     1
                   </span>
                   <CardTitle className="text-base font-bold text-slate-900">
-                    Intake & Dispatch Engine
+                    Dispatch
                   </CardTitle>
                 </div>
                 <CardDescription className="mt-1 text-xs text-slate-600">
-                  Fill in your target repository and task objective first. Auto-establish acceptance criteria with Gemini, and dispatch an anti-drift contract to Google Jules.
+                  Set the repo, objective, and file boundaries. Dispatch to Jules, wait for the PR, then audit.
                 </CardDescription>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleLoadSample}
+                className="text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100 gap-1.5"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                Load sample
+              </Button>
             </div>
           </CardHeader>
 
@@ -1347,7 +1360,7 @@ export function IntakeDispatchStage({
                   onChange={(e) => setDryRun(e.target.checked)}
                   className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
                 />
-                <span>Dry-run (no Jules key needed)</span>
+                <span>Dry-run (simulation, no Jules key needed)</span>
               </label>
             </div>
 
@@ -1365,7 +1378,7 @@ export function IntakeDispatchStage({
               ) : dryRun ? (
                 <>
                   <Send className="h-3.5 w-3.5" />
-                  <span>Simulate Dispatch (Dry Run)</span>
+                  <span>Simulate dispatch (dry-run)</span>
                 </>
               ) : (
                 <>

@@ -410,12 +410,7 @@ Executes Gemini structured verification of the sanitized diff against criteria.
 
 ## 6. Verification & Automated Test Coverage
 
-RepoPilot includes 75 automated unit and integration tests executing under **Vitest**:
-
-```
-Test Suites: 12 passed, 12 total
-Tests:       122 passed, 122 total
-```
+RepoPilot 1.0.0 includes automated unit and integration tests under **Vitest**. CI runs `npm test`, `npx tsc --noEmit`, `npx eslint .`, and `npx next build`.
 
 Run test suite via:
 ```bash

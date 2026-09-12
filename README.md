@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-122%20tests%20passing-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-1.0.0-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -16,12 +16,15 @@
 
 ## 📚 Documentation Hub
 
-RepoPilot includes extensive technical and user-facing documentation right inside the repository:
+RepoPilot **1.0.0** documentation:
 
-- 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: Comprehensive user-facing guide detailing how RepoPilot organizes task contracts and manages the review loop when working with Google's Jules Cloud Coding Agent.
-- ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: In-depth technical architecture, unified diff parsing, glob-to-regex compilation, state hydration, Gemini structured schema definitions, and security threat model.
-- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest architectural guidelines, mock strategies, and coverage matrix across all 122 automated unit & integration tests.
-- 📐 **[System Architecture & Sequence Flows](./ARCHITECTURE.md)**: Decoupled lifecycle specification, sequence diagrams, and mathematical anti-drift formulations.
+- 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: Settings keys → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
+- 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
+- ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: Architecture, diff parsing, glob compilation, hydration, Gemini schema, threat model.
+- 🧪 **[Testing Strategy & CI/CD Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. CI runs `npm test`, `tsc`, `eslint`, and `next build`.
+- 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
+- 🔐 **[SECURITY.md](./SECURITY.md)**: Browser localStorage keys; the server persists nothing.
+- 📄 **[LICENSE](./LICENSE)**: MIT.
 
 ---
 
@@ -114,7 +117,7 @@ RepoPilot includes extensive technical and user-facing documentation right insid
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the entire test suite (122 tests across 12 suites)
+# Run the test suite (164 tests across 19 files)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -132,11 +135,18 @@ npm run test:watch
 | **Jules Message** | `jules-message.test.ts` | 8 | Follow-up `:sendMessage` lib + route, fail-closed 401/400/404 |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
-| **Audit Engine** | `audit-engine.test.ts` | 9 | Diff ingestion, error boundaries, `unauthorizedPaths` scope forcing |
+| **Audit Engine** | `audit-engine.test.ts` | 13 | Diff ingestion, branch→PR lookup, evaluate timeout retry |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
 | **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
 | **Outcome Memory** | `outcome-memory.test.ts` | 11 | FailureBrief build + continuation prompt caps |
 | **Outcome Log** | `outcome-log.test.ts` | 9 | Append/cap-50/turns/update/export, no aggregates |
+| **PR lookup** | `github-pr-lookup.test.ts` | 5 | PR URL / branch ingest parsers, pulls-by-head |
+| **Session poll** | `session-poll.test.ts` | 6 | Tab-visible 15s/20min poll stop conditions |
+| **Stage handoff** | `stage-handoff.test.ts` | 5 | Prefill real PR URL, vault match |
+| **Sample contract** | `sample-contract.test.ts` | 3 | Empty Stage 1 defaults, Load sample rate-limiter |
+| **Job status** | `job-status.test.ts` | 5 | idle / watching / PR ready / last verdict |
+| **Evaluate timeout** | `evaluate-timeout.test.ts` | 3 | Timeout → retry payload, maxDuration |
+| **1.0 release** | `v1-release.test.ts` | 3 | Version, LICENSE, SECURITY, CI, no credential logs |
 
 ---
 
@@ -165,6 +175,10 @@ npm test
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot application.
+
+### After 1.0
+
+Not in this release: GitHub Action CI gating, auto-merge, webhooks/Cron, accounts/teams, multi-agent arbitration, auto-evaluate when a PR appears.
 
 ### Hosted Use (Vercel, no server setup)
 

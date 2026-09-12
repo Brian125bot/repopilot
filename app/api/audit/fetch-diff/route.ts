@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
+import { logRouteError } from '@/lib/safe-log';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
 import { PRMetadata } from '@/types';
 import {
@@ -198,7 +199,7 @@ export async function POST(req: NextRequest) {
       sanitizedResult,
     });
   } catch (error) {
-    console.error('Error in /api/audit/fetch-diff:', error);
+    logRouteError('/api/audit/fetch-diff', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch diff' },
       { status: 500 }

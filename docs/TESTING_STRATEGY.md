@@ -49,10 +49,14 @@ All test files are organized in the `/__tests__/` directory:
 ├── gemini-scoring.test.ts       # Metrics, penalties, forced scope reconciliation (8)
 ├── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
 ├── outcome-memory.test.ts       # FailureBrief build + continuation prompt caps (11)
-└── outcome-log.test.ts          # Append/cap-50/turns/update/export, no aggregates (9)
+├── outcome-log.test.ts          # Append/cap-50/turns/update/export, no aggregates (9)
+├── sample-contract.test.ts      # Empty Stage 1 defaults + Load sample (3)
+├── job-status.test.ts           # idle / watching / PR ready / last verdict (5)
+├── evaluate-timeout.test.ts     # Timeout retry payload (3)
+└── v1-release.test.ts           # 1.0.0 artifacts, CI, no credential logs (3)
 ```
 
-Total: 122 tests across 12 suites (`npm test`).
+Total: run `npm test` (1.0.0 CI also runs `tsc --noEmit`, `eslint .`, and `next build`).
 
 ---
 

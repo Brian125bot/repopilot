@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { evaluateDiffAgainstCriteria } from '@/lib/gemini';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
 import { AcceptanceCriterion } from '@/types';
+import { evaluateFailurePayload } from '@/lib/evaluate-timeout';
+import { logRouteError } from '@/lib/safe-log';
+
+/** Next.js requires a numeric literal here (must match EVALUATE_MAX_DURATION_SECONDS). */
+export const maxDuration = 60;
 
 /** Presence probe so the Settings modal can show server-key status without spending a Gemini call. */
 export async function GET() {
@@ -68,15 +73,8 @@ export async function POST(req: NextRequest) {
       report,
     });
   } catch (error) {
-    console.error('Error in /api/audit/evaluate:', error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Evaluation failed. Please verify GEMINI_API_KEY.',
-      },
-      { status: 500 }
-    );
+    logRouteError('/api/audit/evaluate', error);
+    const failure = evaluateFailurePayload(error);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

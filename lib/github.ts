@@ -43,7 +43,7 @@ export async function validateGitHubToken(
       const res = await fetchFn('https://api.github.com/rate_limit', {
         headers: {
           Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'RepoPilot-PAT-Validator',
+          'User-Agent': 'RepoPilot/1.0',
         },
       });
 
@@ -92,7 +92,7 @@ export async function validateGitHubToken(
       headers: {
         Authorization: `token ${cleanToken}`,
         Accept: 'application/vnd.github.v3+json',
-        'User-Agent': 'RepoPilot-PAT-Validator',
+        'User-Agent': 'RepoPilot/1.0',
       },
     });
 
@@ -181,7 +181,7 @@ export async function validateGitHubToken(
 export function githubRequestHeaders(token?: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'RepoPilot-AuditEngine',
+    'User-Agent': 'RepoPilot/1.0',
   };
   const clean = token?.trim()?.replace(/^(?:bearer|token)\s+/i, '') || '';
   if (clean) headers.Authorization = `Bearer ${clean}`;

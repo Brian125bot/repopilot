@@ -1,10 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, Key, Sparkles, FolderArchive, ArrowRight, ShieldCheck, BookOpen } from 'lucide-react';
+import { Compass, Key, FolderArchive, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { GitHubStatusIndicator } from './GitHubStatusIndicator';
+import { deriveJobStatus, jobStatusDetail, type JobStatusLabel } from '@/lib/job-status';
+import { Blueprint } from '@/types';
 
 interface NavbarProps {
   currentStage: 'stage1' | 'stage2';
@@ -15,6 +17,7 @@ interface NavbarProps {
   hasCredentials: boolean;
   blueprintsCount: number;
   githubPat?: string;
+  activeBlueprint?: Blueprint | null;
 }
 
 export function Navbar({
@@ -26,7 +29,17 @@ export function Navbar({
   hasCredentials,
   blueprintsCount,
   githubPat = '',
+  activeBlueprint = null,
 }: NavbarProps) {
+  const jobLabel: JobStatusLabel = deriveJobStatus(activeBlueprint);
+  const jobDetail = jobStatusDetail(activeBlueprint);
+  const jobTone =
+    jobLabel === 'PR ready' || jobLabel === 'last verdict'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : jobLabel === 'watching'
+        ? 'bg-amber-50 text-amber-900 border-amber-200'
+        : 'bg-slate-50 text-slate-600 border-slate-200';
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -39,11 +52,11 @@ export function Navbar({
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 tracking-tight text-lg">RepoPilot</span>
               <Badge variant="indigo" className="text-[10px] px-1.5 py-0 font-medium">
-                V1 Decoupled
+                1.0.0
               </Badge>
             </div>
             <span className="text-[11px] text-slate-500 hidden sm:inline">
-              Decoupled Code Generation & Audit Engine
+              Dispatch, wait for PR, audit, fix
             </span>
           </div>
         </div>
@@ -83,6 +96,20 @@ export function Navbar({
 
         {/* Right: Actions & Vault */}
         <div className="flex items-center gap-2">
+          <span
+            className={`hidden sm:inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${jobTone}`}
+            title={jobDetail}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                jobLabel === 'watching' ? 'bg-amber-500 animate-pulse' : jobLabel === 'idle' ? 'bg-slate-400' : 'bg-emerald-500'
+              }`}
+            />
+            {jobLabel}
+            {jobLabel === 'last verdict' && activeBlueprint?.lastBrief?.verdict ? (
+              <span className="normal-case font-mono font-medium">· {activeBlueprint.lastBrief.verdict}</span>
+            ) : null}
+          </span>
           {/* Real-time GitHub Connection Status Indicator */}
           <GitHubStatusIndicator githubPat={githubPat} onOpenSettings={onOpenSettings} />
 

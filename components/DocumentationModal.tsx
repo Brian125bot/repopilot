@@ -167,7 +167,7 @@ export function DocumentationModal({ open, onClose }: DocumentationModalProps) {
                   <h4 className="text-sm font-semibold text-slate-900">Quickstart Workflow</h4>
                   <ol className="list-decimal list-inside text-xs text-slate-600 space-y-2 leading-relaxed bg-slate-50 p-4 rounded-xl border border-slate-200">
                     <li><strong>Configure API Keys (Optional):</strong> Set <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">GEMINI_API_KEY</code>, <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">JULES_API_KEY</code>, and <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">GITHUB_PAT</code> in the Credentials modal or in <code className="bg-slate-200 px-1 py-0.5 rounded font-mono">.env.local</code>.</li>
-                    <li><strong>Inspect or Load Demo PR:</strong> Switch to Stage 2 and click &quot;Load Demo PR&quot; to test instant diff sanitization, criteria verification, and the scorecard.</li>
+                    <li><strong>Inspect or Load Demo PR (simulation):</strong> Switch to Stage 2 and click &quot;Load Demo PR (simulation)&quot; to test diff sanitization, criteria verification, and the scorecard without a live Jules job.</li>
                     <li><strong>Automate Jules Remediation:</strong> In the scorecard, review the actionable remediation prompt and click &quot;Auto-Dispatch to Jules Session&quot; to instruct Jules to commit fixes directly to the audited branch.</li>
                   </ol>
                 </div>

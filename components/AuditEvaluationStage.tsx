@@ -565,6 +565,7 @@ export function AuditEvaluationStage({
         };
         setHydratedBlueprint(briefed);
         persistBlueprintToVault(briefed);
+        onSaveBlueprint?.(briefed);
       }
     } catch (err) {
       console.error('Audit evaluation error:', err);
@@ -615,10 +616,10 @@ export function AuditEvaluationStage({
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">
                   2
                 </span>
-                <CardTitle>Evaluation & Audit Engine</CardTitle>
+                <CardTitle>Audit &amp; fix</CardTitle>
               </div>
               <CardDescription className="mt-1">
-                Ingest pull request diff, hydrate Stage 1 criteria contract, and trigger Gemini automated audit.
+                Ingest the PR (or wait if Jules is still working), evaluate, then fix on the same branch.
               </CardDescription>
             </div>
 
@@ -630,7 +631,7 @@ export function AuditEvaluationStage({
                 className="text-xs border-indigo-200 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-100 gap-1.5"
               >
                 <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
-                <span>Load Demo PR</span>
+                <span>Load Demo PR (simulation)</span>
               </Button>
 
               <Button

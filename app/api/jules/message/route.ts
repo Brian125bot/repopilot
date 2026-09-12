@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
+import { logRouteError } from '@/lib/safe-log';
 
 interface MessageRequestBody {
   sessionId?: string;
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
       state: result.state,
     });
   } catch (error) {
-    console.error('Error in /api/jules/message:', error);
+    logRouteError('/api/jules/message', error);
     return NextResponse.json(
       {
         success: false,

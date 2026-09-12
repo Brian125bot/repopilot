@@ -202,6 +202,26 @@ describe('Audit Engine & Evaluation Pipeline', () => {
       expect(data.error).toContain('Cannot evaluate empty diff');
     });
 
+    it('tells the client to retry when evaluation throws a timeout-class error', async () => {
+      vi.mocked(evaluateDiffAgainstCriteria).mockRejectedValue(new Error('Gateway timed out'));
+
+      const req = new NextRequest('http://localhost:3000/api/audit/evaluate', {
+        method: 'POST',
+        body: JSON.stringify({
+          diff: 'diff --git a/a.ts b/a.ts\n+hello',
+          criteria: [{ id: '1', text: 'criterion' }],
+        }),
+      });
+
+      const res = await evaluatePOST(req);
+      expect(res.status).toBe(504);
+      const data = await res.json();
+      expect(data.retry).toBe(true);
+      expect(data.timedOut).toBe(true);
+      expect(data.error).toMatch(/retry/i);
+      expect(data.error).toMatch(/timed out/i);
+    });
+
     it('rejects evaluation requests with missing criteria matrix', async () => {
       const req = new NextRequest('http://localhost:3000/api/audit/evaluate', {
         method: 'POST',

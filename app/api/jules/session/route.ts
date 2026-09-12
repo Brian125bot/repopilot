@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJulesSession, sanitizeJulesCredential } from '@/lib/jules';
+import { logRouteError } from '@/lib/safe-log';
 
 export async function GET(req: NextRequest) {
   try {
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
       data: snapshot.data,
     });
   } catch (error) {
-    console.error('Error in /api/jules/session:', error);
+    logRouteError('/api/jules/session', error);
     return NextResponse.json(
       {
         success: false,

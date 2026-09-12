@@ -8,7 +8,7 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { BlueprintVaultModal } from '@/components/BlueprintVaultModal';
 import { DocumentationModal } from '@/components/DocumentationModal';
 import { Blueprint } from '@/types';
-import { ShieldCheck, GitPullRequest, Send, ArrowRight, Sparkles, BookOpen } from 'lucide-react';
+import { GitPullRequest, Send, Sparkles } from 'lucide-react';
 
 export default function RepoPilotPage() {
   const [currentStage, setCurrentStage] = React.useState<'stage1' | 'stage2'>('stage1');
@@ -119,27 +119,27 @@ export default function RepoPilotPage() {
         hasCredentials={Boolean(julesKey || geminiKey || githubPat)}
         blueprintsCount={blueprints.length}
         githubPat={githubPat}
+        activeBlueprint={activeBlueprint}
       />
 
       {/* Main App Container */}
       <main suppressHydrationWarning className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Architecture Operating Banner */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white rounded-xl p-3.5 border border-slate-200/80 shadow-2xs text-xs text-slate-600">
           <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <strong className="text-slate-800">Decoupled Operating Architecture:</strong>
-            <span>Stateless request-response lifecycles eliminate long-polling & connection drops.</span>
+            <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
+            <strong className="text-slate-800">Dispatch → wait for PR → audit → fix.</strong>
+            <span>Two stages, one loop.</span>
           </div>
 
           <div className="flex items-center gap-3 text-[11px] text-slate-500">
             <span className="flex items-center gap-1 font-mono">
               <Send className="h-3 w-3 text-indigo-600" />
-              Stage 1: Jules Dispatch
+              Stage 1: Dispatch
             </span>
             <span>→</span>
             <span className="flex items-center gap-1 font-mono">
               <GitPullRequest className="h-3 w-3 text-emerald-600" />
-              Stage 2: Gemini Audit
+              Stage 2: Audit
             </span>
           </div>
         </div>
@@ -201,7 +201,7 @@ export default function RepoPilotPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200/80 bg-white/70 py-6 text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>RepoPilot V1 — Google Jules Autonomous Dispatch & Gemini PR Evaluation</span>
+          <span>RepoPilot 1.0.0 — dispatch, wait for PR, audit, fix</span>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSettingsOpen(true)}

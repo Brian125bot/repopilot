@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAcceptanceCriteria } from '@/lib/gemini';
+import { logRouteError } from '@/lib/safe-log';
 import { RepoInspectionResult } from '@/types';
 
 interface CriteriaRequestBody {
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error: unknown) {
     const err = error as { message?: string; status?: number };
-    console.error('Error generating acceptance criteria:', err);
+    logRouteError('/api/criteria/generate', err);
     return NextResponse.json(
       {
         error: err.message || 'Failed to generate acceptance criteria via Gemini.',
