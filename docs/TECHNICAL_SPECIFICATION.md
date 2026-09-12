@@ -414,7 +414,7 @@ RepoPilot includes 75 automated unit and integration tests executing under **Vit
 
 ```
 Test Suites: 9 passed, 9 total
-Tests:       83 passed, 83 total
+Tests:       94 passed, 94 total
 ```
 
 Run test suite via:

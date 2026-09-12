@@ -5,8 +5,10 @@ import {
   findJulesSource,
   getJulesSession,
   harvestPullRequest,
+  listJulesSources,
   resolveAutomationMode,
   createJulesSession,
+  MAX_SOURCE_PAGES,
 } from '@/lib/jules';
 
 describe('/api/jules/dispatch Route & Jules API Contract', () => {
@@ -254,6 +256,56 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
     expect(data.blueprint.prUrl ?? undefined).toBeUndefined();
   });
 
+  it('v0.2.1: dispatch binds a listed repo using its exact sources[].name', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+      const url = typeof input === 'string' ? input : (input as { url: string }).url;
+      if (url.includes('/v1alpha/sources')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            sources: [
+              { name: 'sources/src_abc', githubRepo: { owner: 'Brian125bot', repo: 'repopilot' } },
+            ],
+          }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ name: 'sessions/s_v021', state: 'QUEUED' }),
+      } as unknown as Response;
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+      method: 'POST',
+      headers: { 'x-jules-api-key': 'test-key' },
+      body: JSON.stringify({
+        repo: 'https://github.com/Brian125bot/repopilot.git',
+        branchName: 'jules/v021-check',
+        objective: 'Bind listed repo exactly',
+        criteria: [{ id: '1', text: 'Works', category: 'functional' }],
+        dryRun: false,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.blueprint.sourceName).toBe('sources/src_abc');
+
+    const sessionCall = fetchSpy.mock.calls.find(([callUrl]) =>
+      String(callUrl).includes('/v1alpha/sessions')
+    );
+    expect(sessionCall).toBeDefined();
+    const [, sessionOptions] = sessionCall!;
+    const sessionBody = JSON.parse(sessionOptions?.body as string) as {
+      sourceContext: { source: string };
+    };
+    expect(sessionBody.sourceContext.source).toBe('sources/src_abc');
+  });
+
   it('fails closed when the repository is absent from GET /v1alpha/sources', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
       const url = typeof input === 'string' ? input : (input as { url: string }).url;
@@ -486,6 +538,148 @@ describe('Jules client library (lib/jules.ts)', () => {
     it('matches on id when githubRepo is absent', () => {
       expect(findJulesSource(sources, 'acme-corp/id-repo')?.name).toBe('sources/id-only-match');
     });
+
+    it('matches the sources/owner/repo name form (client/server parity)', () => {
+      const slashNamed = [{ name: 'sources/acme-corp/api-gateway' }];
+      expect(findJulesSource(slashNamed, 'acme-corp/api-gateway')?.name).toBe(
+        'sources/acme-corp/api-gateway'
+      );
+    });
+
+    it('v0.2.1: binds an opaque source name via githubRepo owner/repo', () => {
+      const listed = [
+        {
+          name: 'sources/src_abc',
+          githubRepo: { owner: 'Brian125bot', repo: 'repopilot' },
+        },
+      ];
+      expect(findJulesSource(listed, 'Brian125bot/repopilot')?.name).toBe('sources/src_abc');
+      expect(
+        findJulesSource(listed, 'https://github.com/Brian125bot/repopilot.git')?.name
+      ).toBe('sources/src_abc');
+    });
+
+    it('v0.2.1: binds a trailing-slash .git URL to the listed repo', () => {
+      const listed = [
+        {
+          name: 'sources/src_abc',
+          githubRepo: { owner: 'Brian125bot', repo: 'repopilot' },
+        },
+      ];
+      expect(
+        findJulesSource(listed, 'https://github.com/Brian125bot/repopilot.git/')?.name
+      ).toBe('sources/src_abc');
+    });
+
+    it('v0.2.1: binds sources/github/other-org/tooling without inventing a path', () => {
+      const listed = [{ name: 'sources/github/other-org/tooling' }];
+      expect(findJulesSource(listed, 'other-org/tooling')?.name).toBe(
+        'sources/github/other-org/tooling'
+      );
+    });
+
+    it('v0.2.1: trims whitespace-padded API segments before comparing', () => {
+      const listed = [
+        {
+          name: '  sources/src_ws  ',
+          id: '  src_ws  ',
+          githubRepo: { owner: '  Brian125bot ', repo: ' repopilot  ' },
+        },
+      ];
+      expect(findJulesSource(listed, 'Brian125bot/repopilot')?.name).toBe('  sources/src_ws  ');
+    });
+  });
+
+  describe('listJulesSources pagination', () => {
+    const page = (names: string[], nextPageToken?: string) =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          sources: names.map((name) => ({ name })),
+          ...(nextPageToken ? { nextPageToken } : {}),
+        }),
+      } as unknown as Response);
+
+    it('follows nextPageToken and concatenates pages', async () => {
+      const calls: string[] = [];
+      const fetchMock = (async (input: unknown) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        calls.push(url);
+        if (url.includes('pageToken=token-2')) return page(['sources/page-two']);
+        return page(['sources/page-one'], 'token-2');
+      }) as typeof fetch;
+
+      const result = await listJulesSources('key', fetchMock);
+
+      expect(result.ok).toBe(true);
+      expect(result.sources.map((s) => s.name)).toEqual(['sources/page-one', 'sources/page-two']);
+      expect(result.truncated).toBe(false);
+      expect(calls[0]).toContain('pageSize=100');
+      expect(calls[1]).toContain('pageToken=token-2');
+    });
+
+    it('caps page walks and flags truncation', async () => {
+      let calls = 0;
+      const fetchMock = (async () => {
+        calls += 1;
+        return page([`sources/s-${calls}`], 'always-more');
+      }) as typeof fetch;
+
+      const result = await listJulesSources('key', fetchMock);
+
+      expect(calls).toBe(MAX_SOURCE_PAGES);
+      expect(result.sources).toHaveLength(MAX_SOURCE_PAGES);
+      expect(result.truncated).toBe(true);
+    });
+
+    it('binds a repo found only on page two at dispatch time', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        if (url.includes('/v1alpha/sources')) {
+          if (url.includes('pageToken=')) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                sources: [{ name: 'sources/page-two-repo', githubRepo: { owner: 'acme-corp', repo: 'page-two' } }],
+              }),
+            } as unknown as Response;
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sources: [{ name: 'sources/other', githubRepo: { owner: 'other', repo: 'svc' } }],
+              nextPageToken: 'token-2',
+            }),
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'sessions/s_page2', state: 'QUEUED' }),
+        } as unknown as Response;
+      });
+
+      const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+        method: 'POST',
+        headers: { 'x-jules-api-key': 'test-key' },
+        body: JSON.stringify({
+          repo: 'acme-corp/page-two',
+          branchName: 'jules/page-two',
+          objective: 'Bind past page one',
+          criteria: [{ id: '1', text: 'Works', category: 'functional' }],
+          dryRun: false,
+        }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.blueprint.sourceName).toBe('sources/page-two-repo');
+    });
   });
 
   describe('createJulesSession', () => {
@@ -571,6 +765,74 @@ describe('Jules client library (lib/jules.ts)', () => {
             ok: true,
             status: 200,
             json: async () => ({ sources: [] }),
+          } as unknown as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      }) as typeof fetch;
+
+      const result = await createJulesSession({
+        apiKey: 'key',
+        repo: 'acme-corp/nope',
+        startingBranch: 'main',
+        prompt: 'do work',
+        fetchFn: fetchMock,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.status).toBe(404);
+      expect(result.error).toBe('Source not connected in Jules');
+    });
+
+    it('v0.2.1: binds a listed repo and sends its exact sources[].name', async () => {
+      let sessionBody: Record<string, unknown> = {};
+      const fetchMock = (async (input: unknown, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        if (url.includes('/v1alpha/sources')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sources: [
+                { name: 'sources/src_abc', githubRepo: { owner: 'Brian125bot', repo: 'repopilot' } },
+              ],
+            }),
+          } as unknown as Response;
+        }
+        sessionBody = JSON.parse(init?.body as string) as Record<string, unknown>;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'sessions/s_bound', state: 'QUEUED' }),
+        } as unknown as Response;
+      }) as typeof fetch;
+
+      const result = await createJulesSession({
+        apiKey: 'key',
+        repo: 'Brian125bot/repopilot',
+        startingBranch: 'main',
+        prompt: 'do work',
+        automationMode: 'AUTO_CREATE_PR',
+        fetchFn: fetchMock,
+      });
+
+      expect(result.ok).toBe(true);
+      const sourceContext = sessionBody.sourceContext as { source: string };
+      expect(sourceContext.source).toBe('sources/src_abc');
+      expect(sourceContext.source).not.toContain('sources/github/Brian125bot');
+    });
+
+    it('v0.2.1: unlisted acme-corp/nope fails closed with the exact 404 string', async () => {
+      const fetchMock = (async (input: unknown) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        if (url.includes('/v1alpha/sources')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              sources: [
+                { name: 'sources/src_abc', githubRepo: { owner: 'Brian125bot', repo: 'repopilot' } },
+              ],
+            }),
           } as unknown as Response;
         }
         return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;

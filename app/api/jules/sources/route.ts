@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { listJulesSources } from '@/lib/jules';
 
 export async function GET(req: NextRequest) {
   try {
@@ -14,43 +15,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Ping Jules API to list sources and test credentials
-    const julesSourcesEndpoint = 'https://jules.googleapis.com/v1alpha/sources';
-    const response = await fetch(julesSourcesEndpoint, {
-      method: 'GET',
-      headers: {
-        'X-Goog-Api-Key': julesApiKey,
-        'User-Agent': 'RepoPilot/1.0',
-      },
-    });
+    // Paginated via lib so workspaces past the first API page still list fully.
+    const listed = await listJulesSources(julesApiKey);
 
-    if (response.ok) {
-      const data = await response.json();
+    if (listed.ok) {
       return NextResponse.json({
         configured: true,
         valid: true,
         hasServerKey: Boolean(process.env.JULES_API_KEY),
-        sources: data.sources || [],
+        sources: listed.sources,
+        truncated: listed.truncated,
       });
-    }
-
-    let errorDetail = `HTTP ${response.status}`;
-    try {
-      const errorJson = await response.json();
-      if (errorJson.error?.message) {
-        errorDetail = errorJson.error.message;
-      }
-    } catch {
-      const text = await response.text().catch(() => '');
-      if (text) errorDetail = text.slice(0, 200);
     }
 
     return NextResponse.json({
       configured: true,
       valid: false,
       hasServerKey: Boolean(process.env.JULES_API_KEY),
-      error: errorDetail,
-      status: response.status,
+      error: listed.error || `HTTP ${listed.status}`,
+      status: listed.status,
     });
   } catch (err) {
     return NextResponse.json(

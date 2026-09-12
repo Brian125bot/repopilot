@@ -33,6 +33,7 @@ import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { ContractPreviewModal } from './ContractPreviewModal';
 import { JulesTroubleshootModal, JulesSourceSummary } from './JulesTroubleshootModal';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
+import { findJulesSource } from '@/lib/jules';
 import { Blueprint, AcceptanceCriterion, RepoInspectionResult, GeneratedCriteriaResponse } from '@/types';
 
 interface IntakeDispatchStageProps {
@@ -110,7 +111,7 @@ export function IntakeDispatchStage({
   // Server Jules configuration check and connected sources
   const [hasServerJules, setHasServerJules] = React.useState<boolean | null>(null);
   const [julesSources, setJulesSources] = React.useState<JulesSourceSummary[]>([]);
-  const [julesSourcesLoading, setJulesSourcesLoading] = React.useState(false);
+  const [julesSourcesLoading, setJulesSourcesLoading] = React.useState(true);
   const [troubleshootOpen, setTroubleshootOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -125,11 +126,18 @@ export function IntakeDispatchStage({
           setHasServerJules(data.hasServerKey === true);
           if (data.valid && Array.isArray(data.sources)) {
             setJulesSources(data.sources);
+          } else {
+            setJulesSources([]);
           }
+          setJulesSourcesLoading(false);
         }
       })
       .catch(() => {
-        if (!isCancelled) setHasServerJules(null);
+        if (!isCancelled) {
+          setHasServerJules(null);
+          setJulesSources([]);
+          setJulesSourcesLoading(false);
+        }
       });
 
     return () => {
@@ -147,18 +155,8 @@ export function IntakeDispatchStage({
 
   const matchedJulesSource = React.useMemo(() => {
     if (!cleanCurrentRepo) return null;
-    const lower = cleanCurrentRepo.toLowerCase();
-    return julesSources.find((s) => {
-      const sourceId = (s.id || s.name || '').toLowerCase();
-      const repoFullName = s.githubRepo
-        ? `${s.githubRepo.owner}/${s.githubRepo.repo}`.toLowerCase()
-        : '';
-      return (
-        sourceId === `github/${lower}` ||
-        sourceId === `sources/github/${lower}` ||
-        repoFullName === lower
-      );
-    });
+    // Single shared matcher with the server bind path (lib/jules.ts).
+    return findJulesSource(julesSources, cleanCurrentRepo);
   }, [cleanCurrentRepo, julesSources]);
 
   // Trigger repository inspection

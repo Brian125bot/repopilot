@@ -27,6 +27,7 @@ import {
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
+import { findJulesSource } from '@/lib/jules';
 
 export interface JulesSourceSummary {
   name: string;
@@ -72,6 +73,7 @@ export function JulesTroubleshootModal({
   } | null>(null);
 
   const [sources, setSources] = React.useState<JulesSourceSummary[]>([]);
+  const [sourcesTruncated, setSourcesTruncated] = React.useState(false);
   const [searchFilter, setSearchFilter] = React.useState('');
 
   // Live probe state
@@ -97,18 +99,8 @@ export function JulesTroubleshootModal({
 
   const matchedSource = React.useMemo(() => {
     if (!cleanCurrentRepo) return null;
-    const lower = cleanCurrentRepo.toLowerCase();
-    return sources.find((s) => {
-      const sourceId = (s.id || s.name || '').toLowerCase();
-      const repoFullName = s.githubRepo
-        ? `${s.githubRepo.owner}/${s.githubRepo.repo}`.toLowerCase()
-        : '';
-      return (
-        sourceId === `github/${lower}` ||
-        sourceId === `sources/github/${lower}` ||
-        repoFullName === lower
-      );
-    });
+    // Single shared matcher with the server bind path (lib/jules.ts).
+    return findJulesSource(sources, cleanCurrentRepo);
   }, [cleanCurrentRepo, sources]);
 
   const runDiagnostic = React.useCallback(async () => {
@@ -132,8 +124,10 @@ export function JulesTroubleshootModal({
 
       if (data.valid && Array.isArray(data.sources)) {
         setSources(data.sources);
+        setSourcesTruncated(data.truncated === true);
       } else {
         setSources([]);
+        setSourcesTruncated(false);
       }
     } catch (err) {
       setKeyStatus({
@@ -173,8 +167,10 @@ export function JulesTroubleshootModal({
 
           if (data.valid && Array.isArray(data.sources)) {
             setSources(data.sources);
+            setSourcesTruncated(data.truncated === true);
           } else {
             setSources([]);
+            setSourcesTruncated(false);
           }
         }
       } catch (err) {
@@ -389,6 +385,12 @@ export function JulesTroubleshootModal({
                     <p className="text-emerald-700 flex items-center gap-1 font-medium">
                       <CheckCircle2 className="h-3.5 w-3.5" />
                       Successfully connected to Google Jules API (`jules.googleapis.com`). {sources.length} active repository sources available.
+                    </p>
+                  )}
+                  {sourcesTruncated && (
+                    <p className="text-amber-700 flex items-center gap-1 font-medium pt-1">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Source list hit the fetch cap — repos beyond these {sources.length} may still be connected. Search above, or connect fewer repos.
                     </p>
                   )}
                   {keyStatus?.error && (

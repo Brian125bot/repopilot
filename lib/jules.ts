@@ -17,6 +17,8 @@ export interface JulesSourcesResult {
   ok: boolean;
   status: number;
   sources: JulesSource[];
+  /** True when page-cap was hit with another page still pending. */
+  truncated: boolean;
   error?: string;
   details?: unknown;
 }
@@ -64,6 +66,9 @@ export interface ResolvedJulesSource {
   status: number;
   sourceName?: string;
   source?: JulesSource;
+  /** How many sources were listed while binding (diagnostics only). */
+  sourcesListed?: number;
+  truncated?: boolean;
   error?: string;
   details?: unknown;
 }
@@ -72,6 +77,7 @@ export function normalizeRepoSlug(repo: string): string {
   return repo
     .trim()
     .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/^\/+|\/+$/g, '')
     .replace(/\.git$/i, '')
     .replace(/^\/+|\/+$/g, '')
     .toLowerCase();
@@ -92,15 +98,18 @@ export function findJulesSource(sources: JulesSource[], repo: string): JulesSour
 
   return (
     sources.find((source) => {
-      const gh = source.githubRepo;
-      if (gh?.owner && gh.repo) {
-        if (`${gh.owner}/${gh.repo}`.toLowerCase() === target) return true;
+      const owner = (source.githubRepo?.owner || '').trim();
+      const repoName = (source.githubRepo?.repo || '').trim();
+      if (owner && repoName) {
+        if (`${owner}/${repoName}`.toLowerCase() === target) return true;
       }
-      if (source.id && stripPrefixes(source.id) === target) return true;
+      const id = (source.id || '').trim();
+      if (id && (id.toLowerCase() === target || stripPrefixes(id) === target)) return true;
+      const name = (source.name || '').trim();
+      if (!name) return false;
       // Exact name match (e.g. "sources/src_abc" won't match "owner/repo").
-      if ((source.name || '').toLowerCase() === target) return true;
-      const name = stripPrefixes(source.name || '');
-      return name.toLowerCase() === target;
+      if (name.toLowerCase() === target) return true;
+      return stripPrefixes(name) === target;
     }) || null
   );
 }
@@ -135,7 +144,12 @@ async function readErrorBody(response: Response): Promise<{ message: string; raw
   }
 }
 
-/** Lists repositories connected to the caller's Jules workspace. */
+/** Lists repositories connected to the caller's Jules workspace.
+ * The API defaults to 30 sources per page, so all pages are followed
+ * (pageSize=100, capped at MAX_SOURCE_PAGES) — otherwise repos past the
+ * first page would silently fail to bind at dispatch time. */
+export const MAX_SOURCE_PAGES = 10;
+
 export async function listJulesSources(
   apiKey: string,
   fetchFn?: typeof fetch
@@ -145,29 +159,48 @@ export async function listJulesSources(
       ok: false,
       status: 401,
       sources: [],
+      truncated: false,
       error: 'Missing Google Jules API key. Provide an API key or use dryRun mode.',
     };
   }
 
-  try {
-    const _fetch = fetchFn ?? globalThis.fetch;
-    const response = await _fetch(`${JULES_API_BASE}/sources`, {
-      method: 'GET',
-      headers: julesHeaders(apiKey),
-    });
+  const _fetch = fetchFn ?? globalThis.fetch;
+  const sources: JulesSource[] = [];
+  let pageToken: string | undefined;
+  let status = 200;
 
-    if (!response.ok) {
-      const { message, raw } = await readErrorBody(response);
-      return { ok: false, status: response.status, sources: [], error: message, details: raw };
+  try {
+    for (let page = 0; page < MAX_SOURCE_PAGES; page += 1) {
+      const url =
+        `${JULES_API_BASE}/sources?pageSize=100` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+      const response = await _fetch(url, {
+        method: 'GET',
+        headers: julesHeaders(apiKey),
+      });
+
+      if (!response.ok) {
+        const { message, raw } = await readErrorBody(response);
+        return { ok: false, status: response.status, sources: [], truncated: false, error: message, details: raw };
+      }
+
+      status = response.status;
+      const data = (await response.json()) as { sources?: JulesSource[]; nextPageToken?: string };
+      if (Array.isArray(data.sources)) sources.push(...data.sources);
+
+      pageToken = typeof data.nextPageToken === 'string' && data.nextPageToken ? data.nextPageToken : undefined;
+      if (!pageToken) {
+        return { ok: true, status, sources, truncated: false };
+      }
     }
 
-    const data = (await response.json()) as { sources?: JulesSource[] };
-    return { ok: true, status: response.status, sources: data.sources || [] };
+    return { ok: true, status, sources, truncated: true };
   } catch (networkError) {
     return {
       ok: false,
       status: 502,
       sources: [],
+      truncated: false,
       error:
         networkError instanceof Error
           ? networkError.message
@@ -191,6 +224,8 @@ export async function resolveJulesSourceName(
     return {
       ok: false,
       status: listed.status,
+      sourcesListed: 0,
+      truncated: listed.truncated,
       error: listed.error,
       details: listed.details,
     };
@@ -201,11 +236,13 @@ export async function resolveJulesSourceName(
     return {
       ok: false,
       status: 404,
+      sourcesListed: listed.sources.length,
+      truncated: listed.truncated,
       error: 'Source not connected in Jules',
     };
   }
 
-  return { ok: true, status: 200, sourceName: match.name, source: match };
+  return { ok: true, status: 200, sourceName: match.name, source: match, sourcesListed: listed.sources.length, truncated: listed.truncated };
 }
 
 /**

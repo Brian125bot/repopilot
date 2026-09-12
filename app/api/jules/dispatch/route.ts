@@ -184,12 +184,13 @@ export async function POST(req: NextRequest) {
           {
             success: false,
             dryRun: false,
-            error:
-              resolvedSource.error || 'Source not connected in Jules',
+            error: resolvedSource.error || 'Source not connected in Jules',
             status: resolvedSource.status,
             details: resolvedSource.details,
             repo: cleanRepo,
             targetBranch,
+            sourcesListed: resolvedSource.sourcesListed ?? 0,
+            sourcesTruncated: resolvedSource.truncated ?? false,
           },
           { status: resolvedSource.status || 404 }
         );

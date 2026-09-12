@@ -49,7 +49,7 @@ All test files are organized in the `/__tests__/` directory:
 └── blueprint-vault.test.ts      # Serialization, deduplication, Refresh patch merge (4)
 ```
 
-Total: 83 tests across 9 suites (`npm test`).
+Total: 94 tests across 9 suites (`npm test`).
 
 ---
 
