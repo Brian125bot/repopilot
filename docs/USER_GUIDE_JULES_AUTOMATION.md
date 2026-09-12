@@ -21,7 +21,7 @@
        |   +----------------------------+     +-----------------------------------+     |
        |   | - Objective Statement      | --> | - File Boundary Globs (POSIX)     |     |
        |   | - Testable Criteria (1..N) |     | - Auto-Excludes Lockfiles & Noise |     |
-       |   | - Target Branch Invariants |     | - Embeds Cryptographic Blueprint  |     |
+       |   | - Target Branch Invariants |     | - Embeds machine-readable blueprint comment |     |
        |   +----------------------------+     +-----------------------------------+     |
        +---------------------------------------------------|----------------------------+
                                                            |
