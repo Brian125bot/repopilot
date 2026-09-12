@@ -83,9 +83,87 @@ export function normalizeRepoSlug(repo: string): string {
     .toLowerCase();
 }
 
+/** Strips quotes, `Bearer ` prefixes, and paste whitespace from a Jules credential. */
+export function sanitizeJulesCredential(raw: string): string {
+  let key = (raw || '').trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"') && key.length >= 2) ||
+    (key.startsWith("'") && key.endsWith("'") && key.length >= 2)
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  key = key.replace(/^Bearer\s+/i, '').trim();
+  return key.replace(/\s+/g, '');
+}
+
+export type JulesAuthScheme = 'api-key' | 'bearer';
+
+/**
+ * Jules REST docs use `x-goog-api-key`. Google authorization keys (AQ.) and
+ * OAuth access tokens must go in `Authorization: Bearer` because they assert a
+ * principal; sending them as an API key yields HTTP 401 "API keys are not supported".
+ */
+export function preferredJulesAuthScheme(key: string): JulesAuthScheme {
+  const k = sanitizeJulesCredential(key);
+  if (!k) return 'api-key';
+  if (/^ya29[.\-_]/i.test(k) || k.startsWith('eyJ')) return 'bearer';
+  if (/^AQ[.\-_]/i.test(k)) return 'bearer';
+  return 'api-key';
+}
+
+export function isJulesPrincipalAuthError(message: string): boolean {
+  return (
+    /API keys are not supported/i.test(message) ||
+    /assert a principal/i.test(message) ||
+    /ACCESS_TOKEN_TYPE_UNSUPPORTED/i.test(message)
+  );
+}
+
+function rewriteJulesError(message: string): string {
+  if (!isJulesPrincipalAuthError(message)) return message;
+  return (
+    `${message} This credential did not assert a Jules user identity. ` +
+    `Use a Jules API key from https://jules.google.com/settings — not a Gemini, Google AI Studio, or Cloud Console API key. ` +
+    `OAuth tokens and AQ. authorization keys are retried automatically with Bearer auth.`
+  );
+}
+
+/** Resource names the official SDK and Jules docs use for a GitHub repo. */
+export function candidateSourceResourceNames(repo: string): string[] {
+  const cleaned = repo
+    .trim()
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
+  const [owner, name] = cleaned.split('/');
+  if (!owner || !name) return [];
+
+  const seen = new Set<string>();
+  const names: string[] = [];
+  const push = (value: string) => {
+    if (!seen.has(value)) {
+      seen.add(value);
+      names.push(value);
+    }
+  };
+
+  const pairs: Array<[string, string]> = [[owner, name]];
+  const lowerOwner = owner.toLowerCase();
+  const lowerName = name.toLowerCase();
+  if (lowerOwner !== owner || lowerName !== name) pairs.push([lowerOwner, lowerName]);
+
+  for (const [o, n] of pairs) {
+    push(`sources/github/${o}/${n}`);
+    push(`sources/github-${o}-${n}`);
+    push(`sources/${o}/${n}`);
+  }
+  return names;
+}
+
 /**
  * Picks the Jules source whose connected GitHub repo matches `repo`.
- * Compares githubRepo.owner/repo, then id, then the resource name suffix.
+ * Compares githubRepo.owner/repo, then id, then the resource name suffix
+ * (slash form and hyphenated `github-owner-repo` form from Jules docs).
  * Returns the object unchanged so callers use the exact sources[].name.
  * Returns null when the repo is not in the Jules allowlist.
  */
@@ -95,6 +173,22 @@ export function findJulesSource(sources: JulesSource[], repo: string): JulesSour
 
   const stripPrefixes = (value: string): string =>
     (value || '').replace(/^sources\//i, '').replace(/^github\//i, '').toLowerCase();
+  const hyphenTarget = target.replace('/', '-');
+  const githubHyphenTarget = `github-${hyphenTarget}`;
+
+  const matchesToken = (raw: string): boolean => {
+    const value = (raw || '').trim();
+    if (!value) return false;
+    const lower = value.toLowerCase();
+    const stripped = stripPrefixes(value);
+    return (
+      lower === target ||
+      stripped === target ||
+      stripped === hyphenTarget ||
+      stripped === githubHyphenTarget ||
+      lower === githubHyphenTarget
+    );
+  };
 
   return (
     sources.find((source) => {
@@ -103,13 +197,10 @@ export function findJulesSource(sources: JulesSource[], repo: string): JulesSour
       if (owner && repoName) {
         if (`${owner}/${repoName}`.toLowerCase() === target) return true;
       }
-      const id = (source.id || '').trim();
-      if (id && (id.toLowerCase() === target || stripPrefixes(id) === target)) return true;
+      if (matchesToken(source.id || '')) return true;
       const name = (source.name || '').trim();
       if (!name) return false;
-      // Exact name match (e.g. "sources/src_abc" won't match "owner/repo").
-      if (name.toLowerCase() === target) return true;
-      return stripPrefixes(name) === target;
+      return matchesToken(name);
     }) || null
   );
 }
@@ -123,25 +214,83 @@ export function resolveAutomationMode(isRemediation: boolean): JulesAutomationMo
   return isRemediation ? undefined : 'AUTO_CREATE_PR';
 }
 
-function julesHeaders(apiKey: string): Record<string, string> {
-  return {
+function julesHeaders(apiKey: string, scheme: JulesAuthScheme): Record<string, string> {
+  const key = sanitizeJulesCredential(apiKey);
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'X-Goog-Api-Key': apiKey.trim(),
     'User-Agent': 'RepoPilot/1.0',
   };
+  if (scheme === 'bearer') {
+    headers.Authorization = `Bearer ${key}`;
+  } else {
+    // Official Jules REST header (docs and @google/jules-sdk).
+    headers['x-goog-api-key'] = key;
+  }
+  return headers;
 }
 
 async function readErrorBody(response: Response): Promise<{ message: string; raw: unknown }> {
   const fallback = `Google Jules API returned HTTP ${response.status}`;
   try {
     const errJson = (await response.json()) as { error?: { message?: string } };
-    if (errJson?.error?.message) return { message: errJson.error.message, raw: errJson };
+    if (errJson?.error?.message) {
+      return { message: rewriteJulesError(errJson.error.message), raw: errJson };
+    }
     return { message: fallback, raw: errJson };
   } catch {
     const rawText = await response.text().catch(() => '');
-    if (rawText) return { message: rawText.slice(0, 300), raw: rawText };
+    if (rawText) return { message: rewriteJulesError(rawText.slice(0, 300)), raw: rawText };
     return { message: fallback, raw: null };
   }
+}
+
+function asJulesSource(data: unknown): JulesSource | null {
+  if (!data || typeof data !== 'object') return null;
+  const rec = data as Record<string, unknown>;
+  if (Array.isArray(rec.sources)) return null;
+  if (typeof rec.name !== 'string' || !rec.name.startsWith('sources/')) return null;
+  return rec as unknown as JulesSource;
+}
+
+/**
+ * Sends a Jules request with the credential scheme that matches the key type.
+ * If Google replies that API keys cannot assert a principal, retries once with
+ * the opposite scheme (Bearer <-> x-goog-api-key).
+ */
+async function julesFetch(
+  url: string,
+  apiKey: string,
+  init: RequestInit,
+  fetchFn: typeof fetch
+): Promise<Response> {
+  const key = sanitizeJulesCredential(apiKey);
+  const primary = preferredJulesAuthScheme(key);
+  const baseInit: RequestInit = { cache: 'no-store', ...init };
+
+  const first = await fetchFn(url, {
+    ...baseInit,
+    headers: { ...julesHeaders(key, primary), ...(init.headers as Record<string, string> | undefined) },
+  });
+  if (first.ok || (first.status !== 401 && first.status !== 403)) return first;
+
+  let message = '';
+  if (typeof first.clone === 'function') {
+    try {
+      message = (await readErrorBody(first.clone())).message;
+    } catch {
+      message = '';
+    }
+  }
+  const retryAsBearer = primary === 'api-key' && isJulesPrincipalAuthError(message);
+  const retryAsApiKey =
+    primary === 'bearer' && /API key not valid|invalid authentication credentials/i.test(message);
+  if (!retryAsBearer && !retryAsApiKey) return first;
+
+  const fallback: JulesAuthScheme = primary === 'api-key' ? 'bearer' : 'api-key';
+  return fetchFn(url, {
+    ...baseInit,
+    headers: { ...julesHeaders(key, fallback), ...(init.headers as Record<string, string> | undefined) },
+  });
 }
 
 /** Lists repositories connected to the caller's Jules workspace.
@@ -154,7 +303,8 @@ export async function listJulesSources(
   apiKey: string,
   fetchFn?: typeof fetch
 ): Promise<JulesSourcesResult> {
-  if (!apiKey || !apiKey.trim()) {
+  const key = sanitizeJulesCredential(apiKey);
+  if (!key) {
     return {
       ok: false,
       status: 401,
@@ -174,10 +324,7 @@ export async function listJulesSources(
       const url =
         `${JULES_API_BASE}/sources?pageSize=100` +
         (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
-      const response = await _fetch(url, {
-        method: 'GET',
-        headers: julesHeaders(apiKey),
-      });
+      const response = await julesFetch(url, key, { method: 'GET' }, _fetch);
 
       if (!response.ok) {
         const { message, raw } = await readErrorBody(response);
@@ -210,21 +357,102 @@ export async function listJulesSources(
   }
 }
 
+export interface JulesSourceGetResult {
+  ok: boolean;
+  status: number;
+  source?: JulesSource;
+  error?: string;
+  details?: unknown;
+}
+
+/** GET /v1alpha/{name=sources/**} — same path the official Jules SDK uses. */
+export async function getJulesSource(
+  apiKey: string,
+  resourceName: string,
+  fetchFn?: typeof fetch
+): Promise<JulesSourceGetResult> {
+  const key = sanitizeJulesCredential(apiKey);
+  if (!key) {
+    return { ok: false, status: 401, error: 'Missing Google Jules API key. Provide an API key or use dryRun mode.' };
+  }
+
+  const name = resourceName.trim().replace(/^\//, '');
+  if (!name.startsWith('sources/')) {
+    return { ok: false, status: 400, error: 'Source resource name is required.' };
+  }
+
+  try {
+    const _fetch = fetchFn ?? globalThis.fetch;
+    const response = await julesFetch(`${JULES_API_BASE}/${name}`, key, { method: 'GET' }, _fetch);
+    if (!response.ok) {
+      const { message, raw } = await readErrorBody(response);
+      return { ok: false, status: response.status, error: message, details: raw };
+    }
+
+    const data: unknown = await response.json();
+    const source = asJulesSource(data);
+    if (!source?.name) {
+      return { ok: false, status: 404, error: 'Source not connected in Jules' };
+    }
+    return { ok: true, status: response.status, source };
+  } catch (networkError) {
+    return {
+      ok: false,
+      status: 502,
+      error:
+        networkError instanceof Error
+          ? networkError.message
+          : 'Network error connecting to Google Jules API',
+      details: networkError,
+    };
+  }
+}
+
 /**
- * Binds `owner/repo` to a real `sources[].name` returned by the Jules API.
- * Fail-closed: an unlisted repository yields ok:false so dispatch never invents a source.
+ * Binds `owner/repo` to a real `sources[].name`.
+ * Tries GET `sources/github/{owner}/{repo}` first (official SDK), then lists.
+ * Fail-closed: never invents a source path.
  */
 export async function resolveJulesSourceName(
   apiKey: string,
   repo: string,
   fetchFn?: typeof fetch
 ): Promise<ResolvedJulesSource> {
-  const listed = await listJulesSources(apiKey, fetchFn);
+  const key = sanitizeJulesCredential(apiKey);
+  if (!key) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'Missing Google Jules API key. Provide an API key or use dryRun mode.',
+    };
+  }
+
+  for (const resourceName of candidateSourceResourceNames(repo)) {
+    const got = await getJulesSource(key, resourceName, fetchFn);
+    if (got.ok && got.source?.name && findJulesSource([got.source], repo)) {
+      return {
+        ok: true,
+        status: 200,
+        sourceName: got.source.name,
+        source: got.source,
+        sourcesListed: 1,
+      };
+    }
+    if (!got.ok && (got.status === 401 || got.status === 403)) {
+      return {
+        ok: false,
+        status: got.status,
+        error: got.error,
+        details: got.details,
+      };
+    }
+  }
+
+  const listed = await listJulesSources(key, fetchFn);
   if (!listed.ok) {
     return {
       ok: false,
       status: listed.status,
-      sourcesListed: 0,
       truncated: listed.truncated,
       error: listed.error,
       details: listed.details,
@@ -242,7 +470,14 @@ export async function resolveJulesSourceName(
     };
   }
 
-  return { ok: true, status: 200, sourceName: match.name, source: match, sourcesListed: listed.sources.length, truncated: listed.truncated };
+  return {
+    ok: true,
+    status: 200,
+    sourceName: match.name,
+    source: match,
+    sourcesListed: listed.sources.length,
+    truncated: listed.truncated,
+  };
 }
 
 /**
@@ -262,8 +497,9 @@ export async function createJulesSession(params: JulesSessionParams): Promise<Ju
     fetchFn,
   } = params;
   const _fetch = fetchFn ?? globalThis.fetch;
+  const key = sanitizeJulesCredential(apiKey);
 
-  if (!apiKey || !apiKey.trim()) {
+  if (!key) {
     return {
       ok: false,
       status: 401,
@@ -280,24 +516,16 @@ export async function createJulesSession(params: JulesSessionParams): Promise<Ju
         error: 'Source not connected in Jules',
       };
     }
-    const listed = await listJulesSources(apiKey, _fetch);
-    if (!listed.ok) {
+    const bound = await resolveJulesSourceName(key, repo, _fetch);
+    if (!bound.ok || !bound.sourceName) {
       return {
         ok: false,
-        status: listed.status,
-        error: listed.error,
-        details: listed.details,
+        status: bound.status,
+        error: bound.error,
+        details: bound.details,
       };
     }
-    const match = findJulesSource(listed.sources, repo);
-    if (!match?.name) {
-      return {
-        ok: false,
-        status: 404,
-        error: 'Source not connected in Jules',
-      };
-    }
-    resolvedSource = match.name;
+    resolvedSource = bound.sourceName;
   }
 
   const sessionPayload: Record<string, unknown> = {
@@ -314,11 +542,15 @@ export async function createJulesSession(params: JulesSessionParams): Promise<Ju
   };
 
   try {
-    const response = await _fetch(`${JULES_API_BASE}/sessions`, {
-      method: 'POST',
-      headers: julesHeaders(apiKey),
-      body: JSON.stringify(sessionPayload),
-    });
+    const response = await julesFetch(
+      `${JULES_API_BASE}/sessions`,
+      key,
+      {
+        method: 'POST',
+        body: JSON.stringify(sessionPayload),
+      },
+      _fetch
+    );
 
     if (response.ok) {
       const data = (await response.json()) as Record<string, unknown>;
@@ -409,8 +641,9 @@ export async function sendJulesMessage(
 ): Promise<SendJulesMessageResult> {
   const { apiKey, sessionId, prompt, fetchFn } = params;
   const _fetch = fetchFn ?? globalThis.fetch;
+  const key = sanitizeJulesCredential(apiKey);
 
-  if (!apiKey || !apiKey.trim()) {
+  if (!key) {
     return { ok: false, status: 401, error: 'Missing Google Jules API key.' };
   }
 
@@ -424,11 +657,15 @@ export async function sendJulesMessage(
   }
 
   try {
-    const response = await _fetch(`${JULES_API_BASE}/sessions/${numericId}:sendMessage`, {
-      method: 'POST',
-      headers: julesHeaders(apiKey),
-      body: JSON.stringify({ prompt }),
-    });
+    const response = await julesFetch(
+      `${JULES_API_BASE}/sessions/${numericId}:sendMessage`,
+      key,
+      {
+        method: 'POST',
+        body: JSON.stringify({ prompt }),
+      },
+      _fetch
+    );
 
     if (!response.ok) {
       const { message, raw } = await readErrorBody(response);
@@ -478,7 +715,8 @@ export async function getJulesSession(
   sessionId: string,
   fetchFn?: typeof fetch
 ): Promise<JulesSessionSnapshot> {
-  if (!apiKey || !apiKey.trim()) {
+  const key = sanitizeJulesCredential(apiKey);
+  if (!key) {
     return { ok: false, status: 401, error: 'Missing Google Jules API key.' };
   }
 
@@ -489,10 +727,12 @@ export async function getJulesSession(
 
   try {
     const _fetch = fetchFn ?? globalThis.fetch;
-    const response = await _fetch(`${JULES_API_BASE}/sessions/${numericId}`, {
-      method: 'GET',
-      headers: julesHeaders(apiKey),
-    });
+    const response = await julesFetch(
+      `${JULES_API_BASE}/sessions/${numericId}`,
+      key,
+      { method: 'GET' },
+      _fetch
+    );
 
     if (!response.ok) {
       const { message, raw } = await readErrorBody(response);

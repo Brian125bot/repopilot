@@ -719,10 +719,10 @@ export function JulesTroubleshootModal({
                   Issue 2: HTTP 401 &ldquo;API keys are not supported by this API&rdquo; or &ldquo;API key not valid&rdquo;
                 </h4>
                 <p className="text-slate-600 text-[11px] leading-relaxed">
-                  <strong>Why it happens:</strong> Jules API keys are issued separately from Google AI Studio / Gemini keys. If a Gemini API key or expired token is passed, Jules rejects it.
+                  <strong>Why it happens:</strong> Jules lists sources as the authenticated user. A Gemini / Google AI Studio / Cloud Console API key does not assert that identity, so Google returns <em>API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials that assert a principal</em> and RepoPilot then shows 0 sources. Jules keys from <a href="https://jules.google.com/settings" target="_blank" rel="noreferrer" className="text-indigo-600 underline">jules.google.com/settings</a> are a different credential than Gemini keys.
                 </p>
                 <p className="text-slate-600 text-[11px]">
-                  <strong>Solution:</strong> Obtain your key directly from <a href="https://jules.google.com/settings" target="_blank" rel="noreferrer" className="text-indigo-600 underline">jules.google.com/settings</a>, or leave the field blank to utilize the server&apos;s preconfigured key.
+                  <strong>Solution:</strong> Generate a Jules API key at that settings page (max 3 per account), paste it into RepoPilot Settings, and press Test Key. Do not reuse a Gemini key. OAuth access tokens and AQ. authorization keys are sent as Bearer automatically.
                 </p>
               </div>
 

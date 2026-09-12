@@ -9,6 +9,11 @@ import {
   resolveAutomationMode,
   createJulesSession,
   MAX_SOURCE_PAGES,
+  sanitizeJulesCredential,
+  preferredJulesAuthScheme,
+  isJulesPrincipalAuthError,
+  candidateSourceResourceNames,
+  resolveJulesSourceName,
 } from '@/lib/jules';
 
 describe('/api/jules/dispatch Route & Jules API Contract', () => {
@@ -588,6 +593,52 @@ describe('Jules client library (lib/jules.ts)', () => {
       ];
       expect(findJulesSource(listed, 'Brian125bot/repopilot')?.name).toBe('  sources/src_ws  ');
     });
+
+    it('matches hyphenated sources/github-owner-repo names from Jules docs', () => {
+      const listed = [{ name: 'sources/github-myorg-myrepo', id: 'github-myorg-myrepo' }];
+      expect(findJulesSource(listed, 'myorg/myrepo')?.name).toBe('sources/github-myorg-myrepo');
+      expect(findJulesSource(listed, 'https://github.com/MyOrg/MyRepo.git')?.name).toBe(
+        'sources/github-myorg-myrepo'
+      );
+    });
+  });
+
+  describe('Jules credential sanitization and auth scheme', () => {
+    it('strips quotes, Bearer prefixes, and paste whitespace', () => {
+      expect(sanitizeJulesCredential('  "abc-key"  ')).toBe('abc-key');
+      expect(sanitizeJulesCredential("Bearer ya29.token")).toBe('ya29.token');
+      expect(sanitizeJulesCredential('ab\nc\t def')).toBe('abcdef');
+    });
+
+    it('sends OAuth and AQ. keys as Bearer, Jules keys as api-key', () => {
+      expect(preferredJulesAuthScheme('jules-user-key')).toBe('api-key');
+      expect(preferredJulesAuthScheme('ya29.a0A-token')).toBe('bearer');
+      expect(preferredJulesAuthScheme('AQ.aaa-auth-key')).toBe('bearer');
+      expect(preferredJulesAuthScheme('eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.aaa.bbb')).toBe(
+        'bearer'
+      );
+    });
+
+    it('detects the Google principal / API-key mismatch error', () => {
+      expect(
+        isJulesPrincipalAuthError(
+          'API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials that assert a principal.'
+        )
+      ).toBe(true);
+      expect(isJulesPrincipalAuthError('Invalid API Key provided')).toBe(false);
+    });
+
+    it('builds official SDK resource names for a GitHub slug', () => {
+      expect(candidateSourceResourceNames('Acme-Corp/api-gateway')).toContain(
+        'sources/github/Acme-Corp/api-gateway'
+      );
+      expect(candidateSourceResourceNames('Acme-Corp/api-gateway')).toContain(
+        'sources/github/acme-corp/api-gateway'
+      );
+      expect(candidateSourceResourceNames('myorg/myrepo')).toContain(
+        'sources/github-myorg-myrepo'
+      );
+    });
   });
 
   describe('listJulesSources pagination', () => {
@@ -849,6 +900,99 @@ describe('Jules client library (lib/jules.ts)', () => {
       expect(result.ok).toBe(false);
       expect(result.status).toBe(404);
       expect(result.error).toBe('Source not connected in Jules');
+    });
+
+    it('binds a repo via GET sources/github/owner/repo without listing', async () => {
+      const calls: string[] = [];
+      const fetchMock = (async (input: unknown) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        calls.push(url);
+        if (url.includes('/v1alpha/sources/github/acme-corp/api-gateway')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              name: 'sources/github/acme-corp/api-gateway',
+              id: 'github/acme-corp/api-gateway',
+              githubRepo: { owner: 'acme-corp', repo: 'api-gateway' },
+            }),
+          } as unknown as Response;
+        }
+        if (url.includes('/v1alpha/sources?')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ sources: [] }),
+          } as unknown as Response;
+        }
+        return { ok: false, status: 500, json: async () => ({}) } as unknown as Response;
+      }) as typeof fetch;
+
+      const bound = await resolveJulesSourceName('key', 'acme-corp/api-gateway', fetchMock);
+      expect(bound.ok).toBe(true);
+      expect(bound.sourceName).toBe('sources/github/acme-corp/api-gateway');
+      expect(calls.some((u) => u.includes('/v1alpha/sources?'))).toBe(false);
+    });
+
+    it('retries x-goog-api-key as Bearer when Jules demands a principal', async () => {
+      const schemes: Array<string | null> = [];
+      const fetchMock = (async (input: unknown, init?: RequestInit) => {
+        const headers = (init?.headers || {}) as Record<string, string>;
+        schemes.push(headers['x-goog-api-key'] ? 'api-key' : headers.Authorization ? 'bearer' : null);
+        if (headers['x-goog-api-key'] && !headers.Authorization) {
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({
+              error: {
+                message:
+                  'API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials that assert a principal.',
+              },
+            }),
+            clone() {
+              return this;
+            },
+          } as unknown as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'sources/github/acme-corp/api-gateway',
+            githubRepo: { owner: 'acme-corp', repo: 'api-gateway' },
+          }),
+        } as unknown as Response;
+      }) as typeof fetch;
+
+      const bound = await resolveJulesSourceName('jules-user-key', 'acme-corp/api-gateway', fetchMock);
+      expect(bound.ok).toBe(true);
+      expect(bound.sourceName).toBe('sources/github/acme-corp/api-gateway');
+      expect(schemes).toContain('api-key');
+      expect(schemes).toContain('bearer');
+    });
+
+    it('does not report sourcesListed: 0 when listing fails with a principal auth error', async () => {
+      const fetchMock = (async () =>
+        ({
+          ok: false,
+          status: 401,
+          json: async () => ({
+            error: {
+              message:
+                'API keys are not supported by this API. Expected OAuth2 access token or other authentication credentials that assert a principal.',
+            },
+          }),
+          clone() {
+            return this;
+          },
+        }) as unknown as Response) as typeof fetch;
+
+      const bound = await resolveJulesSourceName('AIzaSyGeminiKey', 'acme-corp/api-gateway', fetchMock);
+      expect(bound.ok).toBe(false);
+      expect(bound.status).toBe(401);
+      expect(bound.sourcesListed).toBeUndefined();
+      expect(bound.error).toMatch(/assert a principal/i);
+      expect(bound.error).toMatch(/jules\.google\.com\/settings/i);
     });
   });
 

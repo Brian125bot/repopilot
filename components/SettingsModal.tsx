@@ -207,7 +207,7 @@ export function SettingsModal({
             <div className="flex gap-2">
               <Input
                 type="password"
-                placeholder={hasServerJules ? 'Inheriting server JULES_API_KEY (optional override)' : 'AIzaSy... (Jules API Key)'}
+                placeholder={hasServerJules ? 'Inheriting server JULES_API_KEY (optional override)' : 'Paste key from jules.google.com/settings'}
                 value={localJules}
                 onChange={(e) => {
                   setLocalJules(e.target.value);
@@ -239,7 +239,7 @@ export function SettingsModal({
 
             <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
               <span>
-                Dispatches sessions directly to <code className="text-indigo-700 bg-indigo-100/60 px-1 py-0.5 rounded font-mono">jules.googleapis.com</code>.
+                Must be a Jules key from settings — Gemini / AI Studio keys return &ldquo;API keys are not supported&rdquo;.
               </span>
               <a
                 href="https://jules.google.com/settings"

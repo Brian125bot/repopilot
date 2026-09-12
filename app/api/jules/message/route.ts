@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendJulesMessage } from '@/lib/jules';
+import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
 
 interface MessageRequestBody {
   sessionId?: string;
@@ -18,7 +18,9 @@ export async function POST(req: NextRequest) {
     const prompt = body.prompt?.trim() || '';
 
     const headerJulesKey = req.headers.get('x-jules-api-key');
-    const julesApiKey = headerJulesKey?.trim() || process.env.JULES_API_KEY?.trim();
+    const julesApiKey =
+      sanitizeJulesCredential(headerJulesKey || '') ||
+      sanitizeJulesCredential(process.env.JULES_API_KEY || '');
 
     if (!julesApiKey) {
       return NextResponse.json(

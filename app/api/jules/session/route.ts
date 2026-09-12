@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getJulesSession } from '@/lib/jules';
+import { getJulesSession, sanitizeJulesCredential } from '@/lib/jules';
 
 export async function GET(req: NextRequest) {
   try {
     const sessionId = req.nextUrl.searchParams.get('id')?.trim() || '';
 
     const headerJulesKey = req.headers.get('x-jules-api-key');
-    const julesApiKey = headerJulesKey?.trim() || process.env.JULES_API_KEY?.trim();
+    const julesApiKey =
+      sanitizeJulesCredential(headerJulesKey || '') ||
+      sanitizeJulesCredential(process.env.JULES_API_KEY || '');
 
     if (!julesApiKey) {
       return NextResponse.json(

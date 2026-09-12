@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
-import { createJulesSession, resolveJulesSourceName, resolveAutomationMode } from '@/lib/jules';
+import {
+  createJulesSession,
+  resolveJulesSourceName,
+  resolveAutomationMode,
+  sanitizeJulesCredential,
+} from '@/lib/jules';
 import { Blueprint, AcceptanceCriterion } from '@/types';
 
 interface DispatchRequestBody {
@@ -104,7 +109,9 @@ export async function POST(req: NextRequest) {
     // Extract Jules API key and GitHub PAT from request headers or server environment
     const headerJulesKey = req.headers.get('x-jules-api-key');
     const headerGithubPat = req.headers.get('x-github-pat');
-    const julesApiKey = headerJulesKey?.trim() || process.env.JULES_API_KEY?.trim();
+    const julesApiKey =
+      sanitizeJulesCredential(headerJulesKey || '') ||
+      sanitizeJulesCredential(process.env.JULES_API_KEY || '');
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
     // Fail-closed check: if not a dryRun, an API key is strictly required
@@ -189,7 +196,7 @@ export async function POST(req: NextRequest) {
             details: resolvedSource.details,
             repo: cleanRepo,
             targetBranch,
-            sourcesListed: resolvedSource.sourcesListed ?? 0,
+            sourcesListed: resolvedSource.sourcesListed,
             sourcesTruncated: resolvedSource.truncated ?? false,
           },
           { status: resolvedSource.status || 404 }
