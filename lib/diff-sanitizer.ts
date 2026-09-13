@@ -1,5 +1,16 @@
 import { DiffFileSummary, DiffStats, SanitizedDiffResult } from '@/types';
 
+/** Single diff context budget shared by the sanitizer and the model call. */
+export const MAX_DIFF_CHAR_BUDGET = 90_000;
+/** Guaranteed headroom per criterion-relevant file before shared allocation. */
+export const RESERVED_CHARS_PER_COVERED_FILE = 4_000;
+/** In-block marker appended when a file's hunks exceed its allocation. */
+export const TRUNCATED_HUNK_MARKER =
+  '@@ ... @@\n[... Remaining hunks truncated by RepoPilot diff budget ...]';
+/** Omission marker for files granted zero budget chars (header always kept). */
+export const omittedFileMarker = (filename: string): string =>
+  `[File omitted by RepoPilot diff budget: ${filename}]`;
+
 // Blacklisted patterns for diff evaluation
 const EXCLUDED_PATTERNS: { regex: RegExp; reason: string }[] = [
   { regex: /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb)$/i, reason: 'Lockfile (Dependency freeze)' },
@@ -111,10 +122,22 @@ interface ParsedFileChunk {
   isAuthorized: boolean;
 }
 
+/**
+ * Cut text to at most maxChars, preferring a hunk boundary (`@@`) when one
+ * exists in the back half of the window so trailing hunks are never sliced
+ * mid-hunk without a marker.
+ */
+export function cutAtHunkBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const idx = text.lastIndexOf('\n@@', maxChars);
+  if (idx > maxChars * 0.5) return text.slice(0, idx);
+  return text.slice(0, maxChars);
+}
+
 export function sanitizeUnifiedDiff(
   rawDiff: string,
   declaredBoundaries: string[] = [],
-  maxCharacterLimit = 100000
+  maxCharacterLimit = MAX_DIFF_CHAR_BUDGET
 ): SanitizedDiffResult {
   if (!rawDiff || rawDiff.trim().length === 0) {
     return {
@@ -130,6 +153,8 @@ export function sanitizeUnifiedDiff(
         linesRemoved: 0,
         touchedPaths: [],
         unauthorizedPaths: [],
+        budgetChars: maxCharacterLimit,
+        omittedFiles: [],
       },
     };
   }
@@ -222,42 +247,64 @@ export function sanitizeUnifiedDiff(
   // Filter out excluded files for evaluation diff
   const includedChunks = parsedChunks.filter((chunk) => !chunk.isExcluded);
 
-  // Check character limits and prioritize code files over doc/markdown/css if exceeding
-  let combinedDiff = includedChunks.map((c) => c.lines.join('\n')).join('\n\n');
+  // File-aware budget allocation against the single shared budget.
+  // Phase 1 reserves headroom for criterion-relevant (in-scope) files first;
+  // Phase 2 fills leftovers largest-first; files granted zero chars keep their
+  // `diff --git` header plus an omission marker (never dropped silently).
+  // Output preserves original file order; only the allocation is prioritized.
+  const chunkTexts = includedChunks.map((c) => c.lines.join('\n'));
+  const fullLength = chunkTexts.reduce((sum, t) => sum + t.length + 2, 0);
+  let combinedDiff = chunkTexts.join('\n\n');
   let isTruncated = false;
   let truncationNotice: string | undefined = undefined;
+  const omittedFiles: string[] = [];
 
-  if (combinedDiff.length > maxCharacterLimit) {
+  if (fullLength > maxCharacterLimit) {
     isTruncated = true;
-    // Step 1: Remove markdown, css, text, yaml from diff first
-    const codePriorityChunks = [...includedChunks].sort((a, b) => {
-      const aIsDoc = /\.(md|markdown|txt|css|scss|yaml|yml|json)$/i.test(a.filename) ? 1 : 0;
-      const bIsDoc = /\.(md|markdown|txt|css|scss|yaml|yml|json)$/i.test(b.filename) ? 1 : 0;
-      return aIsDoc - bIsDoc;
+    const granted = new Array<number>(includedChunks.length).fill(0);
+    let remaining = maxCharacterLimit;
+
+    const grant = (index: number, chars: number): void => {
+      const take = Math.max(0, Math.min(chars, remaining));
+      granted[index] += take;
+      remaining -= take;
+    };
+
+    // Phase 1: reserved quota for criterion-relevant files, original order.
+    includedChunks.forEach((chunk, index) => {
+      if (!chunk.isAuthorized || remaining <= 0) return;
+      grant(index, Math.min(RESERVED_CHARS_PER_COVERED_FILE, chunkTexts[index].length));
     });
 
-    const truncatedDiffParts: string[] = [];
-    let currentLen = 0;
-
-    for (const chunk of codePriorityChunks) {
-      const chunkText = chunk.lines.join('\n');
-      if (currentLen + chunkText.length <= maxCharacterLimit) {
-        truncatedDiffParts.push(chunkText);
-        currentLen += chunkText.length;
-      } else {
-        const remainingChars = maxCharacterLimit - currentLen;
-        if (remainingChars > 500) {
-          truncatedDiffParts.push(
-            chunkText.slice(0, remainingChars) +
-              `\n\n[... Remaining diff truncated for ${chunk.filename} due to size limits ...]`
-          );
-        }
-        break;
-      }
+    // Phase 2: remaining budget to the largest leftovers first.
+    const leftovers = includedChunks
+      .map((chunk, index) => ({ index, left: chunkTexts[index].length - granted[index] }))
+      .filter((item) => item.left > 0)
+      .sort((a, b) => b.left - a.left);
+    for (const item of leftovers) {
+      if (remaining <= 0) break;
+      grant(item.index, item.left);
     }
 
-    combinedDiff = truncatedDiffParts.join('\n\n');
-    truncationNotice = `Large diff detected (${rawDiff.length.toLocaleString()} chars). Non-critical documentation and ancillary diffs were truncated to ensure precise LLM audit within safe token limits.`;
+    const renderedParts: string[] = [];
+    includedChunks.forEach((chunk, index) => {
+      const text = chunkTexts[index];
+      const allowed = granted[index];
+      if (allowed <= 0) {
+        omittedFiles.push(chunk.filename);
+        const headerLine = chunk.lines[0] || `diff --git a/${chunk.filename} b/${chunk.filename}`;
+        renderedParts.push(`${headerLine}\n${omittedFileMarker(chunk.filename)}`);
+        return;
+      }
+      if (text.length <= allowed) {
+        renderedParts.push(text);
+        return;
+      }
+      renderedParts.push(`${cutAtHunkBoundary(text, allowed)}\n${TRUNCATED_HUNK_MARKER}`);
+    });
+
+    combinedDiff = renderedParts.join('\n\n');
+    truncationNotice = `Large diff detected (${rawDiff.length.toLocaleString()} chars). Per-file budget truncated within the shared ${maxCharacterLimit.toLocaleString()}-char limit; ${omittedFiles.length} file(s) omitted with headers preserved.`;
   }
 
   const fileSummaries: DiffFileSummary[] = parsedChunks.map((c) => ({
@@ -278,6 +325,8 @@ export function sanitizeUnifiedDiff(
     linesRemoved: totalDeletions,
     touchedPaths,
     unauthorizedPaths,
+    budgetChars: maxCharacterLimit,
+    omittedFiles,
   };
 
   return {

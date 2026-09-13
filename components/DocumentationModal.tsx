@@ -315,32 +315,21 @@ export function DocumentationModal({ open, onClose }: DocumentationModalProps) {
                   </p>
                 </div>
 
-                {/* Benchmark Card */}
+                {/* How the loop actually works (operator-true, no measured rates) */}
                 <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 via-slate-50/50 to-white p-4 space-y-3 shadow-2xs">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
                       <Zap className="h-4 w-4 text-indigo-600" />
-                      Measurable Accuracy & Efficiency Lift
+                      How Review Works Here
                     </span>
-                    <Badge variant="indigo" className="text-[10px]">Verified Benchmarks</Badge>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="bg-white p-3 rounded-lg border border-slate-200/90 shadow-2xs space-y-1">
-                      <div className="text-xs text-slate-500">Boundary Adherence</div>
-                      <div className="text-xl font-extrabold text-indigo-950">99.4%</div>
-                      <div className="text-[10px] text-emerald-600 font-medium">vs 68.2% raw prompts</div>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-slate-200/90 shadow-2xs space-y-1">
-                      <div className="text-xs text-slate-500">Review Overhead</div>
-                      <div className="text-xl font-extrabold text-indigo-950">-85%</div>
-                      <div className="text-[10px] text-emerald-600 font-medium">3.5 min vs 24 min manual</div>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border border-slate-200/90 shadow-2xs space-y-1">
-                      <div className="text-xs text-slate-500">Rogue Multi-Turn Branches</div>
-                      <div className="text-xl font-extrabold text-indigo-950">0</div>
-                      <div className="text-[10px] text-emerald-600 font-medium">Audited branch locked</div>
-                    </div>
-                  </div>
+                  <ul className="text-xs text-slate-700 leading-relaxed list-disc list-inside space-y-1">
+                    <li>Two stages: dispatch contract → wait for PR → evaluate → continue or new session with brief.</li>
+                    <li>Sanitizer outranks the model: unauthorizedPaths nonempty → −35 and never READY_TO_MERGE.</li>
+                    <li>Continue Jules session posts FailureBrief to the same session; New session with brief omits automationMode and locks startingBranch to the PR head.</li>
+                    <li>READY sends nothing. Every send is a click.</li>
+                    <li>Local gate: npm test && npx tsc --noEmit.</li>
+                  </ul>
                 </div>
 
                 {/* The 4-Step Accuracy Control Plane */}

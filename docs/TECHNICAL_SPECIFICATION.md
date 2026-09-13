@@ -212,7 +212,7 @@ interface AuditGrade {
 4. **Category join**: `normalizeCriterionId()` strips `CRIT-`/`criterion-`/zero-padding/case before map lookup; blueprint wins, unknown ids fall back to row category then `functional` (no positional guessing).
 5. **Severity-grounded blast** (`groundBlastRating`): critical unauthorized (`package.json`, lockfiles, `Dockerfile`, `.env`, build configs, migrations, `auth`/`security`) → `HIGH`; non-critical unauthorized → at least `MEDIUM` (`HIGH` only past 500 lines); in-scope volume uses 150/500 bands. `grounded:true` only with `diffFacts`.
 6. **Line-ref validation**: `partitionLineReferences()` intersects `path:` tokens against sanitizer `touchedPaths`; misses become `unverifiedReferences` (“cited, not in diff”) without failing the audit. Empty `touchedPaths` disables validation for back-compat.
-7. **Truncation contract**: sanitizer default 100k chars, evaluate slice `MAX_EVALUATE_DIFF_CHARS=80000`. `diffFacts.truncated/shownChars` records either cut; UI warns “risk may be understated”.
+7. **Truncation contract**: single shared budget `MAX_DIFF_CHAR_BUDGET=90_000` enforced by the sanitizer with reserved per-file allocation (4k per criterion-relevant file, hunk-aware cuts, omission headers); no secondary slicing before the model. `diffFacts.truncated/shownChars` records cuts; UI warns “risk may be understated”.
 
 ---
 

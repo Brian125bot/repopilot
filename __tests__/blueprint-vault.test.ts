@@ -56,6 +56,33 @@ describe('Blueprint Vault & State Lifecycle', () => {
     expect(parsed.fileBoundaries).toEqual(original.fileBoundaries);
   });
 
+  it('preserves lastBrief across vault serialization round-trips', () => {
+    const briefed: Blueprint = {
+      ...createSampleBlueprint('bp_brief_1', 'acme/core-api'),
+      prUrl: 'https://github.com/acme/core-api/pull/42',
+      lastBrief: {
+        verdict: 'NEEDS_REVISION',
+        score: 62,
+        unmetIds: ['2'],
+        partialIds: [],
+        metIds: ['1', '3'],
+        unauthorizedPaths: [],
+        doNotTouch: [],
+        requiredFixes: ['[UNMET] Criterion 2: Return 200 on valid signature — Remaining: add handler'],
+      },
+    };
+
+    // Same write path as page.tsx handleSaveBlueprint: dedupe + JSON serialize.
+    const vault: Blueprint[] = [briefed];
+    const roundTripped = JSON.parse(JSON.stringify(vault)) as Blueprint[];
+
+    expect(roundTripped).toHaveLength(1);
+    expect(roundTripped[0].lastBrief).toEqual(briefed.lastBrief);
+    expect(roundTripped[0].lastBrief?.verdict).toBe('NEEDS_REVISION');
+    expect(roundTripped[0].lastBrief?.unmetIds).toEqual(['2']);
+    expect(roundTripped[0].lastBrief?.requiredFixes).toHaveLength(1);
+  });
+
   it('merges Refresh session harvest without losing blueprint identity', () => {
     const original = createSampleBlueprint('bp_refresh_1', 'acme/core-api');
     const patched: Blueprint = {

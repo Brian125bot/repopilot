@@ -5,6 +5,61 @@ import {
   sortCriteriaForDecision,
 } from '@/lib/scoring';
 import { deriveDoNotTouchList, pickFilesToReadFirst } from '@/lib/contract-lint';
+import { matchesFileBoundary } from '@/lib/diff-sanitizer';
+
+export interface BoundaryValidation {
+  validGlobs: string[];
+  rejectedGlobs: string[];
+}
+
+/**
+ * Verifies proposed boundary globs against real repository paths using true
+ * glob matching (not prefix heuristics). A glob is valid only if at least
+ * one actual path matches it. Empty globs are dropped silently; with no tree
+ * available every glob passes through unchanged (cannot validate).
+ */
+export function validateAndFilterBoundaries(
+  proposedGlobs: string[],
+  actualPaths: string[]
+): BoundaryValidation {
+  const validGlobs: string[] = [];
+  const rejectedGlobs: string[] = [];
+  const tree = (Array.isArray(actualPaths) ? actualPaths : []).filter(Boolean);
+  for (const raw of proposedGlobs || []) {
+    const glob = (raw || '').trim();
+    if (!glob) continue;
+    if (tree.length === 0) {
+      validGlobs.push(glob);
+      continue;
+    }
+    if (tree.some((p) => matchesFileBoundary(p, [glob]))) {
+      if (!validGlobs.includes(glob)) validGlobs.push(glob);
+    } else if (!rejectedGlobs.includes(glob)) {
+      rejectedGlobs.push(glob);
+    }
+  }
+  return { validGlobs, rejectedGlobs };
+}
+
+/**
+ * Falls back to real top-level directories (most files first) when every
+ * proposed boundary was hallucinated. Returns e.g. ['lib/**', 'components/**'].
+ * Empty tree yields [] so callers keep the original list.
+ */
+export function fallbackBoundariesFromTree(actualPaths: string[], maxDirs = 4): string[] {
+  const tree = (Array.isArray(actualPaths) ? actualPaths : []).filter(Boolean);
+  if (tree.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const p of tree) {
+    const top = p.split('/')[0]?.trim();
+    if (!top || !p.includes('/')) continue;
+    counts.set(top, (counts.get(top) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, Math.max(1, maxDirs))
+    .map(([dir]) => `${dir}/**`);
+}
 
 export interface PromptCompilerInput {
   repo: string;

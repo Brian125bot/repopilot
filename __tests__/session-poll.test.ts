@@ -4,6 +4,7 @@ import {
   applySessionSnapshotToBlueprint,
   isJulesSessionTerminal,
   nextSessionPollAction,
+  pollIntervalForElapsedMs,
 } from '@/lib/session-poll';
 import { Blueprint } from '@/types';
 
@@ -35,13 +36,23 @@ describe('Jules session poll decisions', () => {
     expect(nextSessionPollAction({ ...base, sessionState: 'COMPLETED' })).toBe('stop-terminal');
   });
 
-  it('stops after the 20 minute cap', () => {
+  it('stops after the 25 minute cap', () => {
+    expect(SESSION_POLL_MAX_MS).toBe(25 * 60 * 1000);
     expect(
       nextSessionPollAction({
         ...base,
         nowMs: base.startedAtMs + SESSION_POLL_MAX_MS,
       })
     ).toBe('stop-timeout');
+  });
+
+  it('backs off polling cadence with elapsed time (15s → 30s → 60s)', () => {
+    expect(pollIntervalForElapsedMs(0)).toBe(15_000);
+    expect(pollIntervalForElapsedMs(119_999)).toBe(15_000);
+    expect(pollIntervalForElapsedMs(120_000)).toBe(30_000);
+    expect(pollIntervalForElapsedMs(599_999)).toBe(30_000);
+    expect(pollIntervalForElapsedMs(600_000)).toBe(60_000);
+    expect(pollIntervalForElapsedMs(10 * 60_000)).toBe(60_000);
   });
 
   it('pauses while the document is hidden and polls when visible', () => {

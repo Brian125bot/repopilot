@@ -31,7 +31,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
-import { AuditDiffFacts, CriterionCategory, GeminiAuditReport, PRMetadata, Blueprint } from '@/types';
+import { AuditDiffFacts, CriterionCategory, GeminiAuditReport, GitHubStatusSummary, PRMetadata, Blueprint } from '@/types';
+import { applyMergeReadinessCap } from '@/lib/github';
 import { compileRemediationPrompt } from '@/lib/prompt-compiler';
 import {
   buildAuditGrade,
@@ -192,7 +193,28 @@ export function MergeScorecard({
     error?: string;
   } | null>(null);
 
-  const verdictForGate = grade.verdict;
+  // Physical merge readiness demotes (never promotes) the semantic verdict:
+  // conflicts, red checks, or boundary breaches cap READY_TO_MERGE at NEEDS_REVISION.
+  const mergeCap = React.useMemo(
+    () =>
+      applyMergeReadinessCap(
+        grade.verdict,
+        prMetadata?.githubStatus ?? null,
+        scopeIntegrity.unauthorizedFiles.length
+      ),
+    [grade.verdict, prMetadata, scopeIntegrity]
+  );
+  const displayGrade = React.useMemo(
+    () => ({
+      ...grade,
+      verdict: mergeCap.verdict,
+      why: [...grade.why, ...mergeCap.reasons].slice(0, 4),
+    }),
+    [grade, mergeCap]
+  );
+  const githubStatus: GitHubStatusSummary | null = prMetadata?.githubStatus ?? null;
+
+  const verdictForGate = displayGrade.verdict;
   const recentSessionId = dispatchResult?.sessionId || null;
   const canOfferContinue = Boolean(
     blueprint && shouldOfferContinueSession(verdictForGate, blueprint, recentSessionId)
@@ -442,10 +464,10 @@ export function MergeScorecard({
     }
   };
 
-  const verdictStyle = getVerdictStyle(grade.verdict);
+  const verdictStyle = getVerdictStyle(displayGrade.verdict);
 
   const handleCopyScorecardSummary = () => {
-    navigator.clipboard.writeText(formatScorecardSummary(grade, report));
+    navigator.clipboard.writeText(formatScorecardSummary(displayGrade, report));
     setCopiedSummary(true);
     setTimeout(() => setCopiedSummary(false), 2000);
   };
@@ -466,13 +488,13 @@ export function MergeScorecard({
         prMetadata={prMetadata}
         blueprint={blueprint}
         hydrationSource={hydrationSource}
-        grade={grade}
+        grade={displayGrade}
         auditedBranch={auditedBranch}
         verdictStyle={verdictStyle}
         copiedSummary={copiedSummary}
         onCopySummary={handleCopyScorecardSummary}
       />
-      <WhyNextCard grade={grade} auditedBranch={auditedBranch} />
+      <WhyNextCard grade={displayGrade} auditedBranch={auditedBranch} />
 
       {/* Scope Drift Warning Callout */}
       {!scopeIntegrity.strictlyInScope && (
@@ -502,6 +524,84 @@ export function MergeScorecard({
         grade={grade}
         categoryBadgeClass={categoryBadgeClass}
       />
+
+      {/* GitHub Checks & Branch Health (physical merge readiness, separate from semantic grade) */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2 shadow-2xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+            <GitPullRequest className="h-4 w-4 text-slate-500" />
+            GitHub Checks & Branch Health
+          </span>
+          {!githubStatus ? (
+            <Badge variant="secondary" className="text-[10px]">
+              Unavailable
+            </Badge>
+          ) : githubStatus.checksState === 'FAILURE' ||
+            githubStatus.mergeable === false ||
+            githubStatus.mergeableState === 'dirty' ? (
+            <Badge variant="destructive" className="text-[10px] font-bold">
+              NOT MERGEABLE
+            </Badge>
+          ) : githubStatus.checksState === 'PENDING' || githubStatus.mergeable === null ? (
+            <Badge variant="warning" className="text-[10px] font-bold">
+              PENDING
+            </Badge>
+          ) : (
+            <Badge variant="success" className="text-[10px] font-bold">
+              MERGEABLE
+            </Badge>
+          )}
+        </div>
+        {!githubStatus ? (
+          <p className="text-[11px] text-slate-500">
+            Branch health unavailable for manual diffs — ingest a GitHub PR to check CI status and conflicts.
+          </p>
+        ) : (
+          <div className="space-y-1.5 text-xs text-slate-700">
+            <p className="leading-relaxed">
+              Checks:{' '}
+              <strong>
+                {githubStatus.checksState === 'SUCCESS'
+                  ? 'passing'
+                  : githubStatus.checksState === 'FAILURE'
+                    ? 'failing'
+                    : 'pending'}
+              </strong>
+              {' · '}Mergeable state:{' '}
+              <span className="font-mono text-[11px]">{githubStatus.mergeableState}</span>
+            </p>
+            {githubStatus.failedChecks.length > 0 && (
+              <ul className="list-disc list-inside space-y-0.5">
+                {githubStatus.failedChecks.map((check) => {
+                  const detailsUrl = (githubStatus.checkRunUrls || []).find((r) => r.name === check)?.detailsUrl;
+                  return (
+                    <li key={check} className="text-red-700">
+                      {detailsUrl ? (
+                        <a
+                          href={detailsUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline underline-offset-2 hover:text-red-900"
+                        >
+                          {check}
+                          <ExternalLink className="ml-1 inline h-3 w-3" />
+                        </a>
+                      ) : (
+                        check
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {mergeCap.reasons.length > 0 && (
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Capping semantic verdict at NEEDS_REVISION: {mergeCap.reasons.join('; ')}.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Key Blockers Callout if any */}
       {mergeVerdict.keyBlockers.length > 0 && (

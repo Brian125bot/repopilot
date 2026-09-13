@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import {
-  SESSION_POLL_INTERVAL_MS,
   nextSessionPollAction,
+  pollIntervalForElapsedMs,
   type SessionPollAction,
 } from '@/lib/session-poll';
 
@@ -21,6 +21,9 @@ export function useJulesSessionPoll(opts: {
   prUrl?: string | null;
   sessionState?: string | null;
   julesKey: string;
+  /** Forwarded to the session route so harvested PRs update the server vault record. */
+  repo?: string | null;
+  blueprintId?: string | null;
   onSnapshot: (snapshot: JulesSessionSnapshotPayload) => void;
   onStatus?: (action: SessionPollAction) => void;
 }) {
@@ -50,7 +53,10 @@ export function useJulesSessionPoll(opts: {
 
     const headers: Record<string, string> = {};
     if (current.julesKey) headers['x-jules-api-key'] = current.julesKey;
-    const res = await fetch(`/api/jules/session?id=${encodeURIComponent(current.sessionId)}`, {
+    const params = new URLSearchParams({ id: current.sessionId });
+    if (current.repo?.trim()) params.set('repo', current.repo.trim());
+    if (current.blueprintId?.trim()) params.set('blueprintId', current.blueprintId.trim());
+    const res = await fetch(`/api/jules/session?${params.toString()}`, {
       headers,
       cache: 'no-store',
     });
@@ -68,19 +74,31 @@ export function useJulesSessionPoll(opts: {
   React.useEffect(() => {
     if (!opts.enabled) return undefined;
 
+    // Tab dormancy recovery: a visible tab polls immediately instead of
+    // waiting out the backoff window it slept through.
     const onVisibility = () => {
       if (typeof document !== 'undefined' && !document.hidden) {
         void tick();
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
-    const intervalId = window.setInterval(() => {
-      void tick();
-    }, SESSION_POLL_INTERVAL_MS);
-    void tick();
+
+    // Tiered backoff chain (15s → 30s → 60s) instead of a fixed interval,
+    // so day-long Jules runs stay cheap on polling quota.
+    let timerId: number | null = null;
+    let stopped = false;
+    const schedule = () => {
+      if (stopped) return;
+      const elapsed = Date.now() - startedAtRef.current;
+      timerId = window.setTimeout(() => {
+        void tick().finally(() => schedule());
+      }, pollIntervalForElapsedMs(elapsed));
+    };
+    void tick().finally(() => schedule());
 
     return () => {
-      window.clearInterval(intervalId);
+      stopped = true;
+      if (timerId) window.clearTimeout(timerId);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [opts.enabled, opts.sessionId, tick]);

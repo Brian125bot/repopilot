@@ -151,6 +151,7 @@ RepoPilot submits the sanitized diff alongside the hydrated acceptance criteria 
   - **≥ 85 with all criteria MET and in scope (Ready to Merge)**: Nothing open; the operator decides whether to merge.
   - **Needs Revision**: Open criteria, partial work, or out-of-scope files with score ≥ 40.
   - **Blocked (score < 40 with UNMET or out-of-scope work)**: Address blockers before another send to Jules.
+- Grounds the verdict in physical merge readiness: merge conflicts or failing GitHub checks cap `READY_TO_MERGE` at `NEEDS_REVISION` with named reasons, shown in the **GitHub Checks & Branch Health** widget (unavailable for manual diffs).
 
 ---
 

@@ -260,6 +260,172 @@ export function parseAuditIngestTarget(input: string): AuditIngestTarget {
   return { kind: 'unknown' };
 }
 
+export interface GitHubCheckRun {
+  name: string;
+  status: string;
+  conclusion: string;
+  detailsUrl: string;
+}
+
+export interface PullRequestChecks {
+  state: 'SUCCESS' | 'PENDING' | 'FAILURE';
+  checkRuns: GitHubCheckRun[];
+}
+
+function checkRunsUrl(owner: string, repo: string, ref: string): string {
+  return (
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
+    `/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`
+  );
+}
+
+function combinedStatusUrl(owner: string, repo: string, ref: string): string {
+  return (
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` +
+    `/commits/${encodeURIComponent(ref)}/status`
+  );
+}
+
+/**
+ * Rolls up CI state for a commit ref from Check Runs plus legacy commit
+ * statuses. Fail-soft: any transport/API failure degrades to PENDING with an
+ * empty run list so missing scopes never block review.
+ */
+export async function fetchPullRequestChecks(
+  owner: string,
+  repo: string,
+  ref: string,
+  pat?: string | null,
+  fetchFn: typeof fetch = fetch
+): Promise<PullRequestChecks> {
+  const degraded: PullRequestChecks = { state: 'PENDING', checkRuns: [] };
+  if (!owner.trim() || !repo.trim() || !ref.trim()) return degraded;
+  try {
+    const headers = githubRequestHeaders(pat);
+    const [runsRes, statusRes] = await Promise.all([
+      fetchFn(checkRunsUrl(owner, repo, ref), { headers, cache: 'no-store' }),
+      fetchFn(combinedStatusUrl(owner, repo, ref), { headers, cache: 'no-store' }),
+    ]);
+
+    const runs: GitHubCheckRun[] = [];
+    if (runsRes.ok) {
+      const data = await runsRes.json().catch(() => ({}));
+      const list: unknown[] = Array.isArray((data as { check_runs?: unknown }).check_runs)
+        ? (data as { check_runs: unknown[] }).check_runs
+        : [];
+      for (const item of list) {
+        const run = item as { name?: string; status?: string; conclusion?: string | null; details_url?: string };
+        runs.push({
+          name: typeof run.name === 'string' && run.name ? run.name : 'check-run',
+          status: run.status || 'unknown',
+          conclusion: run.conclusion || '',
+          detailsUrl: run.details_url || '',
+        });
+      }
+    }
+    let combinedState = '';
+    if (statusRes.ok) {
+      const data = await statusRes.json().catch(() => ({}));
+      combinedState = typeof (data as { state?: string }).state === 'string'
+        ? ((data as { state: string }).state || '')
+        : '';
+      const statuses: unknown[] = Array.isArray((data as { statuses?: unknown }).statuses)
+        ? (data as { statuses: unknown[] }).statuses
+        : [];
+      for (const item of statuses) {
+        const st = item as { context?: string; state?: string; target_url?: string };
+        runs.push({
+          name: typeof st.context === 'string' && st.context ? st.context : 'status',
+          status: 'completed',
+          conclusion: st.state || '',
+          detailsUrl: st.target_url || '',
+        });
+      }
+    }
+    if (!runsRes.ok && !statusRes.ok) return degraded;
+
+    const failed = runs.filter((r) =>
+      ['failure', 'timed_out', 'action_required', 'cancelled', 'stale'].includes(
+        (r.conclusion || '').toLowerCase()
+      )
+    );
+    if (failed.length > 0 || combinedState.toLowerCase() === 'failure') {
+      return { state: 'FAILURE', checkRuns: runs };
+    }
+    const pending =
+      runs.some((r) => ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes((r.status || '').toLowerCase())) ||
+      runs.some((r) => !r.conclusion) ||
+      combinedState.toLowerCase() === 'pending';
+    if (pending) return { state: 'PENDING', checkRuns: runs };
+    return { state: 'SUCCESS', checkRuns: runs };
+  } catch {
+    return degraded;
+  }
+}
+
+/**
+ * Reads physical mergeability for a pull request. `mergeable: null` means
+ * GitHub is still computing — callers must treat it as unknown, not clean.
+ * Fail-soft: transport/API failure yields unknown, never throws.
+ */
+export async function fetchPullRequestMergeability(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  pat?: string | null,
+  fetchFn: typeof fetch = fetch
+): Promise<{ mergeable: boolean | null; mergeableState: string }> {
+  const unknown = { mergeable: null as boolean | null, mergeableState: 'unknown' };
+  if (!owner.trim() || !repo.trim() || !pullNumber) return unknown;
+  try {
+    const res = await fetchFn(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${pullNumber}`,
+      { headers: githubRequestHeaders(pat), cache: 'no-store' }
+    );
+    if (!res.ok) return unknown;
+    const data = (await res.json().catch(() => ({}))) as {
+      mergeable?: boolean | null;
+      mergeable_state?: string;
+    };
+    return {
+      mergeable: typeof data.mergeable === 'boolean' ? data.mergeable : null,
+      mergeableState: typeof data.mergeable_state === 'string' && data.mergeable_state ? data.mergeable_state : 'unknown',
+    };
+  } catch {
+    return unknown;
+  }
+}
+
+/**
+ * Demotes a Gemini semantic verdict with physical GitHub merge readiness.
+ * Only ever demotes READY_TO_MERGE → NEEDS_REVISION (with reasons); lesser
+ * verdicts pass through untouched. Unknown/missing status never blocks.
+ */
+export function applyMergeReadinessCap(
+  verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED',
+  status: { mergeable: boolean | null; mergeableState: string; checksState: string; failedChecks?: string[] } | null | undefined,
+  unauthorizedCount: number
+): { verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED'; reasons: string[] } {
+  if (verdict !== 'READY_TO_MERGE') return { verdict, reasons: [] };
+  const reasons: string[] = [];
+  if (status) {
+    if (status.mergeable === false || status.mergeableState === 'dirty') {
+      reasons.push('GitHub reports merge conflicts on this branch');
+    }
+    if (status.checksState === 'FAILURE') {
+      const failed = (status.failedChecks || []).filter(Boolean);
+      reasons.push(
+        failed.length > 0 ? `GitHub checks failing: ${failed.slice(0, 4).join(', ')}` : 'GitHub checks are failing'
+      );
+    }
+  }
+  if ((unauthorizedCount || 0) > 0) {
+    reasons.push(`${unauthorizedCount} out-of-scope file(s) block merging`);
+  }
+  if (reasons.length === 0) return { verdict, reasons };
+  return { verdict: 'NEEDS_REVISION', reasons };
+}
+
 export interface GitHubPullSummary {
   number: number;
   htmlUrl: string;

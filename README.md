@@ -112,6 +112,13 @@ RepoPilot **1.0.0** documentation:
   - **New session with brief** — remediation dispatch on the same PR branch (`startingBranch` = head, `automationMode` omitted) carrying the same brief.
 - **Audited Branch Preservation**: Both paths target `startingBranch` so Jules commits fixes directly to the active PR branch instead of creating rogue branches. Evaluate stays a click — re-run the audit after Jules pushes.
 
+### 5. Grounded Verification & Dual-Runtime Vault
+- **GitHub Checks & Branch Health**: PR ingestion reads CI check runs and `mergeable` state; conflicts or failing checks cap `READY_TO_MERGE` at `NEEDS_REVISION` with named reasons, shown in a dedicated scorecard widget with external run links.
+- **Tree-grounded boundaries**: Criteria generation validates suggested globs against the real git tree, strips hallucinated paths (reported as `rejectedGlobs`), and falls back to real top-level directories.
+- **Unified diff budget**: One shared 90,000-char budget with reserved per-file allocation for criterion-relevant files; over-budget files get in-block truncation markers, omitted files keep their headers.
+- **Dual-runtime vault**: Blueprints (including `lastBrief`) persist to `.repopilot/vault.json` locally or Upstash REST on Vercel via `GET`/`POST`/`DELETE /api/vault`; the UI hydrates server-first with silent localStorage fallback.
+- **Resilient polling**: Tiered 15s → 30s → 60s backoff up to 25 minutes with instant refresh when the tab becomes visible, plus an on-demand **Check Session Status** button and a PR-detected handoff toast.
+
 ---
 
 ## Test Suite & Quality Assurance
@@ -119,7 +126,7 @@ RepoPilot **1.0.0** documentation:
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
 ```bash
-# Run the test suite (315 tests across 35 files)
+# Run the test suite (361 tests across 38 files)
 npm test
 
 # Run tests in continuous watch mode during development
@@ -132,20 +139,24 @@ npm run test:watch
 | :--- | :--- | :--- | :--- |
 | **Prompt Compiler** | `prompt-compiler.test.ts` | 7 | Anti-drift markdown generation & blueprint comment embedding |
 | **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
-| **Jules Dispatch** | `jules-dispatch.test.ts` | 36 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode |
-| **Jules Session** | `jules-session.test.ts` | 7 | Session poll route, `harvestPullRequest`/`getJulesSession` harvest |
+| **Diff Sanitizer Budget** | `diff-sanitizer-extended.test.ts` | 10 | Shared 90k budget, per-file reserve, hunk markers, omission headers |
+| **Jules Dispatch** | `jules-dispatch.test.ts` | 50 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode, remediation head gate, real session ids |
+| **Jules Session** | `jules-session.test.ts` | 9 | Session poll route, harvest, vault recovery patch |
 | **Jules Message** | `jules-message.test.ts` | 8 | Follow-up `:sendMessage` lib + route, fail-closed 401/400/404 |
 | **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
 | **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
 | **Audit Engine** | `audit-engine.test.ts` | 13 | Diff ingestion, branch→PR lookup, evaluate timeout retry, diffFacts stamping |
 | **Audit Grade** | `audit-grade.test.ts` | 34 | Normalized category join, severity blast, line-ref validation, grade math, truncated summaries |
 | **Server Grade** | `audit-server-grade.test.ts` | 8 | Server single-truth sync, union paths, grade→brief→prompt wiring |
+| **Merge Readiness** | `merge-readiness.test.ts` | 12 | Check-run rollup, mergeability, verdict cap, fetch-diff status payload |
+| **Tree Grounding** | `tree-grounding.test.ts` | 9 | Boundary validation, hallucination filter, dir fallback, route wiring |
+| **Vault** | `vault.test.ts` | 10 | Driver selection, local round-trip, Upstash REST, route validation |
 | **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
-| **Blueprint Vault** | `blueprint-vault.test.ts` | 4 | Local storage serialization, recovery, deduplication & Refresh patch |
+| **Blueprint Vault** | `blueprint-vault.test.ts` | 5 | Local storage serialization, recovery, deduplication, Refresh patch, lastBrief round-trip |
 | **Outcome Memory** | `outcome-memory.test.ts` | 14 | FailureBrief build + continuation prompt caps + continue-session helpers |
 | **Outcome Log** | `outcome-log.test.ts` | 9 | Append/cap-50/turns/update/export, no aggregates |
 | **PR lookup** | `github-pr-lookup.test.ts` | 5 | PR URL / branch ingest parsers, pulls-by-head |
-| **Session poll** | `session-poll.test.ts` | 6 | Tab-visible 15s/20min poll stop conditions |
+| **Session poll** | `session-poll.test.ts` | 7 | Tiered backoff, 25-min cap, terminal states, snapshot patching |
 | **Stage handoff** | `stage-handoff.test.ts` | 5 | Prefill real PR URL, vault match |
 | **Sample contract** | `sample-contract.test.ts` | 3 | Empty Stage 1 defaults, Load sample rate-limiter |
 | **Job status** | `job-status.test.ts` | 5 | idle / watching / PR ready / last verdict |

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJulesSession, sanitizeJulesCredential } from '@/lib/jules';
+import { resolveDriver } from '@/lib/blueprint-vault-driver';
 import { logRouteError } from '@/lib/safe-log';
 
 export async function GET(req: NextRequest) {
@@ -41,6 +42,31 @@ export async function GET(req: NextRequest) {
         },
         { status: snapshot.status || 502 }
       );
+    }
+
+    // Durable harvest recovery: when the session opened a PR and the caller
+    // identifies the blueprint, patch the server vault record so a later
+    // device or reload resumes at Stage 2. Best-effort — never fails the read.
+    // A repo mismatch aborts the patch (never attach a PR to the wrong record).
+    const blueprintId = req.nextUrl.searchParams.get('blueprintId')?.trim() || '';
+    const repoScope = req.nextUrl.searchParams.get('repo')?.trim() || '';
+    if (snapshot.prUrl && blueprintId) {
+      try {
+        const driver = resolveDriver();
+        const record = await driver.get(blueprintId);
+        if (record && (!repoScope || record.repo === repoScope)) {
+          await driver.upsert({
+            ...record,
+            prUrl: snapshot.prUrl,
+            prTitle: snapshot.prTitle || record.prTitle,
+            sessionState: 'COMPLETED',
+            sessionId: snapshot.sessionId || record.sessionId,
+            sessionUrl: snapshot.sessionUrl || record.sessionUrl,
+          });
+        }
+      } catch {
+        // Vault write is advisory; the snapshot below carries the harvest.
+      }
     }
 
     return NextResponse.json({

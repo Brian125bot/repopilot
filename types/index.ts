@@ -47,6 +47,8 @@ export interface GeneratedCriteriaResponse {
   suggestedBranchName: string;
   summaryRationale: string;
   detectedArchitecture: string;
+  /** Model-suggested globs rejected for matching zero real tree paths. */
+  rejectedGlobs?: string[];
 }
 
 export interface Blueprint {
@@ -110,6 +112,10 @@ export interface DiffStats {
   linesRemoved: number;
   touchedPaths: string[];
   unauthorizedPaths: string[];
+  /** Diff budget applied during sanitization (chars). */
+  budgetChars?: number;
+  /** Files granted zero budget chars (header-only omission lines emitted). */
+  omittedFiles?: string[];
 }
 
 export interface SanitizedDiffResult {
@@ -222,6 +228,26 @@ export interface GeminiAuditReport {
   grade?: AuditGrade;
 }
 
+export interface VaultBlueprintSummary {
+  blueprintId: string;
+  repo: string;
+  branchName: string;
+  baseBranch: string;
+  objective: string;
+  createdAt: string;
+  updatedAt?: string;
+  hasLastBrief: boolean;
+}
+
+export interface GitHubStatusSummary {
+  mergeable: boolean | null;
+  mergeableState: string;
+  checksState: 'SUCCESS' | 'PENDING' | 'FAILURE';
+  failedChecks: string[];
+  /** Failed run names paired with their external details URLs. */
+  checkRunUrls?: { name: string; detailsUrl: string }[];
+}
+
 export interface PRMetadata {
   title: string;
   number: number;
@@ -233,4 +259,6 @@ export interface PRMetadata {
   state: string;
   body?: string;
   embeddedBlueprint?: Blueprint | null;
+  /** Physical GitHub merge readiness (checks + mergeable). Null when unavailable (e.g. manual diffs). */
+  githubStatus?: GitHubStatusSummary | null;
 }

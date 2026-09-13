@@ -1,8 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeUnifiedDiff, isFileExcluded, matchesFileBoundary } from '@/lib/diff-sanitizer';
+import {
+  MAX_DIFF_CHAR_BUDGET,
+  RESERVED_CHARS_PER_COVERED_FILE,
+  TRUNCATED_HUNK_MARKER,
+  cutAtHunkBoundary,
+  omittedFileMarker,
+  sanitizeUnifiedDiff,
+  isFileExcluded,
+  matchesFileBoundary,
+} from '@/lib/diff-sanitizer';
 
 const diffWith = (files: string[]) =>
   files.map((f) => `diff --git a/${f} b/${f}\n--- a/${f}\n+++ b/${f}\n@@ -1 +1 @@\n-old\n+new`).join('\n');
+
+const bigFile = (name: string, chars: number) =>
+  `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n${'+x'.repeat(chars)}`;
 
 describe('diff sanitizer extended', () => {
   it('excludes lockfiles, build artifacts, minified, binary', () => {
@@ -45,5 +57,58 @@ describe('diff sanitizer extended', () => {
     const out = sanitizeUnifiedDiff(raw, ['src/**']);
     expect(out.stats.linesAdded).toBe(2);
     expect(out.stats.linesRemoved).toBe(1);
+  });
+
+  it('defaults to the shared 90k budget and stamps it on stats', () => {
+    expect(MAX_DIFF_CHAR_BUDGET).toBe(90_000);
+    expect(RESERVED_CHARS_PER_COVERED_FILE).toBe(4_000);
+    const out = sanitizeUnifiedDiff(diffWith(['src/a.ts']), ['src/**']);
+    expect(out.isTruncated).toBe(false);
+    expect(out.stats.budgetChars).toBe(MAX_DIFF_CHAR_BUDGET);
+    expect(out.stats.omittedFiles).toEqual([]);
+  });
+
+  it('reserves headroom for criterion-relevant files before shared allocation', () => {
+    // Covered file (10k) + uncovered giant (10k) under a 12k budget:
+    // covered keeps its 4k reserve plus shared remainder.
+    const raw = [bigFile('src/covered.ts', 5000), bigFile('other/huge.ts', 5000)].join('\n');
+    const out = sanitizeUnifiedDiff(raw, ['src/**'], 12_000);
+    expect(out.isTruncated).toBe(true);
+    expect(out.sanitizedDiff).toContain('src/covered.ts');
+    expect(out.sanitizedDiff).toContain(TRUNCATED_HUNK_MARKER);
+    // Covered file kept at least its reserve; total stays within budget + marker.
+    const coveredIdx = out.sanitizedDiff.indexOf('src/covered.ts');
+    const hugeIdx = out.sanitizedDiff.indexOf('other/huge.ts');
+    expect(coveredIdx).toBeGreaterThanOrEqual(0);
+    expect(hugeIdx).toBeGreaterThanOrEqual(0);
+    expect(coveredIdx).toBeLessThan(hugeIdx);
+  });
+
+  it('never drops trailing files silently — headers plus omission markers remain', () => {
+    const raw = [bigFile('src/a.ts', 4000), bigFile('src/b.ts', 4000), bigFile('src/c.ts', 4000)].join('\n');
+    const out = sanitizeUnifiedDiff(raw, ['src/**'], 5_000);
+    expect(out.isTruncated).toBe(true);
+    for (const f of ['src/a.ts', 'src/b.ts', 'src/c.ts']) {
+      expect(out.sanitizedDiff).toContain(`diff --git a/${f} b/${f}`);
+    }
+    expect(out.stats.omittedFiles?.length).toBeGreaterThan(0);
+    for (const f of out.stats.omittedFiles || []) {
+      expect(out.sanitizedDiff).toContain(omittedFileMarker(f));
+    }
+  });
+
+  it('cuts partial files at hunk boundaries when possible', () => {
+    const text = `line1\n@@ -1 +1 @@\n+aaa\n@@ -9 +9 @@\n+bbb`;
+    const cut = cutAtHunkBoundary(text, text.length - 2);
+    expect(text.length).toBeGreaterThan(10);
+    expect(cut.endsWith('+aaa')).toBe(true);
+    expect(cutAtHunkBoundary('short', 100)).toBe('short');
+  });
+
+  it('unauthorized detection still works on truncated diffs', () => {
+    const raw = [bigFile('src/ok.ts', 4000), bigFile('other/evil.ts', 4000)].join('\n');
+    const out = sanitizeUnifiedDiff(raw, ['src/**'], 5_000);
+    expect(out.stats.unauthorizedPaths).toContain('other/evil.ts');
+    expect(out.stats.touchedPaths).toContain('src/ok.ts');
   });
 });

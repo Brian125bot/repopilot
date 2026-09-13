@@ -1,9 +1,14 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { AcceptanceCriterion, AuditDiffFacts, GeminiAuditReport, GeneratedCriteriaResponse, RepoInspectionResult } from '@/types';
 import { attachAuditGrade, reconcileAuditReport } from '@/lib/scoring';
+import { MAX_DIFF_CHAR_BUDGET } from '@/lib/diff-sanitizer';
 
-/** Char cap for the diff slice sent to Gemini. Keep in sync with lib/scoring.ts MAX_EVALUATE_DIFF_CHARS and sanitizer default (100k). */
-export const MAX_EVALUATE_DIFF_CHARS = 80000;
+/**
+ * Shared diff context budget (chars). The sanitizer enforces it with reserved
+ * per-file allocation, so the model always receives the full sanitized diff
+ * with no secondary slicing here.
+ */
+export const MAX_EVALUATE_DIFF_CHARS = MAX_DIFF_CHAR_BUDGET;
 
 export function getGeminiClient(customApiKey?: string): GoogleGenAI {
   const key = customApiKey || process.env.GEMINI_API_KEY;
@@ -174,10 +179,13 @@ Evaluation Guidelines:
 - Do not author the official merge score or verdict. RepoPilot recomputes those from criterion statuses plus the diff sanitizer (unauthorized files never READY; PARTIAL counts as half; −35 if any out-of-scope path). Still fill mergeVerdict fields: keyBlockers and actionableFeedbackForAgent must be concrete.
 - In 'actionableFeedbackForAgent', write an uncompromising, ready-to-paste markdown remediation instruction tailored for the code generation agent.`;
 
-  const shownDiff = diff.slice(0, MAX_EVALUATE_DIFF_CHARS);
-  const truncatedNote =
-    diff.length > MAX_EVALUATE_DIFF_CHARS
-      ? `\n[NOTE: diff truncated to first ${MAX_EVALUATE_DIFF_CHARS.toLocaleString()} of ${diff.length.toLocaleString()} chars for token budget. Judge only what is shown.]`
+  // No secondary slicing: the sanitizer already enforces the shared budget
+  // with per-file allocation and in-block truncation markers. If an
+  // over-budget diff ever arrives unsanitized, flag it instead of silently
+  // dropping the tail.
+  const overBudgetNote =
+    diff.length > MAX_DIFF_CHAR_BUDGET
+      ? `\n[NOTE: diff exceeds the shared ${MAX_DIFF_CHAR_BUDGET.toLocaleString()}-char budget (${diff.length.toLocaleString()} chars). Per-file truncation markers show what was cut. Judge only what is shown.]`
       : '';
 
   const prompt = `Please audit the following Pull Request Diff against the Blueprint specifications:
@@ -191,8 +199,8 @@ ${boundariesText}
 === ACCEPTANCE CRITERIA MATRIX ===
 ${criteriaText}
 
-=== SANITIZED PULL REQUEST DIFF ===${truncatedNote}
-${shownDiff}
+=== SANITIZED PULL REQUEST DIFF ===${overBudgetNote}
+${diff}
 
 Please output the complete structured audit report.`;
 

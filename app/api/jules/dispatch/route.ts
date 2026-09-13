@@ -61,14 +61,21 @@ export async function POST(req: NextRequest) {
       .replace(/\.git$/i, '')
       .replace(/^\/+|\/+$/g, '');
 
+    // COR-11: remediation must target the audited PR head. Never fall back to
+    // 'main', baseBranch, or a generated name — a missing head is a 400.
+    const requestedHead = branchName?.trim() || explicitStartingBranch?.trim() || '';
+    if (isRemediation && !requestedHead) {
+      return NextResponse.json(
+        { success: false, error: 'Remediation requires startingBranch = audited PR head' },
+        { status: 400 }
+      );
+    }
+
     const targetBranch =
-      branchName?.trim() ||
-      explicitStartingBranch?.trim() ||
-      (isRemediation
-        ? 'main'
-        : `jules/${(rawObjective || 'task').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Math.floor(
-            1000 + Math.random() * 9000
-          )}`);
+      requestedHead ||
+      `jules/${(rawObjective || 'task').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24)}-${Math.floor(
+        1000 + Math.random() * 9000
+      )}`;
 
     const objective =
       rawObjective?.trim() ||
@@ -212,7 +219,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    let sessionId = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    // COR-13: sessionId starts undefined. Live responses persist only the exact
+    // Jules-returned resource name; dry runs use a dry_-prefixed local id.
+    let sessionId: string | undefined = undefined;
     let sessionUrl: string | undefined = undefined;
     let sessionState: string | undefined = undefined;
     let sourceName: string | undefined = undefined;
@@ -269,10 +278,22 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      sessionId = julesResult.sessionId || sessionId;
+      if (!julesResult.sessionId) {
+        // Fail-closed: a live success without a real Jules id must not persist
+        // a fabricated sess_ id on the blueprint.
+        return NextResponse.json(
+          { success: false, error: 'Jules returned no session id' },
+          { status: 502 }
+        );
+      }
+      sessionId = julesResult.sessionId;
       sessionUrl = julesResult.sessionUrl;
       sessionState = julesResult.state;
       julesApiResponse = julesResult.data;
+    }
+
+    if (dryRun) {
+      sessionId = `dry_${blueprintId}`;
     }
 
     const completeBlueprint: Blueprint = {

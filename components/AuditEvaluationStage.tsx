@@ -204,6 +204,21 @@ export function AuditEvaluationStage({
   // Modals
   const [diffModalOpen, setDiffModalOpen] = React.useState(false);
 
+  // Handoff toast shown when the session poller harvests a PR URL.
+  const [handoffToast, setHandoffToast] = React.useState<string | null>(null);
+  const handoffTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showHandoffToast = (prUrl: string) => {
+    const match = prUrl.match(/\/pull\/(\d+)/);
+    if (handoffTimerRef.current) clearTimeout(handoffTimerRef.current);
+    setHandoffToast(
+      match
+        ? `PR #${match[1]} detected from Jules session. Transitioning to audit.`
+        : 'PR detected from Jules session. Transitioning to audit.'
+    );
+    handoffTimerRef.current = setTimeout(() => setHandoffToast(null), 12_000);
+  };
+
   // Extract clean repository name
   const extractedRepo = React.useMemo(() => {
     if (prMetadata?.htmlUrl) {
@@ -260,6 +275,12 @@ export function AuditEvaluationStage({
   React.useEffect(() => {
     hydratedBlueprintRef.current = hydratedBlueprint;
   }, [hydratedBlueprint]);
+
+  React.useEffect(() => {
+    return () => {
+      if (handoffTimerRef.current) clearTimeout(handoffTimerRef.current);
+    };
+  }, []);
 
   const ingestDiff = React.useCallback(
     async (
@@ -347,6 +368,7 @@ export function AuditEvaluationStage({
     }) => {
       const current = hydratedBlueprintRef.current || activeBlueprint;
       if (!current) return;
+      const hadPrUrl = Boolean(current.prUrl);
       const patched = applySessionSnapshotToBlueprint(current, snapshot);
       setHydratedBlueprint(patched);
       onSaveBlueprint?.(patched);
@@ -354,6 +376,7 @@ export function AuditEvaluationStage({
         autoFetchedUrlRef.current = patched.prUrl;
         setPrInput(patched.prUrl);
         setPrPending(false);
+        if (!hadPrUrl) showHandoffToast(patched.prUrl);
         void ingestDiff({ prUrl: patched.prUrl }, patched.fileBoundaries);
       }
     },
@@ -366,6 +389,8 @@ export function AuditEvaluationStage({
     prUrl: hydratedBlueprint?.prUrl,
     sessionState: hydratedBlueprint?.sessionState,
     julesKey: julesKey || '',
+    repo: hydratedBlueprint?.repo,
+    blueprintId: hydratedBlueprint?.blueprintId,
     onSnapshot: applyPolledSnapshot,
     onStatus: setPollStatus,
   });
@@ -881,6 +906,13 @@ export function AuditEvaluationStage({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {handoffToast && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-100/80 px-3.5 py-2.5 text-xs font-semibold text-emerald-950">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              <span>{handoffToast}</span>
             </div>
           )}
 

@@ -46,7 +46,7 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
   - Strips lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, etc.) to conserve token budget.
   - Parses git diff hunks and calculates total additions/deletions.
 - **Gemini Structured Audit (`/api/audit/evaluate` — server single truth):**
-  - Sends sanitized diff (first 80k chars, `truncated` flagged), acceptance criteria, and unioned `unauthorizedPaths` to Google Gemini.
+  - Sends the sanitized diff (shared 90k-char budget with per-file reserve, `truncated` flagged), acceptance criteria, and unioned `unauthorizedPaths` to Google Gemini.
   - `forceScopeIntegrity` lets the sanitizer outrank the model: any flagged path forces `strictlyInScope=false` (empty = clean, omitted = unverified; `unionUnauthorizedPaths()` is add-only).
   - `attachAuditGrade()` then stamps Stage 1 categories by normalized id, validates `path:lines` refs against sanitizer `touchedPaths` (`unverifiedReferences` = “cited, not in diff”), builds `AuditGrade`, and syncs `mergeVerdict` from the grade. UI renders `report.grade`.
   - Returns schema-validated JSON with:

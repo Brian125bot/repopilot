@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Blueprint, CriterionResult, GeminiAuditReport } from '@/types';
+import { MAX_DIFF_CHAR_BUDGET } from '@/lib/diff-sanitizer';
 import { MAX_EVALUATE_DIFF_CHARS } from '@/lib/gemini';
 import { attachAuditGrade, unionUnauthorizedPaths } from '@/lib/scoring';
 import { buildFailureBrief } from '@/lib/outcome-memory';
@@ -51,8 +52,9 @@ const blueprint: Blueprint = {
 };
 
 describe('server single truth (evaluate route contract)', () => {
-  it('exposes the evaluate char cap shared by scoring and gemini', () => {
-    expect(MAX_EVALUATE_DIFF_CHARS).toBe(80000);
+  it('exposes a single shared diff budget across sanitizer, scoring, and gemini', () => {
+    expect(MAX_DIFF_CHAR_BUDGET).toBe(90_000);
+    expect(MAX_EVALUATE_DIFF_CHARS).toBe(MAX_DIFF_CHAR_BUDGET);
   });
 
   it('unions derived + client paths add-only (empty never clears)', () => {

@@ -4,11 +4,14 @@ import { logRouteError } from '@/lib/safe-log';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
 import { PRMetadata } from '@/types';
 import {
+  fetchPullRequestChecks,
+  fetchPullRequestMergeability,
   findPullRequestByHeadBranch,
   parseAuditIngestTarget,
   parseGitHubPRUrl,
   parseOwnerRepo,
 } from '@/lib/github';
+import { GitHubStatusSummary } from '@/types';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,13 +21,15 @@ export async function POST(req: NextRequest) {
     const headerGithubPat = req.headers.get('x-github-pat');
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
-    // Case 1: Direct raw diff supplied (e.g., local testing or pasted diff)
+    // Case 1: Direct raw diff supplied (e.g., local testing or pasted diff).
+    // No PR exists, so physical merge readiness is unavailable (null).
     if (rawDiff && typeof rawDiff === 'string' && rawDiff.trim().length > 0) {
       const sanitized = sanitizeUnifiedDiff(rawDiff, fileBoundaries);
       return NextResponse.json({
         success: true,
         isCustomDiff: true,
         sanitizedResult: sanitized,
+        githubStatus: null as GitHubStatusSummary | null,
         pr: {
           title: 'Manual Diff / Local Ingestion',
           number: 0,
@@ -180,6 +185,28 @@ export async function POST(req: NextRequest) {
     // 3. Sanitize diff and compute blast radius stats
     const sanitizedResult = sanitizeUnifiedDiff(diffText, effectiveBoundaries);
 
+    // 4. Physical merge readiness (best-effort; never fails ingestion).
+    // Head SHA drives check runs; the pulls endpoint gives mergeable state.
+    const headSha = typeof prData.head?.sha === 'string' ? prData.head.sha : '';
+    const [checks, mergeability] = await Promise.all([
+      fetchPullRequestChecks(prOwner, prRepo, headSha, githubPat),
+      fetchPullRequestMergeability(prOwner, prRepo, prNum, githubPat),
+    ]);
+    const failedRuns = checks.checkRuns.filter((r) =>
+      ['failure', 'timed_out', 'action_required', 'cancelled', 'stale'].includes(
+        (r.conclusion || '').toLowerCase()
+      )
+    );
+    const githubStatus: GitHubStatusSummary = {
+      mergeable: mergeability.mergeable,
+      mergeableState: mergeability.mergeableState,
+      checksState: checks.state,
+      failedChecks: failedRuns.map((r) => r.name),
+      checkRunUrls: failedRuns
+        .filter((r) => r.detailsUrl)
+        .map((r) => ({ name: r.name, detailsUrl: r.detailsUrl })),
+    };
+
     const prMetadata: PRMetadata = {
       title: prData.title || `PR #${prNum}`,
       number: prNum,
@@ -191,12 +218,14 @@ export async function POST(req: NextRequest) {
       state: prData.state || 'open',
       body: prData.body || '',
       embeddedBlueprint,
+      githubStatus,
     };
 
     return NextResponse.json({
       success: true,
       pr: prMetadata,
       sanitizedResult,
+      githubStatus,
     });
   } catch (error) {
     logRouteError('/api/audit/fetch-diff', error);

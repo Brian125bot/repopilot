@@ -16,8 +16,8 @@ import {
 export const BLAST_LOW_MAX_LINES = 149;
 export const BLAST_MEDIUM_MAX_LINES = 500;
 
-/** Char cap for the diff slice actually sent to Gemini. Must stay in sync with lib/gemini.ts MAX_EVALUATE_DIFF_CHARS. */
-export const MAX_EVALUATE_DIFF_CHARS = 80000;
+/** Shared diff context budget (chars). Single source: lib/diff-sanitizer.ts. */
+export { MAX_DIFF_CHAR_BUDGET as MAX_EVALUATE_DIFF_CHARS } from '@/lib/diff-sanitizer';
 
 /**
  * Paths whose unauthorized touch is always HIGH risk, regardless of volume.

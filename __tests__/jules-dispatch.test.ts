@@ -75,7 +75,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
     expect(data.blueprint.repo).toBe('acme-corp/api-gateway');
     expect(data.blueprint.branchName).toBe('jules/test-branch');
     expect(data.sessionId).toBeDefined();
-    expect(data.sessionId).toContain('sess_');
+    expect(data.sessionId).toContain('dry_');
   });
 
   it('enforces startingBranch resolution and non-PR automation in remediation mode', async () => {
@@ -400,6 +400,135 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toContain('Invalid API Key provided');
+  });
+
+  describe('COR-11/COR-13 close-outs: remediation head gate and real session ids', () => {
+    const boundSource = {
+      sources: [
+        {
+          name: 'sources/src_4242',
+          githubRepo: { owner: 'acme-corp', repo: 'api-gateway' },
+        },
+      ],
+    };
+
+    function mockJules(sessionPayload: unknown) {
+      return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
+        const url = typeof input === 'string' ? input : (input as { url: string }).url;
+        if (url.includes('/v1alpha/sources')) {
+          return { ok: true, status: 200, json: async () => boundSource } as unknown as Response;
+        }
+        if (url.includes('/v1alpha/sessions')) {
+          return { ok: true, status: 200, json: async () => sessionPayload } as unknown as Response;
+        }
+        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      });
+    }
+
+    function dispatchReq(body: Record<string, unknown>) {
+      return new NextRequest('http://localhost:3000/api/jules/dispatch', {
+        method: 'POST',
+        headers: { 'x-jules-api-key': 'test-key' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    const firstPassBody = {
+      repo: 'acme-corp/api-gateway',
+      baseBranch: 'main',
+      branchName: 'jules/first-pass',
+      objective: 'Implement limiter in src verified by unit tests',
+      criteria: [{ id: '1', text: 'Enforce limit in src verified by test', category: 'functional' }],
+      dryRun: false,
+    };
+
+    it('1. first-pass body carries automationMode AUTO_CREATE_PR and a bound sources[].name', async () => {
+      const fetchSpy = mockJules({ name: 'sessions/first1', state: 'QUEUED' });
+      const res = await POST(dispatchReq(firstPassBody));
+      expect(res.status).toBe(200);
+      const sessionCall = fetchSpy.mock.calls.find(([callUrl]) =>
+        String(callUrl).includes('/v1alpha/sessions')
+      );
+      expect(sessionCall).toBeDefined();
+      const sent = JSON.parse((sessionCall![1] as { body: string }).body as string);
+      expect(sent.automationMode).toBe('AUTO_CREATE_PR');
+      expect(sent.sourceContext.source).toBe('sources/src_4242');
+    });
+
+    it('2. remediation with startingBranch keeps the head and omits automationMode', async () => {
+      const fetchSpy = mockJules({ name: 'sessions/rem1', state: 'ACTIVE' });
+      const res = await POST(
+        dispatchReq({
+          ...firstPassBody,
+          startingBranch: 'feature/audited',
+          branchName: 'feature/audited',
+          isRemediation: true,
+        })
+      );
+      expect(res.status).toBe(200);
+      const sessionCall = fetchSpy.mock.calls.find(([callUrl]) =>
+        String(callUrl).includes('/v1alpha/sessions')
+      );
+      const sent = JSON.parse((sessionCall![1] as { body: string }).body as string);
+      expect(sent.sourceContext.githubRepoContext.startingBranch).toBe('feature/audited');
+      expect('automationMode' in sent).toBe(false);
+    });
+
+    it('3. remediation without startingBranch/branchName is 400 and never calls create-session', async () => {
+      const fetchSpy = mockJules({ name: 'sessions/should-not-happen', state: 'ACTIVE' });
+      const res = await POST(
+        dispatchReq({
+          repo: 'acme-corp/api-gateway',
+          objective: 'Fix the thing in src verified by tests',
+          criteria: [{ id: '1', text: 'Fixed in src verified by test' }],
+          isRemediation: true,
+          dryRun: false,
+        })
+      );
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('Remediation requires startingBranch = audited PR head');
+      const sessionCalls = fetchSpy.mock.calls.filter(([callUrl]) =>
+        String(callUrl).includes('/v1alpha/sessions')
+      );
+      expect(sessionCalls).toHaveLength(0);
+    });
+
+    it('4. live 200 with name sessions/abc persists the exact id (never sess_)', async () => {
+      mockJules({ name: 'sessions/abc', state: 'ACTIVE' });
+      const res = await POST(dispatchReq(firstPassBody));
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.sessionId).toBe('sessions/abc');
+      expect(data.blueprint.sessionId).toBe('sessions/abc');
+      expect(data.sessionId.startsWith('sess_')).toBe(false);
+    });
+
+    it('5. live 200 with no name/id is 502 with no sess_ anywhere', async () => {
+      mockJules({ state: 'ACTIVE' });
+      const res = await POST(dispatchReq(firstPassBody));
+      expect(res.status).toBe(502);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toBe('Jules returned no session id');
+      expect(JSON.stringify(data)).not.toContain('sess_');
+    });
+
+    it('6. dryRun succeeds without a Jules key and may use the dry_ prefix', async () => {
+      const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
+        method: 'POST',
+        body: JSON.stringify({ ...firstPassBody, dryRun: true }),
+      });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.apiStatus).toBe('LOCAL_DRY_RUN');
+      expect(data.sessionId.startsWith('dry_')).toBe(true);
+      expect(data.blueprint.sessionId).toBe(data.sessionId);
+    });
   });
 
   it('fails closed on Jules 404 Source Not Found (returns 404, success: false)', async () => {

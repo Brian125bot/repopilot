@@ -1,9 +1,19 @@
 # Changelog
 
+## Unreleased — grounded verification & dual-runtime vault
+
+- **Grounded mergeability**: PR ingestion reads GitHub check runs + `mergeable` state (`githubStatus`); conflicts or failing checks cap `READY_TO_MERGE` at `NEEDS_REVISION` with named reasons and a Checks & Branch Health widget.
+- **Tree-grounded boundaries**: generation validates suggested globs against the real git tree, rejects hallucinations (`rejectedGlobs`), falls back to real top-level dirs.
+- **Unified diff budget**: one shared 90k-char budget with reserved per-file allocation, hunk-aware cuts, and omission headers; secondary model-side slicing removed.
+- **Dual-runtime vault**: `GET`/`POST`/`DELETE /api/vault` backed by local `.repopilot/vault.json` or Upstash REST; server-first hydration with localStorage fallback.
+- **Resilient polling**: tiered 15s → 30s → 60s backoff (25-min cap), instant refresh on tab-visible, Check Session Status button, PR-detected handoff toast, harvest-to-vault recovery.
+- Remediation now requires the audited PR head (400 otherwise — no `main` fallback); live dispatches persist only real Jules session ids (`dry_` ids for dry runs, 502 when Jules returns none).
+
 ## 1.0.1
 
 - 1.0.0 froze the two-stage loop and the Outcome Memory libraries (`buildFailureBrief`, `compileContinuationPrompt`, outcome log turns).
 - Continue-with-brief wired as the primary blocked-audit action: **Continue Jules session** (`POST /api/jules/message` + FailureBrief) with **New session with brief** fallback (remediation dispatch, same brief, same PR branch, `automationMode` omitted). Operator stays in the loop; Evaluate is still a click.
+- `lastBrief` persisted across Stage 2 hydration and vault round-trips so remediation resumes without re-audit; fallback paths documented in the user guide.
 - GitHub Actions removed. Gate: `npm test && npx tsc --noEmit`.
 
 ## Unreleased — grounded audit grade
@@ -23,6 +33,7 @@ Server single truth for merge readiness: `report.grade` computed in `/api/audit/
 
 First curated release of the Jules → audit loop.
 
+- Outcome Memory libraries (`buildFailureBrief`, `compileContinuationPrompt`, outcome log turns), deterministic scoring (`computeScorecardMetrics`, scope-forced reconciliation), and fail-closed dispatching (key/source/branch validation, no fabricated session ids).
 - Stage 1 starts empty; **Load sample** restores the rate-limiter contract. Dry-run and Load Demo PR are labeled as simulation.
 - Navbar job chrome: idle / watching / PR ready / last verdict.
 - Operator copy: dispatch, wait for PR, audit, fix. Two stages remain.

@@ -533,6 +533,8 @@ export function IntakeDispatchStage({
     prUrl: confirmedBlueprint?.prUrl,
     sessionState: confirmedSessionState,
     julesKey,
+    repo: confirmedBlueprint?.repo,
+    blueprintId: confirmedBlueprint?.blueprintId,
     onSnapshot: applySessionSnapshot,
     onStatus: setPollStatus,
   });
@@ -544,10 +546,15 @@ export function IntakeDispatchStage({
     try {
       const headers: Record<string, string> = {};
       if (julesKey) headers['x-jules-api-key'] = julesKey;
-      const res = await fetch(
-        `/api/jules/session?id=${encodeURIComponent(confirmedSessionId)}`,
-        { headers, cache: 'no-store' }
-      );
+      const refreshParams = new URLSearchParams({ id: confirmedSessionId });
+      if (confirmedBlueprint?.repo?.trim()) refreshParams.set('repo', confirmedBlueprint.repo.trim());
+      if (confirmedBlueprint?.blueprintId?.trim()) {
+        refreshParams.set('blueprintId', confirmedBlueprint.blueprintId.trim());
+      }
+      const res = await fetch(`/api/jules/session?${refreshParams.toString()}`, {
+        headers,
+        cache: 'no-store',
+      });
       const data = await res.json();
       if (!res.ok || data.success === false) {
         throw new Error(data.error || 'Failed to refresh Jules session.');
@@ -644,7 +651,7 @@ export function IntakeDispatchStage({
                   className="bg-white/10 border-white/40 text-white hover:bg-white/20 text-xs gap-1.5"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingSession ? 'animate-spin' : ''}`} />
-                  {isRefreshingSession ? 'Refreshing…' : 'Refresh session'}
+                  {isRefreshingSession ? 'Checking…' : 'Check Session Status'}
                 </Button>
               )}
               {apiStatus !== 'DISPATCHED_TO_JULES' && (

@@ -1,7 +1,18 @@
 import { Blueprint } from '@/types';
 
 export const SESSION_POLL_INTERVAL_MS = 15_000;
-export const SESSION_POLL_MAX_MS = 20 * 60 * 1000;
+/** Watch cap: fast polls slow down instead of stopping (see pollIntervalForElapsedMs). */
+export const SESSION_POLL_MAX_MS = 25 * 60 * 1000;
+
+/**
+ * Tiered backoff so long Jules runs stay cheap: every 15s for the first
+ * 2 minutes, every 30s up to 10 minutes, every 60s up to the 25-minute cap.
+ */
+export function pollIntervalForElapsedMs(elapsedMs: number): number {
+  if (elapsedMs < 2 * 60 * 1000) return 15_000;
+  if (elapsedMs < 10 * 60 * 1000) return 30_000;
+  return 60_000;
+}
 
 const TERMINAL_STATES = new Set([
   'COMPLETED',

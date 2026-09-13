@@ -57,6 +57,23 @@ export default function RepoPilotPage() {
             console.error('Failed to parse cached blueprints:', e);
           }
         }
+
+        // Server-first hydration: when the server vault is reachable and
+        // non-empty it wins (cross-device continuity); otherwise the local
+        // cache above stands. Never throws — localStorage is the fallback.
+        fetch('/api/vault', { cache: 'no-store' })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            const remote = data?.blueprints;
+            if (data?.success === true && Array.isArray(remote) && remote.length > 0) {
+              const full = remote as Blueprint[];
+              setBlueprints(full);
+              setActiveBlueprint((current) => current || full[0] || null);
+            }
+          })
+          .catch(() => {
+            // Server store unreachable — local cache remains authoritative.
+          });
       }
     }, 0);
     return () => clearTimeout(timer);
@@ -69,6 +86,11 @@ export default function RepoPilotPage() {
     }
   };
 
+  // Best-effort server write-through; localStorage stays authoritative on failure.
+  const syncVaultDelete = (id: string) => {
+    fetch(`/api/vault?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+  };
+
   const handleSaveBlueprint = (bp: Blueprint) => {
     setActiveBlueprint(bp);
     setBlueprints((prev) => {
@@ -79,6 +101,11 @@ export default function RepoPilotPage() {
       }
       return updated;
     });
+    fetch('/api/vault', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blueprint: bp }),
+    }).catch(() => {});
   };
 
   const handleDeleteBlueprint = (id: string) => {
@@ -92,6 +119,7 @@ export default function RepoPilotPage() {
     if (activeBlueprint?.blueprintId === id) {
       setActiveBlueprint(null);
     }
+    syncVaultDelete(id);
   };
 
   const handleClearAllBlueprints = () => {

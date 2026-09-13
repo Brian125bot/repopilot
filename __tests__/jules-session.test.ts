@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/jules/session/route';
 import {
   getJulesSession,
   harvestPullRequest,
 } from '@/lib/jules';
+import { resolveDriver } from '@/lib/blueprint-vault-driver';
 
 describe('Jules session harvest (lib + GET /api/jules/session)', () => {
   beforeEach(() => {
@@ -131,5 +135,83 @@ describe('Jules session harvest (lib + GET /api/jules/session)', () => {
     const data = await res.json();
     expect(data.success).toBe(false);
     expect(data.error).toContain('Session not found');
+  });
+
+  describe('harvest-to-vault recovery (?repo=&blueprintId=)', () => {
+    const vaultBlueprint = {
+      blueprintId: 'bp_harvest_1',
+      repo: 'acme/api',
+      baseBranch: 'main',
+      branchName: 'jules/feat',
+      fileBoundaries: ['src/**'],
+      objective: 'Ship it in src verified by tests',
+      criteria: [{ id: '1', text: 'Works in src verified by test' }],
+      createdAt: new Date().toISOString(),
+      sessionId: 'sessions/h1',
+    };
+
+    const mockJulesSnapshot = () =>
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            name: 'sessions/h1',
+            state: 'COMPLETED',
+            url: 'https://jules.google.com/session/h1',
+            outputs: [
+              { pullRequest: { url: 'https://github.com/acme/api/pull/9', title: 'Add feat' } },
+            ],
+          }),
+        } as unknown as Response;
+      });
+
+    it('patches the vault record with PR url and COMPLETED state', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'repopilot-harvest-'));
+      const prev = process.env.REPOPILOT_VAULT_DIR;
+      process.env.REPOPILOT_VAULT_DIR = dir;
+      try {
+        await resolveDriver().upsert(vaultBlueprint as never);
+        mockJulesSnapshot();
+
+        const req = new NextRequest(
+          'http://localhost:3000/api/jules/session?id=sessions/h1&repo=acme/api&blueprintId=bp_harvest_1',
+          { headers: { 'x-jules-api-key': 'test-key' } }
+        );
+        const res = await GET(req);
+        expect(res.status).toBe(200);
+        const patched = await resolveDriver().get('bp_harvest_1');
+        expect(patched?.prUrl).toBe('https://github.com/acme/api/pull/9');
+        expect(patched?.prTitle).toBe('Add feat');
+        expect(patched?.sessionState).toBe('COMPLETED');
+      } finally {
+        if (prev === undefined) delete process.env.REPOPILOT_VAULT_DIR;
+        else process.env.REPOPILOT_VAULT_DIR = prev;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('skips the patch on repo mismatch and still returns the snapshot', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'repopilot-harvest-'));
+      const prev = process.env.REPOPILOT_VAULT_DIR;
+      process.env.REPOPILOT_VAULT_DIR = dir;
+      try {
+        await resolveDriver().upsert(vaultBlueprint as never);
+        mockJulesSnapshot();
+
+        const req = new NextRequest(
+          'http://localhost:3000/api/jules/session?id=sessions/h1&repo=other/repo&blueprintId=bp_harvest_1',
+          { headers: { 'x-jules-api-key': 'test-key' } }
+        );
+        const res = await GET(req);
+        expect(res.status).toBe(200);
+        const untouched = await resolveDriver().get('bp_harvest_1');
+        expect(untouched?.prUrl).toBeUndefined();
+      } finally {
+        if (prev === undefined) delete process.env.REPOPILOT_VAULT_DIR;
+        else process.env.REPOPILOT_VAULT_DIR = prev;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
