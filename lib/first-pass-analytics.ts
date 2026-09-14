@@ -127,6 +127,25 @@ export function recordOutcomeRowWithFeatures(
   }
 }
 
+/**
+ * Counts completed first-pass runs from the outcome log.
+ *
+ * This intentionally relies only on the stable outcome-row fields so historical
+ * rows created before first-pass feature capture remain part of the denominator.
+ */
+export function countFirstPassReady(rows: OutcomeLogRow[]): { ready: number; total: number } {
+  let ready = 0;
+  let total = 0;
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (row.turn !== 'initial') continue;
+    total += 1;
+    if (row.verdict === 'READY_TO_MERGE') ready += 1;
+  }
+
+  return { ready, total };
+}
+
 export interface FirstPassSlice {
   key: string;
   total: number;

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFirstPassFeatures,
+  countFirstPassReady,
   summarizeFirstPassOutcomes,
   OutcomeRowWithFeatures,
 } from '@/lib/first-pass-analytics';
@@ -82,5 +83,24 @@ describe('summarizeFirstPassOutcomes', () => {
     expect(byKey['testCommand:no'].readyRate).toBe(0);
     expect(byKey['criteria:balanced'].total).toBe(1);
     expect(byKey['criteria:unbalanced'].total).toBe(1);
+  });
+});
+
+describe('countFirstPassReady', () => {
+  it('counts READY initial turns without requiring first-pass features', () => {
+    const result = countFirstPassReady([
+      { blueprintId: 'a', repo: 'r', turn: 'initial', verdict: 'READY_TO_MERGE', usedPriorSession: false, at: '2026-01-01T00:00:00.000Z' },
+      { blueprintId: 'b', repo: 'r', turn: 'initial', verdict: 'NEEDS_REVISION', usedPriorSession: false, at: '2026-01-01T00:00:00.000Z' },
+      { blueprintId: 'c', repo: 'r', turn: 'initial', verdict: 'READY_TO_MERGE', usedPriorSession: false, at: '2026-01-01T00:00:00.000Z' },
+      { blueprintId: 'd', repo: 'r', turn: 'initial', usedPriorSession: false, at: '2026-01-01T00:00:00.000Z' },
+      { blueprintId: 'e', repo: 'r', turn: 'initial', verdict: 'BLOCKED', usedPriorSession: false, at: '2026-01-01T00:00:00.000Z' },
+      { blueprintId: 'f', repo: 'r', turn: 'continuation', verdict: 'READY_TO_MERGE', usedPriorSession: true, at: '2026-01-01T00:00:00.000Z' },
+    ]);
+
+    expect(result).toEqual({ ready: 2, total: 5 });
+  });
+
+  it('reports no runs for an empty log', () => {
+    expect(countFirstPassReady([])).toEqual({ ready: 0, total: 0 });
   });
 });

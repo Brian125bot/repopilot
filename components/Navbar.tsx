@@ -6,6 +6,8 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { GitHubStatusIndicator } from './GitHubStatusIndicator';
 import { deriveJobStatus, jobChromeTone, jobStatusDetail, type JobStatusLabel } from '@/lib/job-status';
+import { countFirstPassReady } from '@/lib/first-pass-analytics';
+import { loadOutcomeLog, OUTCOME_LOG_KEY } from '@/lib/outcome-memory';
 import { Blueprint } from '@/types';
 
 interface NavbarProps {
@@ -33,6 +35,18 @@ export function Navbar({
 }: NavbarProps) {
   const jobLabel: JobStatusLabel = deriveJobStatus(activeBlueprint);
   const jobDetail = jobStatusDetail(activeBlueprint);
+  const [firstPassReady, setFirstPassReady] = React.useState({ ready: 0, total: 0 });
+
+  React.useEffect(() => {
+    const refreshFirstPassReady = () => setFirstPassReady(countFirstPassReady(loadOutcomeLog()));
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === OUTCOME_LOG_KEY) refreshFirstPassReady();
+    };
+
+    refreshFirstPassReady();
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [currentStage, activeBlueprint]);
   const chromeTone = jobChromeTone(activeBlueprint);
   const jobTone =
     chromeTone === 'positive'
@@ -99,6 +113,12 @@ export function Navbar({
 
         {/* Right: Actions & Vault */}
         <div className="flex items-center gap-2">
+          <span
+            className="hidden lg:inline-flex items-center rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-800"
+            title="Initial outcome-log runs that received READY_TO_MERGE"
+          >
+            First-pass READY {firstPassReady.ready} / {firstPassReady.total}
+          </span>
           <span
             className={`hidden sm:inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${jobTone}`}
             title={jobDetail}
