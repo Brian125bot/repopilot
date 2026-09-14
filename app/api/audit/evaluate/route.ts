@@ -4,7 +4,7 @@ import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
 import { AcceptanceCriterion, AuditDiffFacts } from '@/types';
 import { unionUnauthorizedPaths } from '@/lib/scoring';
 import { evaluateFailurePayload } from '@/lib/evaluate-timeout';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import {
   parseRequestBody,
   parseQueryParams,
@@ -17,13 +17,20 @@ export const maxDuration = 60;
 
 /** Presence probe so the Settings modal can show server-key status without spending a Gemini call. */
 export async function GET(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/audit/evaluate', method: 'GET', requestId });
   const queryValidation = parseQueryParams(AuditEvaluateQuerySchema, req);
   if (!queryValidation.success) return queryValidation.response;
 
+  logger.info('Request complete', { route: '/api/audit/evaluate', method: 'GET', requestId, status: 200, latency: performance.now() - start });
   return NextResponse.json({ hasServerKey: Boolean(process.env.GEMINI_API_KEY?.trim()) });
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/audit/evaluate', method: 'POST', requestId });
   try {
     const bodyValidation = await parseRequestBody(AuditEvaluateBodySchema, req);
     if (!bodyValidation.success) return bodyValidation.response;
@@ -107,6 +114,7 @@ export async function POST(req: NextRequest) {
       report.headBranch = prMetadata.headBranch;
     }
 
+    logger.info('Request complete', { route: '/api/audit/evaluate', method: 'POST', requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json({
       success: true,
       report,
@@ -114,6 +122,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     logRouteError('/api/audit/evaluate', error);
     const failure = evaluateFailurePayload(error);
+    logger.info('Request complete', { route: '/api/audit/evaluate', method: 'POST', requestId, status: failure.status, latency: performance.now() - start });
     return NextResponse.json(failure.body, { status: failure.status });
   }
 }

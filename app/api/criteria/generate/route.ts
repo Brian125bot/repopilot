@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAcceptanceCriteria } from '@/lib/gemini';
 import { fallbackBoundariesFromTree, validateAndFilterBoundaries } from '@/lib/prompt-compiler';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import { RepoInspectionResult } from '@/types';
 import { parseRequestBody, CriteriaGenerateBodySchema } from '@/lib/validation';
 
@@ -11,6 +11,9 @@ const GENERATE_TREE_PATH_CAP = 500;
 const GENERATE_TREE_TOP_N = 40;
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/criteria/generate', method: 'POST', requestId });
   try {
     const bodyValidation = await parseRequestBody(CriteriaGenerateBodySchema, req);
     if (!bodyValidation.success) return bodyValidation.response;
@@ -82,10 +85,12 @@ export async function POST(req: NextRequest) {
         validGlobs.length > 0 ? validGlobs : fallbackBoundariesFromTree(groundPaths);
     }
 
+    logger.info('Request complete', { route: '/api/criteria/generate', method: 'POST', requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json({ ...result, rejectedGlobs });
   } catch (error: unknown) {
     const err = error as { message?: string; status?: number };
     logRouteError('/api/criteria/generate', err);
+    logger.info('Request complete', { route: '/api/criteria/generate', method: 'POST', requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       {
         error: err.message || 'Failed to generate acceptance criteria via Gemini.',

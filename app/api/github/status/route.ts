@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger, getRequestId, logRouteError } from '@/lib/safe-log';
 import { validateGitHubToken } from '@/lib/github';
 import {
   parseRequestBody,
@@ -8,6 +9,9 @@ import {
 } from '@/lib/validation';
 
 export async function GET(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/github/status', method: 'GET', requestId });
   const queryValidation = parseQueryParams(GithubStatusQuerySchema, req);
   if (!queryValidation.success) return queryValidation.response;
 
@@ -25,9 +29,12 @@ export async function GET(req: NextRequest) {
       result.source = 'user';
     }
 
+    logger.info('Request complete', { route: '/api/github/status', method: req.method, requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json(result);
   } catch (error) {
     const err = error as Error;
+    logRouteError('/api/github/status', error);
+    logger.info('Request complete', { route: '/api/github/status', method: req.method, requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       {
         status: 'error',
@@ -41,6 +48,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/github/status', method: 'POST', requestId });
   const bodyValidation = await parseRequestBody(GithubStatusBodySchema, req);
   if (!bodyValidation.success) return bodyValidation.response;
 
@@ -59,9 +69,12 @@ export async function POST(req: NextRequest) {
       result.source = 'user';
     }
 
+    logger.info('Request complete', { route: '/api/github/status', method: req.method, requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json(result);
   } catch (error) {
     const err = error as Error;
+    logRouteError('/api/github/status', error);
+    logger.info('Request complete', { route: '/api/github/status', method: req.method, requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       {
         status: 'error',

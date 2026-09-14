@@ -7,11 +7,14 @@ import {
 } from '@/lib/jules';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { AcceptanceCriterion, Blueprint } from '@/types';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import { preDispatchGate } from '@/lib/contract-lint';
 import { parseRequestBody, JulesDispatchBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/jules/dispatch', method: 'POST', requestId });
   try {
     const bodyValidation = await parseRequestBody(JulesDispatchBodySchema, req);
     if (!bodyValidation.success) return bodyValidation.response;
@@ -159,10 +162,10 @@ export async function POST(req: NextRequest) {
           },
         });
         if (!ghCheck.ok && ghCheck.status !== 404) {
-          console.warn(`GitHub check returned status ${ghCheck.status}`);
+          logger.warn(`GitHub check returned status ${ghCheck.status}`);
         }
       } catch (err) {
-        console.warn('GitHub accessibility pre-check failed non-fatally:', err);
+        logger.warn('GitHub accessibility pre-check failed non-fatally:', err);
       }
     }
 
@@ -255,6 +258,7 @@ export async function POST(req: NextRequest) {
       isRemediation,
     };
 
+    logger.info('Request complete', { route: '/api/jules/dispatch', method: 'POST', requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json({
       success: true,
       dryRun: Boolean(dryRun),
@@ -272,6 +276,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     logRouteError('/api/jules/dispatch', error);
+    logger.info('Request complete', { route: '/api/jules/dispatch', method: 'POST', requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       {
         success: false,

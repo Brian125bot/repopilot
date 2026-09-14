@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
 import { PRMetadata, GitHubStatusSummary } from '@/types';
 import {
@@ -14,6 +14,9 @@ import {
 import { parseRequestBody, AuditFetchDiffBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/audit/fetch-diff', method: 'POST', requestId });
   try {
     const bodyValidation = await parseRequestBody(AuditFetchDiffBodySchema, req);
     if (!bodyValidation.success) return bodyValidation.response;
@@ -179,7 +182,7 @@ export async function POST(req: NextRequest) {
           diffText = await publicRes.text();
         }
       } catch (e) {
-        console.warn('Fallback public diff fetch failed:', e);
+        logger.warn('Fallback public diff fetch failed:', e);
       }
     }
 
@@ -236,6 +239,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     logRouteError('/api/audit/fetch-diff', error);
+    logger.info('Request complete', { route: '/api/audit/fetch-diff', method: 'POST', requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to fetch diff' },
       { status: 500 }

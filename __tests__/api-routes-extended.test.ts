@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as githubStatusGET } from '@/app/api/github/status/route';
 import { GET as julesSourcesGET } from '@/app/api/jules/sources/route';

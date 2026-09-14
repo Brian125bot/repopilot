@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RepoInspectionResult } from '@/types';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import { parseRequestBody, RepoInspectBodySchema } from '@/lib/validation';
 
 const TREE_CAP = 150;
@@ -43,6 +43,9 @@ function detectTestCommand(scripts: Record<string, string>, pm: string, deps: st
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/repo/inspect', method: 'POST', requestId });
   try {
     const bodyValidation = await parseRequestBody(RepoInspectBodySchema, req);
     if (!bodyValidation.success) return bodyValidation.response;
@@ -88,6 +91,7 @@ export async function POST(req: NextRequest) {
         primaryLanguage: 'TypeScript',
       };
 
+      logger.info('Request complete', { route: '/api/repo/inspect', method: 'POST', requestId, status: 200, latency: performance.now() - start });
       return NextResponse.json(fallback);
     }
 
@@ -250,10 +254,12 @@ export async function POST(req: NextRequest) {
       visibility: repoData.private ? 'private' : 'public',
     };
 
+    logger.info('Request complete', { route: '/api/repo/inspect', method: 'POST', requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json(inspection);
   } catch (error: unknown) {
     const err = error as { message?: string };
     logRouteError('/api/repo/inspect', err);
+    logger.info('Request complete', { route: '/api/repo/inspect', method: 'POST', requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       { error: err.message || 'Failed to inspect repository state.' },
       { status: 500 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
-import { logRouteError } from '@/lib/safe-log';
+import { logRouteError, logger, getRequestId } from '@/lib/safe-log';
 import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
 
 /**
@@ -9,6 +9,9 @@ import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
  * automationMode. Fail-closed on missing key, id, or prompt.
  */
 export async function POST(req: NextRequest) {
+  const requestId = getRequestId(req);
+  const start = performance.now();
+  logger.info('Request entry', { route: '/api/jules/message', method: 'POST', requestId });
   try {
     const headerJulesKey = req.headers.get('x-jules-api-key');
     const julesApiKey =
@@ -16,6 +19,7 @@ export async function POST(req: NextRequest) {
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
 
     if (!julesApiKey) {
+      logger.info('Request complete', { route: '/api/jules/message', method: 'POST', requestId, status: 401, latency: performance.now() - start });
       return NextResponse.json(
         {
           success: false,
@@ -34,6 +38,7 @@ export async function POST(req: NextRequest) {
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 
     if (!result.ok) {
+      logger.info('Request complete', { route: '/api/jules/message', method: 'POST', requestId, status: result.status || 502, latency: performance.now() - start });
       return NextResponse.json(
         {
           success: false,
@@ -45,6 +50,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    logger.info('Request complete', { route: '/api/jules/message', method: 'POST', requestId, status: 200, latency: performance.now() - start });
     return NextResponse.json({
       success: true,
       sessionId: result.sessionId,
@@ -53,6 +59,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     logRouteError('/api/jules/message', error);
+    logger.info('Request complete', { route: '/api/jules/message', method: 'POST', requestId, status: 500, latency: performance.now() - start });
     return NextResponse.json(
       {
         success: false,
