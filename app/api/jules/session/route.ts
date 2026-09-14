@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getJulesSession, sanitizeJulesCredential } from '@/lib/jules';
 import { resolveDriver } from '@/lib/blueprint-vault-driver';
 import { logRouteError } from '@/lib/safe-log';
+import { parseQueryParams, JulesSessionQuerySchema } from '@/lib/validation';
 
 export async function GET(req: NextRequest) {
   try {
-    const sessionId = req.nextUrl.searchParams.get('id')?.trim() || '';
-
-    const headerJulesKey = req.headers.get('x-jules-api-key');
+    const headerJulesKey = req?.headers.get('x-jules-api-key');
     const julesApiKey =
       sanitizeJulesCredential(headerJulesKey || '') ||
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
@@ -23,12 +22,10 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    if (!sessionId) {
-      return NextResponse.json(
-        { success: false, error: 'Session ID is required. Provide ?id=sessions/xxx.' },
-        { status: 400 }
-      );
-    }
+    const queryValidation = parseQueryParams(JulesSessionQuerySchema, req);
+    if (!queryValidation.success) return queryValidation.response;
+
+    const { id: sessionId, blueprintId = '', repo: repoScope = '' } = queryValidation.data;
 
     const snapshot = await getJulesSession(julesApiKey, sessionId);
 
@@ -44,12 +41,6 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Durable harvest recovery: when the session opened a PR and the caller
-    // identifies the blueprint, patch the server vault record so a later
-    // device or reload resumes at Stage 2. Best-effort — never fails the read.
-    // A repo mismatch aborts the patch (never attach a PR to the wrong record).
-    const blueprintId = req.nextUrl.searchParams.get('blueprintId')?.trim() || '';
-    const repoScope = req.nextUrl.searchParams.get('repo')?.trim() || '';
     if (snapshot.prUrl && blueprintId) {
       try {
         const driver = resolveDriver();

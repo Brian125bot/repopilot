@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RepoInspectionResult } from '@/types';
 import { logRouteError } from '@/lib/safe-log';
+import { parseRequestBody, RepoInspectBodySchema } from '@/lib/validation';
 
 const TREE_CAP = 150;
 const TREE_PREVIEW_CAP = 25;
@@ -29,7 +30,6 @@ function detectFramework(deps: string[]): string {
 
 function detectTestCommand(scripts: Record<string, string>, pm: string, deps: string[]): string {
   if (scripts.test && scripts.test.trim()) {
-    // Prefer the repo's own test entrypoint via its package manager.
     if (pm === 'pnpm') return 'pnpm test';
     if (pm === 'yarn') return 'yarn test';
     if (pm === 'bun') return 'bun test';
@@ -44,22 +44,12 @@ function detectTestCommand(scripts: Record<string, string>, pm: string, deps: st
 
 export async function POST(req: NextRequest) {
   try {
-    const { repo } = (await req.json()) as { repo: string };
+    const bodyValidation = await parseRequestBody(RepoInspectBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
 
-    if (!repo || !repo.includes('/')) {
-      return NextResponse.json(
-        { error: 'Repository must be in "owner/repo" format (e.g., vercel/next.js).' },
-        { status: 400 }
-      );
-    }
+    const { repo } = bodyValidation.data;
 
     const [owner, repoName] = repo.trim().split('/');
-    if (!owner || !repoName) {
-      return NextResponse.json(
-        { error: 'Invalid owner/repo format.' },
-        { status: 400 }
-      );
-    }
 
     const githubPat = req.headers.get('x-github-pat') || process.env.GITHUB_PAT;
 
@@ -104,7 +94,7 @@ export async function POST(req: NextRequest) {
     const repoData = await repoRes.json();
     const defaultBranch: string = repoData.default_branch || 'main';
 
-    // 2. Fetch root contents to discover structure (UI preview + lockfile signals)
+    // 2. Fetch root contents
     const contentsRes = await fetch(
       `https://api.github.com/repos/${owner}/${repoName}/contents`,
       { headers, next: { revalidate: 300 } }
@@ -141,7 +131,6 @@ export async function POST(req: NextRequest) {
           ['tests', 'test', '__tests__', 'spec'].includes(i.name)
         );
 
-        // If package.json exists, attempt to inspect scripts + deps for test command + framework.
         if (keyFiles.hasPackageJson) {
           try {
             const pkgRes = await fetch(
@@ -189,7 +178,6 @@ export async function POST(req: NextRequest) {
                   }
                 }
                 keyFiles.scriptsSummary = keepScripts;
-                // Framework + test command need tree for pm detection — filled after tree fetch.
                 (keyFiles as { _depNames?: string[] })._depNames = depNames;
               }
             }
@@ -200,8 +188,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3. Recursive tree for boundary validation + files-to-read (P1 deep fetch).
-    // Falls back to root preview when the trees API is unavailable (large/private/rate-limited).
+    // 3. Recursive tree
     let treePaths: string[] = [];
     let treeTruncated = false;
     try {
@@ -228,14 +215,14 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch {
-      // Ignore — fallback below covers it.
+      // Ignore
     }
     if (treePaths.length === 0) {
       treePaths = treePreview.slice(0, TREE_CAP);
       treeTruncated = false;
     }
 
-    // 4. Derive package manager / framework / test command now that tree + deps are known.
+    // 4. Derive metadata
     const depNames =
       (keyFiles as unknown as { _depNames?: string[] })._depNames ||
       keyFiles.dependenciesSummary ||

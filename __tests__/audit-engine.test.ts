@@ -180,7 +180,7 @@ describe('Audit Engine & Evaluation Pipeline', () => {
 
   describe('/api/audit/evaluate Route', () => {
     it('GET reports server key presence without calling Gemini', async () => {
-      const res = await evaluateGET();
+      const res = await evaluateGET(new NextRequest('http://localhost:3000/api/audit/evaluate'));
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(typeof data.hasServerKey).toBe('boolean');

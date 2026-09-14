@@ -3,43 +3,24 @@ import { generateAcceptanceCriteria } from '@/lib/gemini';
 import { fallbackBoundariesFromTree, validateAndFilterBoundaries } from '@/lib/prompt-compiler';
 import { logRouteError } from '@/lib/safe-log';
 import { RepoInspectionResult } from '@/types';
+import { parseRequestBody, CriteriaGenerateBodySchema } from '@/lib/validation';
 
 /** Cap for tree paths pulled for boundary grounding (sample up to 500). */
 const GENERATE_TREE_PATH_CAP = 500;
 /** How many top directories/files the model sees for grounding. */
 const GENERATE_TREE_TOP_N = 40;
 
-interface CriteriaRequestBody {
-  repo: string;
-  objective: string;
-  repoContext?: Partial<RepoInspectionResult>;
-  mode?: 'standard' | 'security' | 'testing' | 'strict';
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as CriteriaRequestBody;
-    const { repo, objective, repoContext, mode = 'standard' } = body;
+    const bodyValidation = await parseRequestBody(CriteriaGenerateBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
 
-    if (!repo || !repo.includes('/')) {
-      return NextResponse.json(
-        { error: 'Valid repository in "owner/repo" format is required.' },
-        { status: 400 }
-      );
-    }
-
-    if (!objective || objective.trim().length < 10) {
-      return NextResponse.json(
-        { error: 'Please provide a descriptive task objective (at least 10 characters) to establish criteria.' },
-        { status: 400 }
-      );
-    }
+    const { repo, objective, repoContext, mode = 'standard' } = bodyValidation.data;
 
     const customApiKey = req.headers.get('x-gemini-api-key') || undefined;
 
     // Tree-ground the generation: fetch the real git tree so boundary
-    // suggestions can be validated instead of trusted. Best-effort — on any
-    // failure we proceed with the caller-supplied context unchanged.
+    // suggestions can be validated instead of trusted. Best-effort.
     const [treeOwner, treeRepo] = repo.trim().split('/');
     let groundPaths: string[] = [];
     if (treeOwner && treeRepo) {
@@ -50,7 +31,7 @@ export async function POST(req: NextRequest) {
           'User-Agent': 'RepoPilot-Auditor',
         };
         if (githubPat?.trim()) ghHeaders.Authorization = `token ${githubPat.trim()}`;
-        const branch = repoContext?.defaultBranch?.trim() || 'main';
+        const branch = (repoContext as Partial<RepoInspectionResult> | undefined)?.defaultBranch?.trim() || 'main';
         const treeRes = await fetch(
           `https://api.github.com/repos/${treeOwner}/${treeRepo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
           { headers: ghHeaders, next: { revalidate: 300 } }
@@ -70,17 +51,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const castContext = repoContext as Partial<RepoInspectionResult> | undefined;
     const groundedContext: Partial<RepoInspectionResult> | undefined =
       groundPaths.length > 0
         ? {
-            ...repoContext,
-            // Top-40 first so the model grounds on real directories/files.
-            treePaths: [...groundPaths.slice(0, GENERATE_TREE_TOP_N), ...(repoContext?.treePaths || [])].slice(
+            ...castContext,
+            treePaths: [...groundPaths.slice(0, GENERATE_TREE_TOP_N), ...(castContext?.treePaths || [])].slice(
               0,
               GENERATE_TREE_PATH_CAP
             ),
           }
-        : repoContext;
+        : castContext;
 
     const result = await generateAcceptanceCriteria({
       repo: repo.trim(),
@@ -90,9 +71,6 @@ export async function POST(req: NextRequest) {
       customApiKey,
     });
 
-    // Validate the model's boundaries against the real tree; strip hallucinated
-    // globs, falling back to real top-level dirs only when all are invalid.
-    // Empty tree means "cannot validate" — keep the model output untouched.
     let rejectedGlobs: string[] = [];
     if (groundPaths.length > 0 && Array.isArray(result.recommendedFileBoundaries)) {
       const { validGlobs, rejectedGlobs: rejected } = validateAndFilterBoundaries(

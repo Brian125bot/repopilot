@@ -1,59 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logRouteError } from '@/lib/safe-log';
-import { compileJulesPrompt } from '@/lib/prompt-compiler';
-import { preDispatchGate } from '@/lib/contract-lint';
 import {
   createJulesSession,
-  resolveJulesSourceName,
   resolveAutomationMode,
+  resolveJulesSourceName,
   sanitizeJulesCredential,
 } from '@/lib/jules';
-import { Blueprint, AcceptanceCriterion, RepoInspectionResult } from '@/types';
-
-interface DispatchRequestBody {
-  repo: string;
-  baseBranch?: string;
-  branchName?: string;
-  startingBranch?: string;
-  fileBoundaries?: string[] | string;
-  objective?: string;
-  criteria?: AcceptanceCriterion[];
-  customPrompt?: string;
-  isRemediation?: boolean;
-  prNumber?: number;
-  prUrl?: string;
-  dryRun?: boolean;
-  /** Deep repo grounding for first-pass prompt enrichment (P1). Optional for back-compat. */
-  repoContext?: Partial<RepoInspectionResult> | null;
-  testCommand?: string;
-}
+import { compileJulesPrompt } from '@/lib/prompt-compiler';
+import { AcceptanceCriterion, Blueprint } from '@/types';
+import { logRouteError } from '@/lib/safe-log';
+import { preDispatchGate } from '@/lib/contract-lint';
+import { parseRequestBody, JulesDispatchBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as DispatchRequestBody;
+    const bodyValidation = await parseRequestBody(JulesDispatchBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
 
     const {
       repo,
+      objective: rawObjective,
       baseBranch = 'main',
       branchName,
-      startingBranch: explicitStartingBranch,
-      fileBoundaries = [],
-      objective: rawObjective,
+      startingBranch,
+      explicitStartingBranch: explicitStartingBranchArg,
+      fileBoundaries,
       criteria: rawCriteria,
-      customPrompt,
       isRemediation = false,
-      prNumber,
       dryRun = false,
-      repoContext = null,
+      customPrompt,
+      repoContext,
       testCommand = '',
-    } = body;
+      prNumber,
+    } = bodyValidation.data;
 
-    if (!repo || !repo.includes('/')) {
-      return NextResponse.json(
-        { error: 'Invalid repository. Please specify in "owner/repo" format.' },
-        { status: 400 }
-      );
-    }
+    const explicitStartingBranch = startingBranch || explicitStartingBranchArg;
 
     const cleanRepo = repo
       .trim()
@@ -61,15 +41,7 @@ export async function POST(req: NextRequest) {
       .replace(/\.git$/i, '')
       .replace(/^\/+|\/+$/g, '');
 
-    // COR-11: remediation must target the audited PR head. Never fall back to
-    // 'main', baseBranch, or a generated name — a missing head is a 400.
     const requestedHead = branchName?.trim() || explicitStartingBranch?.trim() || '';
-    if (isRemediation && !requestedHead) {
-      return NextResponse.json(
-        { success: false, error: 'Remediation requires startingBranch = audited PR head' },
-        { status: 400 }
-      );
-    }
 
     const targetBranch =
       requestedHead ||
@@ -83,16 +55,9 @@ export async function POST(req: NextRequest) {
         ? `Remediate audit findings for Pull Request ${prNumber ? `#${prNumber}` : ''} on branch "${targetBranch}". Address all flagged blockers and unmet criteria.`
         : '');
 
-    if (!objective) {
-      return NextResponse.json(
-        { error: 'Objective and task description is required.' },
-        { status: 400 }
-      );
-    }
-
     const criteria: AcceptanceCriterion[] =
       rawCriteria && rawCriteria.length > 0
-        ? rawCriteria
+        ? (rawCriteria as AcceptanceCriterion[])
         : isRemediation
         ? [
             {
@@ -113,14 +78,6 @@ export async function POST(req: NextRequest) {
           ]
         : [];
 
-    if (criteria.length === 0) {
-      return NextResponse.json(
-        { error: 'At least one Acceptance Criterion is required.' },
-        { status: 400 }
-      );
-    }
-
-    // Extract Jules API key and GitHub PAT from request headers or server environment
     const headerJulesKey = req.headers.get('x-jules-api-key');
     const headerGithubPat = req.headers.get('x-github-pat');
     const julesApiKey =
@@ -128,7 +85,6 @@ export async function POST(req: NextRequest) {
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
-    // Fail-closed check: if not a dryRun, an API key is strictly required
     if (!dryRun && !julesApiKey) {
       return NextResponse.json(
         {
@@ -141,20 +97,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Normalize boundaries
     const parsedBoundaries: string[] = Array.isArray(fileBoundaries)
       ? fileBoundaries
       : typeof fileBoundaries === 'string'
       ? fileBoundaries.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
-    // P0 pre-dispatch gate: fail-closed on structural errors, warn on quality risks.
-    // Remediation keeps the legacy path (audit already diagnosed the work).
     let dispatchWarnings: string[] = [];
     if (!isRemediation && !(customPrompt && customPrompt.trim().length > 0)) {
       const treePaths =
         (repoContext as { treePaths?: string[] } | null)?.treePaths ||
-        (repoContext?.treePreview as string[] | undefined) ||
+        ((repoContext as { treePreview?: string[] } | null)?.treePreview as string[] | undefined) ||
         [];
       const gate = preDispatchGate({
         repo: cleanRepo,
@@ -174,9 +127,6 @@ export async function POST(req: NextRequest) {
 
     const blueprintId = `bp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-    // Compile anti-drift Markdown contract or use custom remediation prompt.
-    // First-pass prompts carry repo grounding (stack, files-to-read, test command,
-    // explicit DO-NOT list, category + Why, DoD self-check) to maximize one-shot success.
     const compiledPrompt =
       customPrompt && customPrompt.trim().length > 0
         ? customPrompt.trim()
@@ -188,21 +138,18 @@ export async function POST(req: NextRequest) {
               fileBoundaries: parsedBoundaries,
               objective: objective.trim(),
               criteria,
-              repoContext: isRemediation ? null : repoContext,
+              repoContext: isRemediation ? null : (repoContext as any),
               testCommand: isRemediation ? '' : testCommand,
             },
             blueprintId
           );
 
-    // Determine the exact starting branch for Jules
-    // For remediation, Jules MUST start and apply changes on the branch being audited
     const effectiveStartingBranch =
       explicitStartingBranch?.trim() ||
       (isRemediation ? targetBranch : undefined) ||
       baseBranch.trim() ||
       'main';
 
-    // Check repository accessibility via GitHub API if token available
     if (githubPat) {
       try {
         const ghCheck = await fetch(`https://api.github.com/repos/${cleanRepo}`, {
@@ -219,8 +166,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // COR-13: sessionId starts undefined. Live responses persist only the exact
-    // Jules-returned resource name; dry runs use a dry_-prefixed local id.
     let sessionId: string | undefined = undefined;
     let sessionUrl: string | undefined = undefined;
     let sessionState: string | undefined = undefined;
@@ -228,7 +173,6 @@ export async function POST(req: NextRequest) {
     let julesApiResponse: unknown = null;
 
     if (!dryRun && julesApiKey) {
-      // Bind owner/repo to a real sources[].name. Fail-closed: never invent a source path.
       const resolvedSource = await resolveJulesSourceName(julesApiKey, cleanRepo);
       if (!resolvedSource.ok) {
         return NextResponse.json(
@@ -258,12 +202,10 @@ export async function POST(req: NextRequest) {
         prompt: compiledPrompt,
         title: sessionTitle,
         requirePlanApproval: false,
-        // Remediation omits automationMode; only first-pass requests AUTO_CREATE_PR.
         ...(automationMode ? { automationMode } : {}),
       });
 
       if (!julesResult.ok) {
-        // Fail-closed invariant: live failures MUST NOT return success: true
         return NextResponse.json(
           {
             success: false,
@@ -279,8 +221,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (!julesResult.sessionId) {
-        // Fail-closed: a live success without a real Jules id must not persist
-        // a fabricated sess_ id on the blueprint.
         return NextResponse.json(
           { success: false, error: 'Jules returned no session id' },
           { status: 502 }
@@ -310,7 +250,6 @@ export async function POST(req: NextRequest) {
       sourceName,
       sessionUrl,
       sessionState,
-      // No PR harvested at dispatch time; populated later via GET /api/jules/session.
       prUrl: undefined,
       prTitle: undefined,
       isRemediation,
