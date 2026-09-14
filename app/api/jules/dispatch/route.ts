@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import {
   createJulesSession,
   resolveAutomationMode,
@@ -7,13 +8,13 @@ import {
 } from '@/lib/jules';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { AcceptanceCriterion, Blueprint } from '@/types';
-import { logRouteError } from '@/lib/safe-log';
 import { preDispatchGate } from '@/lib/contract-lint';
 import { parseRequestBody, JulesDispatchBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(JulesDispatchBodySchema, req);
+    const bodyValidation = await parseRequestBody(JulesDispatchBodySchema, req, '/api/jules/dispatch', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const {
@@ -86,15 +87,7 @@ export async function POST(req: NextRequest) {
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
     if (!dryRun && !julesApiKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          dryRun: false,
-          error:
-            'No Google Jules API key configured. Provide an API key via request headers or environment variables, or enable dryRun mode.',
-        },
-        { status: 401 }
-      );
+      return apiError('/api/jules/dispatch', requestId, { status: 401, code: 'UNAUTHORIZED', message: 'No Google Jules API key configured. Provide an API key via request headers or environment variables, or enable dryRun mode.', details: { dryRun: false } });
     }
 
     const parsedBoundaries: string[] = Array.isArray(fileBoundaries)
@@ -117,10 +110,7 @@ export async function POST(req: NextRequest) {
         treePaths,
       });
       if (!gate.ok) {
-        return NextResponse.json(
-          { success: false, error: gate.errors.join(' '), warnings: gate.warnings },
-          { status: 400 }
-        );
+        return apiError('/api/jules/dispatch', requestId, { status: 400, code: 'INVALID_INPUT', message: gate.errors.join(' '), details: { warnings: gate.warnings } });
       }
       dispatchWarnings = gate.warnings;
     }
@@ -159,10 +149,8 @@ export async function POST(req: NextRequest) {
           },
         });
         if (!ghCheck.ok && ghCheck.status !== 404) {
-          console.warn(`GitHub check returned status ${ghCheck.status}`);
         }
       } catch (err) {
-        console.warn('GitHub accessibility pre-check failed non-fatally:', err);
       }
     }
 
@@ -175,20 +163,7 @@ export async function POST(req: NextRequest) {
     if (!dryRun && julesApiKey) {
       const resolvedSource = await resolveJulesSourceName(julesApiKey, cleanRepo);
       if (!resolvedSource.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            dryRun: false,
-            error: resolvedSource.error || 'Source not connected in Jules',
-            status: resolvedSource.status,
-            details: resolvedSource.details,
-            repo: cleanRepo,
-            targetBranch,
-            sourcesListed: resolvedSource.sourcesListed,
-            sourcesTruncated: resolvedSource.truncated ?? false,
-          },
-          { status: resolvedSource.status || 404 }
-        );
+        return apiError('/api/jules/dispatch', requestId, { status: resolvedSource.status || 404, code: 'UPSTREAM_ERROR', message: resolvedSource.error || 'Source not connected in Jules', details: { dryRun: false, repo: cleanRepo, targetBranch } });
       }
 
       sourceName = resolvedSource.sourceName;
@@ -206,25 +181,11 @@ export async function POST(req: NextRequest) {
       });
 
       if (!julesResult.ok) {
-        return NextResponse.json(
-          {
-            success: false,
-            dryRun: false,
-            error: julesResult.error || `Google Jules API error (HTTP ${julesResult.status})`,
-            status: julesResult.status,
-            details: julesResult.details,
-            repo: cleanRepo,
-            targetBranch,
-          },
-          { status: julesResult.status || 502 }
-        );
+        return apiError('/api/jules/dispatch', requestId, { status: julesResult.status || 502, code: 'UPSTREAM_ERROR', message: julesResult.error || `Google Jules API error (HTTP ${julesResult.status})`, details: { dryRun: false, repo: cleanRepo, targetBranch, status: julesResult.status } });
       }
 
       if (!julesResult.sessionId) {
-        return NextResponse.json(
-          { success: false, error: 'Jules returned no session id' },
-          { status: 502 }
-        );
+        return apiError('/api/jules/dispatch', requestId, { status: 502, code: 'UPSTREAM_ERROR', message: 'Jules returned no session id' });
       }
       sessionId = julesResult.sessionId;
       sessionUrl = julesResult.sessionUrl;
@@ -271,13 +232,6 @@ export async function POST(req: NextRequest) {
       warnings: dispatchWarnings.length > 0 ? dispatchWarnings : undefined,
     });
   } catch (error) {
-    logRouteError('/api/jules/dispatch', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown dispatch error occurred.',
-      },
-      { status: 500 }
-    );
+    return apiError('/api/jules/dispatch', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Unknown dispatch error occurred.' });
   }
 }

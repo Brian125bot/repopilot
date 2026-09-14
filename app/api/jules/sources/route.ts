@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { listJulesSources, sanitizeJulesCredential } from '@/lib/jules';
 import { parseQueryParams, JulesSourcesQuerySchema } from '@/lib/validation';
 
 export async function GET(req: NextRequest) {
-  const queryValidation = parseQueryParams(JulesSourcesQuerySchema, req);
+  const requestId = createRequestId();
+  const queryValidation = parseQueryParams(JulesSourcesQuerySchema, req, '/api/jules/sources', requestId);
   if (!queryValidation.success) return queryValidation.response;
 
   try {
@@ -33,21 +35,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({
-      configured: true,
-      valid: false,
-      hasServerKey: Boolean(process.env.JULES_API_KEY),
-      error: listed.error || `HTTP ${listed.status}`,
-      status: listed.status,
-    });
+    return apiError('/api/jules/sources', requestId, { status: listed.status || 502, code: 'UPSTREAM_ERROR', message: listed.error || `HTTP ${listed.status}`, details: { configured: true, valid: false, hasServerKey: Boolean(process.env.JULES_API_KEY), status: listed.status } });
   } catch (err) {
-    return NextResponse.json(
-      {
-        configured: true,
-        valid: false,
-        error: err instanceof Error ? err.message : 'Network error testing Jules API key',
-      },
-      { status: 500 }
-    );
+    return apiError('/api/jules/sources', requestId, { status: 500, code: 'UPSTREAM_ERROR', message: 'Network error testing Jules API key', details: { configured: true, valid: false } });
   }
 }

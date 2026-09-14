@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { getJulesSession, sanitizeJulesCredential } from '@/lib/jules';
 import { resolveDriver } from '@/lib/blueprint-vault-driver';
-import { logRouteError } from '@/lib/safe-log';
 import { parseQueryParams, JulesSessionQuerySchema } from '@/lib/validation';
 
 export async function GET(req: NextRequest) {
+  const requestId = createRequestId();
   try {
     const headerJulesKey = req?.headers.get('x-jules-api-key');
     const julesApiKey =
@@ -12,17 +13,10 @@ export async function GET(req: NextRequest) {
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
 
     if (!julesApiKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'No Google Jules API key configured. Provide an API key via request headers or environment variables.',
-        },
-        { status: 401 }
-      );
+      return apiError('/api/jules/session', requestId, { status: 401, code: 'UNAUTHORIZED', message: 'No Google Jules API key configured. Provide an API key via request headers or environment variables.' });
     }
 
-    const queryValidation = parseQueryParams(JulesSessionQuerySchema, req);
+    const queryValidation = parseQueryParams(JulesSessionQuerySchema, req, '/api/jules/session', requestId);
     if (!queryValidation.success) return queryValidation.response;
 
     const { id: sessionId, blueprintId = '', repo: repoScope = '' } = queryValidation.data;
@@ -30,15 +24,7 @@ export async function GET(req: NextRequest) {
     const snapshot = await getJulesSession(julesApiKey, sessionId);
 
     if (!snapshot.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: snapshot.error || `Google Jules API error (HTTP ${snapshot.status})`,
-          status: snapshot.status,
-          details: snapshot.details,
-        },
-        { status: snapshot.status || 502 }
-      );
+      return apiError('/api/jules/session', requestId, { status: snapshot.status || 502, code: 'UPSTREAM_ERROR', message: snapshot.error || `Google Jules API error (HTTP ${snapshot.status})`, details: { status: snapshot.status } });
     }
 
     if (snapshot.prUrl && blueprintId) {
@@ -70,13 +56,6 @@ export async function GET(req: NextRequest) {
       data: snapshot.data,
     });
   } catch (error) {
-    logRouteError('/api/jules/session', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown session read error.',
-      },
-      { status: 500 }
-    );
+    return apiError('/api/jules/session', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Unknown session read error.' });
   }
 }

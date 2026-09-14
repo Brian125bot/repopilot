@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { z } from 'zod';
 
 export interface ValidationErrorDetail {
@@ -16,7 +17,7 @@ export interface ValidationErrorResponse {
 
 export type ValidationResult<T> =
   | { success: true; data: T }
-  | { success: false; response: NextResponse<ValidationErrorResponse> };
+  | { success: false; response: ReturnType<typeof apiError> };
 
 /**
  * Format Zod errors into clean, safe error details without echoing raw payloads or secrets.
@@ -62,7 +63,9 @@ function isValidOwnerRepo(val: string): boolean {
  */
 export async function parseRequestBody<T>(
   schema: z.ZodType<T>,
-  req?: NextRequest
+  req?: NextRequest,
+  route = '/api/unknown',
+  requestId = createRequestId()
 ): Promise<ValidationResult<T>> {
   let rawJson: unknown;
   try {
@@ -78,7 +81,7 @@ export async function parseRequestBody<T>(
     };
     return {
       success: false,
-      response: NextResponse.json(errorBody, { status: 400 }),
+      response: apiError(route, requestId, { status: 400, code: 'INVALID_INPUT', message: errorBody.message, details: { details: errorBody.details } }),
     };
   }
 
@@ -86,7 +89,7 @@ export async function parseRequestBody<T>(
   if (!result.success) {
     return {
       success: false,
-      response: NextResponse.json(formatZodError(result.error), { status: 400 }),
+      response: apiError(route, requestId, { status: 400, code: 'INVALID_INPUT', message: formatZodError(result.error).message, details: { details: formatZodError(result.error).details } }),
     };
   }
   return { success: true, data: result.data };
@@ -97,7 +100,9 @@ export async function parseRequestBody<T>(
  */
 export function parseQueryParams<T>(
   schema: z.ZodType<T>,
-  req?: NextRequest
+  req?: NextRequest,
+  route = '/api/unknown',
+  requestId = createRequestId()
 ): ValidationResult<T> {
   const searchParams = req?.nextUrl?.searchParams ?? new URLSearchParams();
   const rawObj: Record<string, string | string[]> = {};
@@ -118,7 +123,7 @@ export function parseQueryParams<T>(
   if (!result.success) {
     return {
       success: false,
-      response: NextResponse.json(formatZodError(result.error), { status: 400 }),
+      response: apiError(route, requestId, { status: 400, code: 'INVALID_INPUT', message: formatZodError(result.error).message, details: { details: formatZodError(result.error).details } }),
     };
   }
   return { success: true, data: result.data };

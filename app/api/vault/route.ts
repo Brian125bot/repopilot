@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { resolveDriver, VaultStoreError } from '@/lib/blueprint-vault-driver';
 import { Blueprint } from '@/types';
-import { logRouteError } from '@/lib/safe-log';
 import {
   parseRequestBody,
   parseQueryParams,
@@ -23,8 +23,9 @@ import {
  * and treat any non-OK response as "server store unavailable".
  */
 export async function GET(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const queryValidation = parseQueryParams(VaultGetQuerySchema, req);
+    const queryValidation = parseQueryParams(VaultGetQuerySchema, req, '/api/vault', requestId);
     if (!queryValidation.success) return queryValidation.response;
 
     const id = queryValidation.data.id?.trim() || '';
@@ -32,22 +33,21 @@ export async function GET(req: NextRequest) {
     if (id) {
       const blueprint = await driver.get(id);
       if (!blueprint) {
-        return NextResponse.json({ success: false, error: 'Blueprint not found.' }, { status: 404 });
+        return apiError('/api/vault', requestId, { status: 404, code: 'NOT_FOUND', message: 'Blueprint not found.' });
       }
       return NextResponse.json({ success: true, blueprint });
     }
     const blueprints = await driver.list();
     return NextResponse.json({ success: true, blueprints, driver: driver.name });
   } catch (error) {
-    logRouteError('/api/vault', error);
-    const message = error instanceof VaultStoreError ? error.message : 'Vault read failed.';
-    return NextResponse.json({ success: false, error: message }, { status: 502 });
+    return apiError('/api/vault', requestId, { status: 502, code: 'UPSTREAM_ERROR', message: error instanceof VaultStoreError ? error.message : 'Vault read failed.' });
   }
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(VaultPostBodySchema, req);
+    const bodyValidation = await parseRequestBody(VaultPostBodySchema, req, '/api/vault', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const blueprint = bodyValidation.data.blueprint as Blueprint;
@@ -56,27 +56,24 @@ export async function POST(req: NextRequest) {
     await driver.upsert(blueprint);
     return NextResponse.json({ success: true, blueprintId: blueprint.blueprintId, driver: driver.name });
   } catch (error) {
-    logRouteError('/api/vault', error);
-    const message = error instanceof VaultStoreError ? error.message : 'Vault write failed.';
-    return NextResponse.json({ success: false, error: message }, { status: 502 });
+    return apiError('/api/vault', requestId, { status: 502, code: 'UPSTREAM_ERROR', message: error instanceof VaultStoreError ? error.message : 'Vault write failed.' });
   }
 }
 
 export async function DELETE(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const queryValidation = parseQueryParams(VaultDeleteQuerySchema, req);
+    const queryValidation = parseQueryParams(VaultDeleteQuerySchema, req, '/api/vault', requestId);
     if (!queryValidation.success) return queryValidation.response;
 
     const id = queryValidation.data.id.trim();
     const driver = resolveDriver();
     const removed = await driver.remove(id);
     if (!removed) {
-      return NextResponse.json({ success: false, error: 'Blueprint not found.' }, { status: 404 });
+      return apiError('/api/vault', requestId, { status: 404, code: 'NOT_FOUND', message: 'Blueprint not found.' });
     }
     return NextResponse.json({ success: true, blueprintId: id });
   } catch (error) {
-    logRouteError('/api/vault', error);
-    const message = error instanceof VaultStoreError ? error.message : 'Vault delete failed.';
-    return NextResponse.json({ success: false, error: message }, { status: 502 });
+    return apiError('/api/vault', requestId, { status: 502, code: 'UPSTREAM_ERROR', message: error instanceof VaultStoreError ? error.message : 'Vault delete failed.' });
   }
 }

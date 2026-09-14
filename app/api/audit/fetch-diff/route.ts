@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
-import { logRouteError } from '@/lib/safe-log';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
 import { PRMetadata, GitHubStatusSummary } from '@/types';
 import {
@@ -14,8 +14,9 @@ import {
 import { parseRequestBody, AuditFetchDiffBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(AuditFetchDiffBodySchema, req);
+    const bodyValidation = await parseRequestBody(AuditFetchDiffBodySchema, req, '/api/audit/fetch-diff', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const {
@@ -81,13 +82,7 @@ export async function POST(req: NextRequest) {
       } else {
         const legacy = parseGitHubPRUrl(String(prUrl));
         if (!legacy) {
-          return NextResponse.json(
-            {
-              error:
-                'Invalid GitHub PR URL format. Expected: https://github.com/owner/repo/pull/123, owner/repo#123, or owner/repo plus a head branch.',
-            },
-            { status: 400 }
-          );
+          return apiError('/api/audit/fetch-diff', requestId, { status: 400, code: 'INVALID_INPUT', message: 'Invalid GitHub PR URL format. Expected: https://github.com/owner/repo/pull/123, owner/repo#123, or owner/repo plus a head branch.' });
         }
         prOwner = legacy.owner;
         prRepo = legacy.repo;
@@ -98,27 +93,13 @@ export async function POST(req: NextRequest) {
     if (!prNum && prOwner && prRepo && branch) {
       const found = await findPullRequestByHeadBranch(prOwner, prRepo, branch, githubPat);
       if (!found.ok) {
-        return NextResponse.json(
-          {
-            error: found.error,
-            prPending: found.prPending === true,
-            repo: `${prOwner}/${prRepo}`,
-            headBranch: branch,
-          },
-          { status: found.status || 404 }
-        );
+        return apiError('/api/audit/fetch-diff', requestId, { status: found.status || 404, code: 'NOT_FOUND', message: found.error, details: { prPending: found.prPending === true, repo: `${prOwner}/${prRepo}`, headBranch: branch } });
       }
       prNum = found.pull.number;
     }
 
     if (!prOwner || !prRepo || !prNum) {
-      return NextResponse.json(
-        {
-          error:
-            'Missing GitHub repository owner, repo, or pull request number. Provide a PR URL or a repo plus head branch.',
-        },
-        { status: 400 }
-      );
+      return apiError('/api/audit/fetch-diff', requestId, { status: 400, code: 'INVALID_INPUT', message: 'Missing GitHub repository owner, repo, or pull request number. Provide a PR URL or a repo plus head branch.' });
     }
 
     const githubHeaders: Record<string, string> = {
@@ -136,15 +117,7 @@ export async function POST(req: NextRequest) {
     if (!prRes.ok) {
       const errBody = await prRes.text();
       const isRateLimited = prRes.status === 403 && errBody.includes('API rate limit exceeded');
-      return NextResponse.json(
-        {
-          error: isRateLimited
-            ? 'GitHub API rate limit reached. Please provide a GitHub Personal Access Token in API Settings.'
-            : `Failed to fetch PR from GitHub (${prRes.status}): ${prRes.statusText}`,
-          details: errBody,
-        },
-        { status: prRes.status }
-      );
+      return apiError('/api/audit/fetch-diff', requestId, { status: prRes.status, code: 'UPSTREAM_ERROR', message: isRateLimited ? 'GitHub API rate limit reached. Please provide a GitHub Personal Access Token in API Settings.' : `Failed to fetch PR from GitHub (${prRes.status}): ${prRes.statusText}` });
     }
 
     const prData = await prRes.json();
@@ -179,15 +152,11 @@ export async function POST(req: NextRequest) {
           diffText = await publicRes.text();
         }
       } catch (e) {
-        console.warn('Fallback public diff fetch failed:', e);
       }
     }
 
     if (!diffText) {
-      return NextResponse.json(
-        { error: 'Could not retrieve git diff for this pull request.' },
-        { status: 404 }
-      );
+      return apiError('/api/audit/fetch-diff', requestId, { status: 404, code: 'NOT_FOUND', message: 'Could not retrieve git diff for this pull request.' });
     }
 
     // 3. Sanitize diff and compute blast radius stats
@@ -235,10 +204,6 @@ export async function POST(req: NextRequest) {
       githubStatus,
     });
   } catch (error) {
-    logRouteError('/api/audit/fetch-diff', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to fetch diff' },
-      { status: 500 }
-    );
+    return apiError('/api/audit/fetch-diff', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to fetch diff' });
   }
 }

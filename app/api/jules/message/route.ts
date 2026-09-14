@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
-import { logRouteError } from '@/lib/safe-log';
 import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
 
 /**
@@ -9,6 +9,7 @@ import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
  * automationMode. Fail-closed on missing key, id, or prompt.
  */
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
     const headerJulesKey = req.headers.get('x-jules-api-key');
     const julesApiKey =
@@ -16,17 +17,10 @@ export async function POST(req: NextRequest) {
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
 
     if (!julesApiKey) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            'No Google Jules API key configured. Provide an API key via request headers or environment variables.',
-        },
-        { status: 401 }
-      );
+      return apiError('/api/jules/message', requestId, { status: 401, code: 'UNAUTHORIZED', message: 'No Google Jules API key configured. Provide an API key via request headers or environment variables.' });
     }
 
-    const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req);
+    const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req, '/api/jules/message', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const { sessionId, prompt } = bodyValidation.data;
@@ -34,15 +28,7 @@ export async function POST(req: NextRequest) {
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 
     if (!result.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: result.error || `Google Jules API error (HTTP ${result.status})`,
-          status: result.status,
-          details: result.details,
-        },
-        { status: result.status || 502 }
-      );
+      return apiError('/api/jules/message', requestId, { status: result.status || 502, code: 'UPSTREAM_ERROR', message: result.error || `Google Jules API error (HTTP ${result.status})`, details: { status: result.status } });
     }
 
     return NextResponse.json({
@@ -52,13 +38,6 @@ export async function POST(req: NextRequest) {
       state: result.state,
     });
   } catch (error) {
-    logRouteError('/api/jules/message', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown message error.',
-      },
-      { status: 500 }
-    );
+    return apiError('/api/jules/message', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Unknown message error.' });
   }
 }

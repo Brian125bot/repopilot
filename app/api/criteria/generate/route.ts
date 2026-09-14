@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { generateAcceptanceCriteria } from '@/lib/gemini';
 import { fallbackBoundariesFromTree, validateAndFilterBoundaries } from '@/lib/prompt-compiler';
-import { logRouteError } from '@/lib/safe-log';
 import { RepoInspectionResult } from '@/types';
 import { parseRequestBody, CriteriaGenerateBodySchema } from '@/lib/validation';
 
@@ -11,8 +11,9 @@ const GENERATE_TREE_PATH_CAP = 500;
 const GENERATE_TREE_TOP_N = 40;
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(CriteriaGenerateBodySchema, req);
+    const bodyValidation = await parseRequestBody(CriteriaGenerateBodySchema, req, '/api/criteria/generate', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const { repo, objective, repoContext, mode = 'standard' } = bodyValidation.data;
@@ -84,13 +85,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ...result, rejectedGlobs });
   } catch (error: unknown) {
-    const err = error as { message?: string; status?: number };
-    logRouteError('/api/criteria/generate', err);
-    return NextResponse.json(
-      {
-        error: err.message || 'Failed to generate acceptance criteria via Gemini.',
-      },
-      { status: 500 }
-    );
+    return apiError('/api/criteria/generate', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to generate acceptance criteria via Gemini.' });
   }
 }
