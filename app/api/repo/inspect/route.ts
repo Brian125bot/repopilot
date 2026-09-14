@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { RepoInspectionResult } from '@/types';
-import { logRouteError } from '@/lib/safe-log';
 import { parseRequestBody, RepoInspectBodySchema } from '@/lib/validation';
 
 const TREE_CAP = 150;
@@ -43,8 +43,9 @@ function detectTestCommand(scripts: Record<string, string>, pm: string, deps: st
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(RepoInspectBodySchema, req);
+    const bodyValidation = await parseRequestBody(RepoInspectBodySchema, req, '/api/repo/inspect', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const { repo } = bodyValidation.data;
@@ -252,11 +253,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(inspection);
   } catch (error: unknown) {
-    const err = error as { message?: string };
-    logRouteError('/api/repo/inspect', err);
-    return NextResponse.json(
-      { error: err.message || 'Failed to inspect repository state.' },
-      { status: 500 }
-    );
+    return apiError('/api/repo/inspect', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to inspect repository state.' });
   }
 }

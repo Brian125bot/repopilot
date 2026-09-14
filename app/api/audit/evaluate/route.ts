@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { apiError, createRequestId } from '@/lib/api-error';
 import { evaluateDiffAgainstCriteria, MAX_EVALUATE_DIFF_CHARS } from '@/lib/gemini';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
 import { AcceptanceCriterion, AuditDiffFacts } from '@/types';
 import { unionUnauthorizedPaths } from '@/lib/scoring';
 import { evaluateFailurePayload } from '@/lib/evaluate-timeout';
-import { logRouteError } from '@/lib/safe-log';
 import {
   parseRequestBody,
   parseQueryParams,
@@ -17,15 +17,17 @@ export const maxDuration = 60;
 
 /** Presence probe so the Settings modal can show server-key status without spending a Gemini call. */
 export async function GET(req: NextRequest) {
-  const queryValidation = parseQueryParams(AuditEvaluateQuerySchema, req);
+  const requestId = createRequestId();
+  const queryValidation = parseQueryParams(AuditEvaluateQuerySchema, req, '/api/audit/evaluate', requestId);
   if (!queryValidation.success) return queryValidation.response;
 
   return NextResponse.json({ hasServerKey: Boolean(process.env.GEMINI_API_KEY?.trim()) });
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = createRequestId();
   try {
-    const bodyValidation = await parseRequestBody(AuditEvaluateBodySchema, req);
+    const bodyValidation = await parseRequestBody(AuditEvaluateBodySchema, req, '/api/audit/evaluate', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
     const { diff, criteria, objective, fileBoundaries, unauthorizedPaths, prMetadata } = bodyValidation.data;
@@ -112,8 +114,7 @@ export async function POST(req: NextRequest) {
       report,
     });
   } catch (error) {
-    logRouteError('/api/audit/evaluate', error);
     const failure = evaluateFailurePayload(error);
-    return NextResponse.json(failure.body, { status: failure.status });
+    return apiError('/api/audit/evaluate', requestId, { status: failure.status, code: 'REQUEST_FAILED', message: failure.body.error || 'Audit evaluation failed.', details: failure.body });
   }
 }

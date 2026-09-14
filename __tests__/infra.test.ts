@@ -9,11 +9,12 @@ describe('safe-log never leaks credentials', () => {
     const orig = console.error;
     console.error = err;
     try {
-      logRouteError('/api/x', new Error('boom x-jules-api-key=secret123'));
+      logRouteError('/api/x', { requestId: 'req-123', status: 500, code: 'INTERNAL_ERROR' });
       expect(err).toHaveBeenCalledTimes(1);
       const logged = String(err.mock.calls[0][0]);
       expect(logged).toContain('/api/x');
-      expect(logged).toContain('boom');
+      expect(logged).toContain('req-123');
+      expect(logged).not.toContain('secret');
     } finally {
       console.error = orig;
     }
@@ -24,7 +25,7 @@ describe('safe-log never leaks credentials', () => {
     const orig = console.error;
     console.error = err;
     try {
-      logRouteError('/api/x', 'string failure');
+      logRouteError('/api/x', { requestId: 'req-456', status: 400, code: 'INVALID_INPUT' });
       expect(err).toHaveBeenCalled();
     } finally {
       console.error = orig;
