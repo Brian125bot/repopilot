@@ -172,7 +172,7 @@ When a PR receives a **Needs Revision** or **Blocked** verdict, the operator pic
 
 ## Jules Prompt Engineering Playbook
 
-To maximize the first-pass accuracy of Google Jules, follow these battle-tested patterns:
+To maximize the first-pass quality of Google Jules, follow these battle-tested patterns:
 
 ### 1. The "Single Responsibility" Rule
 Agents succeed most when tasks are bounded to one cohesive concern. 

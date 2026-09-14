@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET as githubStatusGET } from '@/app/api/github/status/route';
 import { GET as julesSourcesGET } from '@/app/api/jules/sources/route';
@@ -16,7 +16,21 @@ describe('github status route', () => {
 });
 
 describe('jules sources/session/message validation', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  let prevJulesKey: string | undefined;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    prevJulesKey = process.env.JULES_API_KEY;
+    delete process.env.JULES_API_KEY;
+  });
+
+  afterEach(() => {
+    if (prevJulesKey !== undefined) {
+      process.env.JULES_API_KEY = prevJulesKey;
+    } else {
+      delete process.env.JULES_API_KEY;
+    }
+  });
 
   it('sources requires key (401 without)', async () => {
     const req = new NextRequest('http://localhost:3000/api/jules/sources');

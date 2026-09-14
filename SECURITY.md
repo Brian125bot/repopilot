@@ -2,6 +2,10 @@
 
 RepoPilot 1.0 is a **stateless hosted control plane**. The Next.js server does not persist API keys, blueprints, or audit reports.
 
+## Public Vercel deploy
+
+Public Production and Preview Vercel projects MUST leave `JULES_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_PAT` unset. Setting a shared provider key on a public Vercel deployment is a security blocker for v1 because every visitor would share one provider account. Visitors supply their own credentials via the in-app Settings modal, which transmits them via per-request headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-pat`).
+
 ## Where credentials live
 
 - **Browser `localStorage` only:** Jules API key, Gemini API key, and GitHub PAT are entered in Settings and stored in that browser (`repopilot_jules_key`, `repopilot_gemini_key`, `repopilot_github_pat`).
