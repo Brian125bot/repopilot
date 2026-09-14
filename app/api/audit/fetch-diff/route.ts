@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sanitizeUnifiedDiff } from '@/lib/diff-sanitizer';
 import { logRouteError } from '@/lib/safe-log';
 import { extractBlueprintFromPRBody } from '@/lib/prompt-compiler';
-import { PRMetadata } from '@/types';
+import { PRMetadata, GitHubStatusSummary } from '@/types';
 import {
   fetchPullRequestChecks,
   fetchPullRequestMergeability,
@@ -11,18 +11,28 @@ import {
   parseGitHubPRUrl,
   parseOwnerRepo,
 } from '@/lib/github';
-import { GitHubStatusSummary } from '@/types';
+import { parseRequestBody, AuditFetchDiffBodySchema } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { prUrl, owner, repo, pullNumber, headBranch, branchName, rawDiff, fileBoundaries = [] } = body;
+    const bodyValidation = await parseRequestBody(AuditFetchDiffBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
+
+    const {
+      prUrl,
+      owner,
+      repo,
+      pullNumber,
+      headBranch,
+      branchName,
+      rawDiff,
+      fileBoundaries = [],
+    } = bodyValidation.data;
 
     const headerGithubPat = req.headers.get('x-github-pat');
     const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
     // Case 1: Direct raw diff supplied (e.g., local testing or pasted diff).
-    // No PR exists, so physical merge readiness is unavailable (null).
     if (rawDiff && typeof rawDiff === 'string' && rawDiff.trim().length > 0) {
       const sanitized = sanitizeUnifiedDiff(rawDiff, fileBoundaries);
       return NextResponse.json({
@@ -140,7 +150,6 @@ export async function POST(req: NextRequest) {
     const prData = await prRes.json();
     const embeddedBlueprint = extractBlueprintFromPRBody(prData.body || '');
 
-    // Merge boundaries: prioritize blueprint boundaries if present
     const effectiveBoundaries =
       embeddedBlueprint?.fileBoundaries && embeddedBlueprint.fileBoundaries.length > 0
         ? embeddedBlueprint.fileBoundaries
@@ -161,7 +170,6 @@ export async function POST(req: NextRequest) {
     if (diffRes.ok) {
       diffText = await diffRes.text();
     } else {
-      // Fallback to public diff URL if API route failed
       try {
         const publicDiffUrl = `https://github.com/${prOwner}/${prRepo}/pull/${prNum}.diff`;
         const publicRes = await fetch(publicDiffUrl, {
@@ -185,8 +193,7 @@ export async function POST(req: NextRequest) {
     // 3. Sanitize diff and compute blast radius stats
     const sanitizedResult = sanitizeUnifiedDiff(diffText, effectiveBoundaries);
 
-    // 4. Physical merge readiness (best-effort; never fails ingestion).
-    // Head SHA drives check runs; the pulls endpoint gives mergeable state.
+    // 4. Physical merge readiness
     const headSha = typeof prData.head?.sha === 'string' ? prData.head.sha : '';
     const [checks, mergeability] = await Promise.all([
       fetchPullRequestChecks(prOwner, prRepo, headSha, githubPat),

@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveDriver, VaultStoreError } from '@/lib/blueprint-vault-driver';
 import { Blueprint } from '@/types';
 import { logRouteError } from '@/lib/safe-log';
+import {
+  parseRequestBody,
+  parseQueryParams,
+  VaultGetQuerySchema,
+  VaultPostBodySchema,
+  VaultDeleteQuerySchema,
+} from '@/lib/validation';
 
 /**
  * Isomorphic blueprint vault (server side of the dual-runtime store).
@@ -17,7 +24,10 @@ import { logRouteError } from '@/lib/safe-log';
  */
 export async function GET(req: NextRequest) {
   try {
-    const id = req.nextUrl.searchParams.get('id')?.trim() || '';
+    const queryValidation = parseQueryParams(VaultGetQuerySchema, req);
+    if (!queryValidation.success) return queryValidation.response;
+
+    const id = queryValidation.data.id?.trim() || '';
     const driver = resolveDriver();
     if (id) {
       const blueprint = await driver.get(id);
@@ -37,14 +47,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { blueprint?: Blueprint };
-    const blueprint = body.blueprint;
-    if (!blueprint || typeof blueprint.blueprintId !== 'string' || !blueprint.blueprintId.trim()) {
-      return NextResponse.json(
-        { success: false, error: 'A blueprint with a non-empty blueprintId is required.' },
-        { status: 400 }
-      );
-    }
+    const bodyValidation = await parseRequestBody(VaultPostBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
+
+    const blueprint = bodyValidation.data.blueprint as Blueprint;
+
     const driver = resolveDriver();
     await driver.upsert(blueprint);
     return NextResponse.json({ success: true, blueprintId: blueprint.blueprintId, driver: driver.name });
@@ -57,13 +64,10 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const id = req.nextUrl.searchParams.get('id')?.trim() || '';
-    if (!id) {
-      return NextResponse.json(
-        { success: false, error: 'A blueprint id query parameter is required.' },
-        { status: 400 }
-      );
-    }
+    const queryValidation = parseQueryParams(VaultDeleteQuerySchema, req);
+    if (!queryValidation.success) return queryValidation.response;
+
+    const id = queryValidation.data.id.trim();
     const driver = resolveDriver();
     const removed = await driver.remove(id);
     if (!removed) {

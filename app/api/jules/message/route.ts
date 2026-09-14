@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
 import { logRouteError } from '@/lib/safe-log';
-
-interface MessageRequestBody {
-  sessionId?: string;
-  prompt?: string;
-}
+import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
 
 /**
  * Sends a follow-up message to an existing Jules session.
@@ -14,10 +10,6 @@ interface MessageRequestBody {
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as MessageRequestBody;
-    const sessionId = body.sessionId?.trim() || '';
-    const prompt = body.prompt?.trim() || '';
-
     const headerJulesKey = req.headers.get('x-jules-api-key');
     const julesApiKey =
       sanitizeJulesCredential(headerJulesKey || '') ||
@@ -34,19 +26,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!sessionId) {
-      return NextResponse.json(
-        { success: false, error: 'Session ID is required. Provide sessionId.' },
-        { status: 400 }
-      );
-    }
+    const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
 
-    if (!prompt) {
-      return NextResponse.json(
-        { success: false, error: 'Prompt is required. Provide prompt.' },
-        { status: 400 }
-      );
-    }
+    const { sessionId, prompt } = bodyValidation.data;
 
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 

@@ -5,40 +5,34 @@ import { AcceptanceCriterion, AuditDiffFacts } from '@/types';
 import { unionUnauthorizedPaths } from '@/lib/scoring';
 import { evaluateFailurePayload } from '@/lib/evaluate-timeout';
 import { logRouteError } from '@/lib/safe-log';
+import {
+  parseRequestBody,
+  parseQueryParams,
+  AuditEvaluateBodySchema,
+  AuditEvaluateQuerySchema,
+} from '@/lib/validation';
 
 /** Next.js requires a numeric literal here (must match EVALUATE_MAX_DURATION_SECONDS). */
 export const maxDuration = 60;
 
 /** Presence probe so the Settings modal can show server-key status without spending a Gemini call. */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const queryValidation = parseQueryParams(AuditEvaluateQuerySchema, req);
+  if (!queryValidation.success) return queryValidation.response;
+
   return NextResponse.json({ hasServerKey: Boolean(process.env.GEMINI_API_KEY?.trim()) });
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { diff, criteria, objective, fileBoundaries, unauthorizedPaths, prMetadata } = body;
+    const bodyValidation = await parseRequestBody(AuditEvaluateBodySchema, req);
+    if (!bodyValidation.success) return bodyValidation.response;
 
-    if (!diff || typeof diff !== 'string' || diff.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Cannot evaluate empty diff. Please provide a valid sanitized diff.' },
-        { status: 400 }
-      );
-    }
-
-    if (!criteria || !Array.isArray(criteria) || criteria.length === 0) {
-      return NextResponse.json(
-        { error: 'Acceptance criteria matrix is required for audit evaluation.' },
-        { status: 400 }
-      );
-    }
+    const { diff, criteria, objective, fileBoundaries, unauthorizedPaths, prMetadata } = bodyValidation.data;
 
     const headerGeminiKey = req.headers.get('x-gemini-api-key');
     const customApiKey = headerGeminiKey || undefined;
 
-    // Union is add-only: re-derived hits ∪ client extras ∪ (later) model flags.
-    // The client list is the only witness for lockfile/secret hunks stripped
-    // from the sanitized text, so an empty client list never clears re-derived hits.
     const clientPaths = Array.isArray(unauthorizedPaths) ? unauthorizedPaths : [];
     let derivedPaths: string[] = [];
     let touchedPaths: string[] = [];
@@ -79,8 +73,6 @@ export async function POST(req: NextRequest) {
         touchedPaths: touchedPaths.length > 0 ? touchedPaths : diffFacts.touchedPaths,
       };
     } else if (forcedPaths.length > 0) {
-      // Non-git diff (e.g. already-sanitized text): still carry the client union
-      // so severity grounding and Next-decision see the same violation count.
       diffFacts = {
         filesTouched: 0,
         linesAdded: 0,
@@ -106,7 +98,6 @@ export async function POST(req: NextRequest) {
 
     if (diffFacts && !report.diffFacts) report.diffFacts = diffFacts;
 
-    // Attach PR context if available
     if (prMetadata) {
       report.prTitle = prMetadata.title;
       report.prAuthor = prMetadata.author;

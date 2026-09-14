@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listJulesSources, sanitizeJulesCredential } from '@/lib/jules';
+import { parseQueryParams, JulesSourcesQuerySchema } from '@/lib/validation';
 
 export async function GET(req: NextRequest) {
+  const queryValidation = parseQueryParams(JulesSourcesQuerySchema, req);
+  if (!queryValidation.success) return queryValidation.response;
+
   try {
-    const headerJulesKey = req.headers.get('x-jules-api-key');
+    const headerJulesKey = req?.headers.get('x-jules-api-key');
     const julesApiKey =
       sanitizeJulesCredential(headerJulesKey || '') ||
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
@@ -17,7 +21,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Paginated via lib so workspaces past the first API page still list fully.
     const listed = await listJulesSources(julesApiKey);
 
     if (listed.ok) {
