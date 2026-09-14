@@ -188,6 +188,30 @@ export function githubRequestHeaders(token?: string | null): Record<string, stri
   return headers;
 }
 
+/**
+ * COR-40: normalize a PR head SHA to trimmed form, or null when missing.
+ * Accepts 40-char hex (and short SHAs) but never throws — empty yields null.
+ */
+export function normalizeHeadSha(sha?: string | null): string | null {
+  const clean = (sha || '').trim();
+  return clean ? clean : null;
+}
+
+/**
+ * COR-40: true when a live head SHA has drifted from the audited SHA.
+ * Comparison is case-insensitive; missing either side is never stale
+ * (missing audited is a separate blocked state, not drift).
+ */
+export function isHeadStale(
+  auditedHeadSha?: string | null,
+  liveHeadSha?: string | null
+): boolean {
+  const audited = normalizeHeadSha(auditedHeadSha);
+  const live = normalizeHeadSha(liveHeadSha);
+  if (!audited || !live) return false;
+  return audited.toLowerCase() !== live.toLowerCase();
+}
+
 export function parseGitHubPRUrl(
   input: string
 ): { owner: string; repo: string; pullNumber: number } | null {

@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
         isCustomDiff: true,
         sanitizedResult: sanitized,
         githubStatus: null as GitHubStatusSummary | null,
+        headSha: null,
         pr: {
           title: 'Manual Diff / Local Ingestion',
           number: 0,
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
           htmlUrl: '#',
           baseBranch: 'main',
           headBranch: 'feature-branch',
+          headSha: null,
           state: 'open',
           body: '',
           embeddedBlueprint: null,
@@ -183,6 +185,7 @@ export async function POST(req: NextRequest) {
         .map((r) => ({ name: r.name, detailsUrl: r.detailsUrl })),
     };
 
+    const normalizedHeadSha = typeof prData.head?.sha === 'string' && prData.head.sha.trim() ? prData.head.sha.trim() : null;
     const prMetadata: PRMetadata = {
       title: prData.title || `PR #${prNum}`,
       number: prNum,
@@ -191,6 +194,7 @@ export async function POST(req: NextRequest) {
       htmlUrl: prData.html_url || `https://github.com/${prOwner}/${prRepo}/pull/${prNum}`,
       baseBranch: prData.base?.ref || 'main',
       headBranch: prData.head?.ref || 'feature',
+      headSha: normalizedHeadSha,
       state: prData.state || 'open',
       body: prData.body || '',
       embeddedBlueprint,
@@ -202,6 +206,7 @@ export async function POST(req: NextRequest) {
       pr: prMetadata,
       sanitizedResult,
       githubStatus,
+      headSha: normalizedHeadSha,
     });
   } catch (error) {
     return apiError('/api/audit/fetch-diff', requestId, { status: 500, code: 'INTERNAL_ERROR', message: 'Failed to fetch diff' });

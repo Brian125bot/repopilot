@@ -402,6 +402,8 @@ export function AuditEvaluationStage({
     setIsFetchingDiff(true);
 
     try {
+      // COR-40 demo lock: synthetic head SHA so the demo remediation path exercises the SHA gate.
+      const demoHeadSha = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
       const demoBlueprint: Blueprint = {
         blueprintId: 'bp_demo_rate_limiter',
         repo: 'acme-corp/api-gateway',
@@ -418,6 +420,7 @@ export function AuditEvaluationStage({
           { id: '5', text: 'Zero modifications to out-of-scope files or root dependencies', category: 'constraint' },
         ],
         createdAt: new Date().toISOString(),
+        auditedHeadSha: demoHeadSha,
       };
 
       // Call fetch-diff with demo diff
@@ -440,6 +443,7 @@ export function AuditEvaluationStage({
         htmlUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
         baseBranch: 'main',
         headBranch: 'jules/rate-limiter-redis',
+        headSha: demoHeadSha,
         state: 'open',
         body: `<!-- AUDIT_BLUEPRINT: ${JSON.stringify(demoBlueprint)} -->`,
         embeddedBlueprint: demoBlueprint,
@@ -566,6 +570,10 @@ export function AuditEvaluationStage({
         const completed = data.report as GeminiAuditReport;
         const gradeVerdict = completed.grade?.verdict ?? completed.mergeVerdict.status;
         const gradeScore = completed.grade?.overallScore ?? completed.mergeVerdict.overallScore;
+        // COR-40: lock the graded commit. Null blocks remediation until re-evaluate.
+        const auditedHeadSha =
+          (completed.auditedHeadSha || (data as { auditedHeadSha?: string | null }).auditedHeadSha || prMetadata?.headSha || '').trim() || null;
+        (completed as GeminiAuditReport).auditedHeadSha = auditedHeadSha;
         updateStoredOutcomeRow(
           { blueprintId: hydratedBlueprint.blueprintId, sessionId: hydratedBlueprint.sessionId },
           {
@@ -578,17 +586,22 @@ export function AuditEvaluationStage({
             unmetIds: (completed.criteriaResults || [])
               .filter((c) => c.status !== 'MET')
               .map((c) => c.id),
+            auditedHeadSha,
           }
         );
         // Outcome memory: attach the compact brief so remediation can continue
         // from it (in-memory + vault, without disturbing the active hydration).
-        const briefed: Blueprint = {
+        const briefedBase: Blueprint = {
           ...hydratedBlueprint,
           prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+          auditedHeadSha,
+        };
+        const briefed: Blueprint = {
+          ...briefedBase,
           lastBrief: buildFailureBrief(
             completed,
             {
-              ...hydratedBlueprint,
+              ...briefedBase,
               prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
             },
             sanitizedResult.stats?.unauthorizedPaths || []

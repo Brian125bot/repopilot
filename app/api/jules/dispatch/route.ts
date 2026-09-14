@@ -32,7 +32,21 @@ export async function POST(req: NextRequest) {
       repoContext,
       testCommand = '',
       prNumber,
+      auditedHeadSha: rawAuditedHeadSha,
+      currentHeadSha: rawCurrentHeadSha,
     } = bodyValidation.data;
+
+    // COR-40: defense-in-depth — remediation is locked to the audited commit.
+    if (isRemediation) {
+      const audited = (rawAuditedHeadSha || '').trim();
+      if (!audited) {
+        return apiError('/api/jules/dispatch', requestId, { status: 400, code: 'INVALID_INPUT', message: 'Remediation blocked — re-evaluate to lock audited head SHA.' });
+      }
+      const current = (rawCurrentHeadSha || '').trim();
+      if (current && current.toLowerCase() !== audited.toLowerCase()) {
+        return apiError('/api/jules/dispatch', requestId, { status: 409, code: 'INVALID_INPUT', message: 'Head moved since audit — re-evaluate.' });
+      }
+    }
 
     const explicitStartingBranch = startingBranch || explicitStartingBranchArg;
 
@@ -197,6 +211,7 @@ export async function POST(req: NextRequest) {
       sessionId = `dry_${blueprintId}`;
     }
 
+    const normalizedAuditedHeadSha = (rawAuditedHeadSha || '').trim() || null;
     const completeBlueprint: Blueprint = {
       blueprintId,
       repo: cleanRepo,
@@ -214,6 +229,7 @@ export async function POST(req: NextRequest) {
       prUrl: undefined,
       prTitle: undefined,
       isRemediation,
+      ...(normalizedAuditedHeadSha ? { auditedHeadSha: normalizedAuditedHeadSha } : {}),
     };
 
     return NextResponse.json({

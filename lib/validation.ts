@@ -162,6 +162,7 @@ export const AuditEvaluateBodySchema = z.object({
       htmlUrl: z.string().optional(),
       baseBranch: z.string().optional(),
       headBranch: z.string().optional(),
+      headSha: z.string().trim().min(1).optional().nullable(),
     })
     .optional(),
 });
@@ -236,6 +237,8 @@ export const JulesDispatchBodySchema = z
     testCommand: z.string().optional(),
     prNumber: z.union([z.number(), z.string()]).optional(),
     prUrl: z.string().optional(),
+    auditedHeadSha: z.string().trim().min(1).optional().nullable(),
+    currentHeadSha: z.string().trim().min(1).optional().nullable(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -256,6 +259,27 @@ export const JulesDispatchBodySchema = z
         path: ['branchName'],
         message: 'Remediation requires startingBranch = audited PR head',
       });
+    }
+
+    // COR-40: remediation is locked to the audited commit, not the drifted tip.
+    if (isRemediation) {
+      const audited = (data.auditedHeadSha || '').trim();
+      if (!audited) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['auditedHeadSha'],
+          message: 'Remediation blocked — re-evaluate to lock audited head SHA.',
+        });
+      } else {
+        const current = (data.currentHeadSha || '').trim();
+        if (current && current.toLowerCase() !== audited.toLowerCase()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['currentHeadSha'],
+            message: 'Head moved since audit — re-evaluate.',
+          });
+        }
+      }
     }
 
     const rawCriteria = data.criteria;

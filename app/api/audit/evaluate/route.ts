@@ -100,6 +100,11 @@ export async function POST(req: NextRequest) {
 
     if (diffFacts && !report.diffFacts) report.diffFacts = diffFacts;
 
+    const auditedHeadSha =
+      typeof prMetadata?.headSha === 'string' && prMetadata.headSha.trim()
+        ? prMetadata.headSha.trim()
+        : null;
+
     if (prMetadata) {
       report.prTitle = prMetadata.title;
       report.prAuthor = prMetadata.author;
@@ -108,10 +113,13 @@ export async function POST(req: NextRequest) {
       report.baseBranch = prMetadata.baseBranch;
       report.headBranch = prMetadata.headBranch;
     }
+    // COR-40: lock the graded commit. Null blocks remediation until re-evaluate.
+    report.auditedHeadSha = auditedHeadSha;
 
     return NextResponse.json({
       success: true,
       report,
+      auditedHeadSha,
     });
   } catch (error) {
     const failure = evaluateFailurePayload(error);
