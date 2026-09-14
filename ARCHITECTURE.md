@@ -22,7 +22,8 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
 ## 2. Component Taxonomy
 
 ### 2.1 Stage 1: Intake & Dispatch (`IntakeDispatchStage.tsx`)
-- **Responsibility:** Captures developer intent, target repository, starting/target branches, file boundaries, and acceptance criteria.
+- **Responsibility:** Captures developer intent, target repository, starting/target branches, file boundaries, and orchestrates criteria generation.
+- **Criteria Generation:** Generates structured acceptance criteria based on issue details or goals, ensuring boundaries are mapped accurately to the repository file tree.
 - **State Serialization:** Compiles requirements into a standard markdown contract embedded with a machine-readable blueprint comment:
   ```html
   <!-- AUDIT_BLUEPRINT
@@ -33,9 +34,11 @@ RepoPilot implements a **State-Hydrated Decoupled Lifecycle**:
   }
   -->
   ```
-- **Dispatch Engine (`/api/jules/dispatch`):** Binds `owner/repo` to a real `sources[].name` via `GET /v1alpha/sources` (fail-closed 404 `Source not connected in Jules`, never invents `sources/github/...`). First-pass requests `AUTO_CREATE_PR`; remediation omits `automationMode` with `startingBranch=headBranch`. Returns `Blueprint{sourceName,sessionUrl,sessionState}` with honest empty `prUrl`; poll via `GET /api/jules/session?id=`. Supports a fallback dry-run mode that generates local blueprints for offline testing.
+- **Jules Dispatch & Session Handling (`/api/jules/dispatch`, `/api/jules/session`):** Binds `owner/repo` to a real `sources[].name` via `GET /v1alpha/sources` (fail-closed 404 `Source not connected in Jules`, never invents `sources/github/...`). First-pass requests `AUTO_CREATE_PR`; remediation omits `automationMode` with `startingBranch=headBranch`. Returns `Blueprint{sourceName,sessionUrl,sessionState}` with honest empty `prUrl`; poll via `GET /api/jules/session?id=`. Supports a fallback dry-run mode that generates local blueprints for offline testing. Active sessions and logs are maintained for seamless continuation.
+- **Blueprint Vault Storage:** Active and historical blueprint contracts are seamlessly written into and retrieved from a Blueprint Vault, utilizing local `.repopilot/vault.json` or remote storage as configured.
 
 ### 2.2 Stage 2: Audit & Remediation (`AuditEvaluationStage.tsx` & `MergeScorecard.tsx`)
+- **Audit Evaluation:** Comprehensively evaluates the generated PR diff against structured criteria and scoped boundaries.
 - **Responsibility:** Evaluates candidate pull requests against the original contract.
 - **State Hydration:**
   - *Primary mechanism:* Extracts `<!-- AUDIT_BLUEPRINT -->` comment directly from the PR body via GitHub API.

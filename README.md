@@ -21,7 +21,7 @@ RepoPilot **1.0.1** documentation:
 - 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: Settings keys → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: Architecture, diff parsing, glob compilation, hydration, Gemini schema, threat model.
-- 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally: `npm ci && npm test && npx tsc --noEmit`.
+- 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally: `npm ci && npm test` (runs vitest) `&& npm run lint && npm run build && npx tsc --noEmit`.
 - 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
 - 🔐 **[SECURITY.md](./SECURITY.md)**: Browser localStorage keys; the server persists nothing.
 - 📝 **[CHANGELOG](./CHANGELOG.md)**: 1.0.1 scope and 1.0.0 history.
@@ -131,7 +131,7 @@ RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test 
 The sole authoritative acceptance gate for RepoPilot is local execution:
 
 ```bash
-npm ci && npm test && npx tsc --noEmit
+npm ci && npm test && npm run lint && npm run build && npx tsc --noEmit
 ```
 
 - **No Remote CI**: GitHub Actions CI workflows are not utilized and continuous integration is intentionally omitted.
@@ -268,6 +268,18 @@ Fetches a GitHub pull request diff, parses commit hunks, and applies noise-reduc
 
 ### `POST /api/audit/evaluate`
 Audits the sanitized pull request diff against declared acceptance criteria and returns a structured scorecard. Accepts `unauthorizedPaths: string[]` from the sanitizer — any entry forces `scopeIntegrity.strictlyInScope=false` via `forceScopeIntegrity` (empty = clean, omitted = unverified).
+
+### `POST /api/criteria/generate`
+Generates structured acceptance criteria from an issue description or objective. Validates against the actual repository file tree to reject hallucinations.
+
+### `POST /api/jules/message`
+Posts a follow-up message to an existing Jules session, typically containing the FailureBrief to trigger a remediation cycle on the same branch.
+
+### `POST /api/repo/inspect`
+Inspects the repository's file tree and detects framework signatures, feeding boundary generation and validating criteria paths.
+
+### `GET /api/vault`, `POST /api/vault`, `DELETE /api/vault`
+Manages the Blueprint Vault for storing and retrieving active session contracts. Backed by local `.repopilot/vault.json` or Upstash REST.
 
 ---
 

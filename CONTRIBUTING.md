@@ -8,10 +8,10 @@ Thank you for your interest in contributing to RepoPilot!
 All pull requests and branch contributions must be validated locally prior to merging:
 
 ```bash
-npm ci && npm test && npx tsc --noEmit
+npm ci && npm test && npm run lint && npm run build && npx tsc --noEmit
 ```
 
-- **Local Verification Gate**: Execute `npm test` and `npx tsc --noEmit` locally to confirm all unit tests pass and TypeScript types compile cleanly without errors.
+- **Local Verification Gate**: Execute `npm test` (vitest run), `npm run lint`, `npm run build`, and `npx tsc --noEmit` locally to confirm all unit tests pass, linting checks out, builds complete successfully, and TypeScript types compile cleanly without errors.
 - **No Remote CI Execution**: Remote automated CI runs (such as GitHub Actions) are not executed by this repository. GitHub Actions workflows were permanently removed due to runner billing constraints.
 - **Authoritative Gate**: Local execution is the sole authoritative acceptance gate for contributions to `main` and feature branches. Historical status checks on older commits are obsolete and do not reflect current branch health.
 
