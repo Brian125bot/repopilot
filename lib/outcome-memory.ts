@@ -5,6 +5,13 @@ export const MAX_REQUIRED_FIXES = 7;
 export const MAX_CONTINUATION_CHARS = 4000;
 export const OUTCOME_LOG_KEY = 'repopilot_outcome_log';
 export const MAX_OUTCOME_ROWS = 50;
+const TERMINAL_JULES_SESSION_STATES = new Set([
+  'COMPLETED',
+  'FAILED',
+  'CANCELED',
+  'CANCELLED',
+  'EXPIRED',
+]);
 
 export interface OutcomeLogRow {
   blueprintId: string;
@@ -214,13 +221,16 @@ export function compileContinuationPrompt(input: {
  */
 export function shouldOfferContinueSession(
   verdict: FailureBrief['verdict'] | GeminiAuditReport['mergeVerdict']['status'] | string | null | undefined,
-  blueprint?: Pick<Blueprint, 'sessionId'> | null,
+  blueprint?: Pick<Blueprint, 'sessionId' | 'sessionState'> | null,
   recentSessionId?: string | null
 ): boolean {
   const actionable = verdict === 'NEEDS_REVISION' || verdict === 'BLOCKED';
   const sessionId =
     (recentSessionId || '').trim() || (blueprint?.sessionId || '').trim();
-  return actionable && sessionId.length > 0;
+  const sessionState = (recentSessionId ? '' : blueprint?.sessionState || '').trim().toUpperCase();
+  const isLiveJulesSession = sessionId.startsWith('sessions/');
+  const isTerminal = TERMINAL_JULES_SESSION_STATES.has(sessionState);
+  return actionable && isLiveJulesSession && !isTerminal;
 }
 
 /**
@@ -234,6 +244,24 @@ export function resolveContinueSessionId(
   const id =
     (recentSessionId || '').trim() || (blueprint?.sessionId || '').trim();
   return id ? id : null;
+}
+
+/**
+ * Rebind a remediation blueprint to the session that Jules just created.
+ * This intentionally replaces (rather than falls back to) every session
+ * field, so a closed source session cannot remain attached after handoff.
+ */
+export function applyNewRemediationSession(
+  blueprint: Blueprint,
+  session: { sessionId: string; sessionUrl?: string | null; sessionState?: string | null }
+): Blueprint {
+  return {
+    ...blueprint,
+    sessionId: session.sessionId,
+    sessionUrl: session.sessionUrl || undefined,
+    sessionState: session.sessionState || undefined,
+    isRemediation: true,
+  };
 }
 
 /**

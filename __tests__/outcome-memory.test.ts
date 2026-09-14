@@ -4,6 +4,7 @@ import {
   buildFailureBrief,
   compileContinuationPrompt,
   extractPathsFromReferences,
+  applyNewRemediationSession,
   resolveContinueSessionId,
   shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
@@ -247,7 +248,7 @@ describe('shouldOfferContinueSession / resolveContinueSessionId', () => {
   const withoutSession = { sessionId: '' };
   const whitespaceSession = { sessionId: '   ' };
 
-  it('offers continue only for NEEDS_REVISION/BLOCKED with a session id', () => {
+  it('offers continue only for actionable audits with a live Jules session id', () => {
     expect(shouldOfferContinueSession('NEEDS_REVISION', withSession)).toBe(true);
     expect(shouldOfferContinueSession('BLOCKED', withSession)).toBe(true);
     expect(shouldOfferContinueSession('READY_TO_MERGE', withSession)).toBe(false);
@@ -255,6 +256,18 @@ describe('shouldOfferContinueSession / resolveContinueSessionId', () => {
     expect(shouldOfferContinueSession('BLOCKED', whitespaceSession)).toBe(false);
     expect(shouldOfferContinueSession('BLOCKED', null)).toBe(false);
     expect(shouldOfferContinueSession(null, withSession)).toBe(false);
+  });
+
+  it.each(['COMPLETED', 'FAILED', 'CANCELED', 'CANCELLED', 'EXPIRED'])(
+    'refuses continue when the Jules session is terminal: %s',
+    (sessionState) => {
+      expect(shouldOfferContinueSession('NEEDS_REVISION', { sessionId: 'sessions/abc123', sessionState })).toBe(false);
+    }
+  );
+
+  it('refuses legacy sess_ ids and permits an in-progress sessions/ id', () => {
+    expect(shouldOfferContinueSession('BLOCKED', { sessionId: 'sess_legacy', sessionState: 'IN_PROGRESS' })).toBe(false);
+    expect(shouldOfferContinueSession('BLOCKED', { sessionId: 'sessions/live_123', sessionState: 'IN_PROGRESS' })).toBe(true);
   });
 
   it('falls back to a recently dispatched session id', () => {
@@ -267,5 +280,21 @@ describe('shouldOfferContinueSession / resolveContinueSessionId', () => {
     expect(resolveContinueSessionId(withSession, null)).toBe('sessions/abc123');
     expect(resolveContinueSessionId(withoutSession, null)).toBeNull();
     expect(resolveContinueSessionId(null, null)).toBeNull();
+  });
+});
+
+describe('applyNewRemediationSession', () => {
+  it('replaces all persisted session fields after fallback creates a new session', () => {
+    const rebound = applyNewRemediationSession(blueprint, {
+      sessionId: 'sessions/remediation_456',
+      sessionUrl: 'https://jules.google.com/session/remediation_456',
+      sessionState: 'QUEUED',
+    });
+
+    expect(rebound.sessionId).toBe('sessions/remediation_456');
+    expect(rebound.sessionId).not.toBe(blueprint.sessionId);
+    expect(rebound.sessionUrl).toBe('https://jules.google.com/session/remediation_456');
+    expect(rebound.sessionState).toBe('QUEUED');
+    expect(rebound.blueprintId).toBe(blueprint.blueprintId);
   });
 });

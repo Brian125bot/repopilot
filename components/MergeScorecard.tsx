@@ -47,6 +47,7 @@ import {
   buildFailureBrief,
   buildOutcomeRow,
   compileContinuationPrompt,
+  applyNewRemediationSession,
   recordOutcomeRow,
   resolveContinueSessionId,
   shouldOfferContinueSession,
@@ -128,8 +129,11 @@ export function MergeScorecard({
     if (prMetadata?.headBranch && prMetadata.headBranch.trim()) {
       return prMetadata.headBranch.trim();
     }
+    if (blueprint?.branchName && blueprint.branchName.trim()) {
+      return blueprint.branchName.trim();
+    }
     return 'main';
-  }, [prMetadata]);
+  }, [prMetadata, blueprint]);
 
   // Resolve clean repo string
   const cleanRepo = React.useMemo(() => {
@@ -388,7 +392,18 @@ export function MergeScorecard({
         targetBranch: data.targetBranch || auditedBranch,
       });
 
-      if (onSaveBlueprint && data.blueprint) {
+      // A fallback session replaces the audited blueprint's old/dead session
+      // identity. Keep its continuation brief and audited branch contract.
+      if (onSaveBlueprint && blueprint && data.sessionId) {
+        onSaveBlueprint({
+          ...applyNewRemediationSession(blueprint, {
+            sessionId: data.sessionId,
+            sessionUrl: data.sessionUrl || sessionUrl,
+            sessionState: data.sessionState || data.blueprint?.sessionState,
+          }),
+          compiledPrompt: promptToSend,
+        });
+      } else if (onSaveBlueprint && data.blueprint) {
         onSaveBlueprint(data.blueprint);
       }
 
@@ -842,23 +857,35 @@ export function MergeScorecard({
                     )}
                   </>
                 ) : showNewSessionStandalone ? (
-                  <Button
-                    onClick={handleNewSessionWithBrief}
-                    disabled={isDispatching || !continuePrompt}
-                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
-                  >
-                    {isDispatching ? (
-                      <>
-                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
-                        <span>Creating new session...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-3.5 w-3.5 fill-current" />
-                        <span>New session with brief</span>
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex flex-col items-end gap-1.5">
+                    <div className="flex items-center gap-2.5">
+                      <Button
+                        disabled
+                        className="bg-white/10 text-indigo-200 font-bold text-xs h-9 px-4 gap-2 border border-white/20 opacity-70"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        <span>Continue Jules session</span>
+                      </Button>
+                      <Button
+                        onClick={handleNewSessionWithBrief}
+                        disabled={isDispatching || !continuePrompt}
+                        className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs h-9 px-5 gap-2 shadow-md transition-all active:scale-95"
+                      >
+                        {isDispatching ? (
+                          <>
+                            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                            <span>Creating new session...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5 fill-current" />
+                            <span>New session with brief</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-amber-200">Session is closed — open a new remediation on the same head.</p>
+                  </div>
                 ) : (
                   <Button
                     onClick={() => handleDispatchRemediationToJules()}

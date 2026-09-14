@@ -134,6 +134,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
 
     expect(data.success).toBe(true);
     expect(data.targetBranch).toBe('jules/pr-42-remediation-branch');
+    expect(data.sessionState).toBe('ACTIVE');
 
     // Verify Jules dispatch payload (sessions call, not the sources binding call)
     const julesCall = fetchSpy.mock.calls.find(([callUrl]) =>
