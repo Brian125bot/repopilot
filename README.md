@@ -125,6 +125,18 @@ RepoPilot **1.0.0** documentation:
 
 RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
 
+### Verification & Testing Gate
+
+The sole authoritative acceptance gate for RepoPilot is local execution:
+
+```bash
+npm ci && npm test && npx tsc --noEmit
+```
+
+- **No Remote CI**: GitHub Actions CI workflows are not utilized and continuous integration is intentionally omitted.
+- **Obsolete Historical Checks**: Any historical failed GitHub Actions status checks on older commits are obsolete and do not reflect current branch health.
+- All code changes must be validated locally using the verification command above.
+
 ```bash
 # Run the test suite (361 tests across 38 files)
 npm test
