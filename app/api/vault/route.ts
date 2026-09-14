@@ -36,7 +36,6 @@ export async function GET(req: NextRequest) {
       const blueprint = await driver.get(id);
       if (!blueprint) {
         logger.info('Request complete', { route: '/api/vault', method: 'GET', requestId, status: 404, latency: performance.now() - start });
-        logger.info('Request complete', { route: '/api/vault', method: 'DELETE', requestId, status: 404, latency: performance.now() - start });
       return NextResponse.json({ success: false, error: 'Blueprint not found.' }, { status: 404 });
       }
       logger.info('Request complete', { route: '/api/vault', method: 'GET', requestId, status: 200, latency: performance.now() - start });
@@ -87,8 +86,7 @@ export async function DELETE(req: NextRequest) {
     const driver = resolveDriver();
     const removed = await driver.remove(id);
     if (!removed) {
-      logger.info('Request complete', { route: '/api/vault', method: 'GET', requestId, status: 404, latency: performance.now() - start });
-        logger.info('Request complete', { route: '/api/vault', method: 'DELETE', requestId, status: 404, latency: performance.now() - start });
+      logger.info('Request complete', { route: '/api/vault', method: 'DELETE', requestId, status: 404, latency: performance.now() - start });
       return NextResponse.json({ success: false, error: 'Blueprint not found.' }, { status: 404 });
     }
     logger.info('Request complete', { route: '/api/vault', method: 'DELETE', requestId, status: 200, latency: performance.now() - start });
