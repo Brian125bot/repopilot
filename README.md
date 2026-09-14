@@ -4,7 +4,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vitest](https://img.shields.io/badge/Vitest-1.0.0-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-5.0.0-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
@@ -16,7 +16,7 @@
 
 ## 📚 Documentation Hub
 
-RepoPilot **1.0.0** documentation:
+RepoPilot **1.0.1** documentation:
 
 - 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: Settings keys → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
@@ -24,6 +24,7 @@ RepoPilot **1.0.0** documentation:
 - 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally: `npm ci && npm test && npx tsc --noEmit`.
 - 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
 - 🔐 **[SECURITY.md](./SECURITY.md)**: Browser localStorage keys; the server persists nothing.
+- 📝 **[CHANGELOG](./CHANGELOG.md)**: 1.0.1 scope and 1.0.0 history.
 - 📄 **[LICENSE](./LICENSE)**: MIT.
 
 ---
@@ -149,7 +150,7 @@ npm run test:watch
 
 | Suite | File | Tests | Focus Area |
 | :--- | :--- | :--- | :--- |
-| **Prompt Compiler** | `prompt-compiler.test.ts` | 7 | Anti-drift markdown generation & blueprint comment embedding |
+| **Prompt Compiler** | `prompt-compiler.test.ts` | 9 | Anti-drift markdown generation & blueprint comment embedding |
 | **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
 | **Diff Sanitizer Budget** | `diff-sanitizer-extended.test.ts` | 10 | Shared 90k budget, per-file reserve, hunk markers, omission headers |
 | **Jules Dispatch** | `jules-dispatch.test.ts` | 50 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode, remediation head gate, real session ids |
@@ -171,7 +172,7 @@ npm run test:watch
 | **Session poll** | `session-poll.test.ts` | 7 | Tiered backoff, 25-min cap, terminal states, snapshot patching |
 | **Stage handoff** | `stage-handoff.test.ts` | 5 | Prefill real PR URL, vault match |
 | **Sample contract** | `sample-contract.test.ts` | 3 | Empty Stage 1 defaults, Load sample rate-limiter |
-| **Job status** | `job-status.test.ts` | 5 | idle / watching / PR ready / last verdict |
+| **Job status** | `job-status.test.ts` | 7 | idle / watching / PR ready / last verdict |
 | **Evaluate timeout** | `evaluate-timeout.test.ts` | 3 | Timeout → retry payload, maxDuration |
 | **1.0 release** | `v1-release.test.ts` | 3 | Version, LICENSE, SECURITY, golden path, no credential logs |
 
@@ -203,7 +204,7 @@ npm test
 
 Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot application.
 
-### After 1.0
+### After 1.0.1
 
 Not in this release: auto-merge, webhooks/Cron, accounts/teams, multi-agent arbitration, auto-evaluate when a PR appears.
 

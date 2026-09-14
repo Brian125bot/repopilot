@@ -1,4 +1,4 @@
-# RepoPilot 1.0 golden path
+# RepoPilot 1.0.1 golden path
 
 Two stages stay separate. Complete this loop on a hosted deploy or `npm run dev`.
 

@@ -229,7 +229,7 @@ export default function RepoPilotPage() {
       {/* Footer */}
       <footer className="border-t border-slate-200/80 bg-white/70 py-6 text-center text-xs text-slate-400">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>RepoPilot 1.0.0 — dispatch, wait for PR, audit, fix</span>
+          <span>RepoPilot 1.0.1 — dispatch, wait for PR, audit, fix</span>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSettingsOpen(true)}

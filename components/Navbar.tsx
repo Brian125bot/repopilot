@@ -55,7 +55,7 @@ export function Navbar({
             <div className="flex items-center gap-2">
               <span className="font-bold text-slate-900 tracking-tight text-lg">RepoPilot</span>
               <Badge variant="indigo" className="text-[10px] px-1.5 py-0 font-medium">
-                1.0.0
+                1.0.1
               </Badge>
             </div>
             <span className="text-[11px] text-slate-500 hidden sm:inline">

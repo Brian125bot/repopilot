@@ -62,11 +62,11 @@ describe('deriveJobStatus', () => {
     ).toBe('last verdict');
   });
 
-  it('shows the four labels in the navbar chrome and uses 1.0.0 as the version mark', () => {
+  it('shows the four labels in the navbar chrome and uses 1.0.1 as the version mark', () => {
     const nav = readFileSync('components/Navbar.tsx', 'utf8');
     expect(nav).toContain('deriveJobStatus');
     expect(nav).toContain('jobChromeTone');
-    expect(nav).toContain('1.0.0');
+    expect(nav).toContain('1.0.1');
     expect(nav).not.toContain('V1 Decoupled');
     expect(nav).not.toContain('0.2.0');
   });

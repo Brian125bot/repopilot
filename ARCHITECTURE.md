@@ -147,9 +147,9 @@ To guarantee agent adherence to file boundaries, path matching must satisfy stri
 
 ---
 
-## 6. After 1.0
+## 6. After 1.0.1
 
-1.0 freezes the current loop: dispatch → wait for PR → audit → same-branch fix. Later, not in this release:
+1.0.1 freezes the current loop: dispatch → wait for PR → audit → same-branch fix. Later, not in this release:
 
 1. **GitHub Action Integration:** Package the audit engine into a standalone reusable GitHub Action (`repopilot-audit-action`) for automated CI/CD gating.
 2. **Multi-Agent Comparative Audit:** Dispatch parallel sessions to multiple models (e.g. Jules, Claude Code, GitHub Copilot Workspace) and perform automated multi-way diff arbitration.

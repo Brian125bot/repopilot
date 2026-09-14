@@ -424,7 +424,7 @@ Executes Gemini structured verification of the sanitized diff against criteria.
 
 ## 6. Verification & Automated Test Coverage
 
-RepoPilot 1.0.0 includes automated unit and integration tests under **Vitest**. Verify locally: `npm ci && npm test && npx tsc --noEmit`.
+RepoPilot 1.0.1 includes automated unit and integration tests under **Vitest**. Verify locally: `npm ci && npm test && npx tsc --noEmit`.
 
 Run test suite via:
 ```bash
