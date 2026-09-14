@@ -222,6 +222,7 @@ export async function POST(req: NextRequest) {
       blueprint: completeBlueprint,
       sessionId,
       sessionUrl,
+      sessionState,
       targetBranch,
       repo: cleanRepo,
       baseBranch: baseBranch.trim(),
