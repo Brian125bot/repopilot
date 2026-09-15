@@ -191,6 +191,7 @@ export async function POST(req: NextRequest) {
       htmlUrl: prData.html_url || `https://github.com/${prOwner}/${prRepo}/pull/${prNum}`,
       baseBranch: prData.base?.ref || 'main',
       headBranch: prData.head?.ref || 'feature',
+      headSha: headSha || undefined,
       state: prData.state || 'open',
       body: prData.body || '',
       embeddedBlueprint,

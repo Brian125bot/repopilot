@@ -162,8 +162,10 @@ export const AuditEvaluateBodySchema = z.object({
       htmlUrl: z.string().optional(),
       baseBranch: z.string().optional(),
       headBranch: z.string().optional(),
+      headSha: z.string().optional(),
     })
     .optional(),
+  auditedHeadSha: z.string().nullable().optional(),
 });
 
 // 2. app/api/audit/fetch-diff
@@ -236,6 +238,8 @@ export const JulesDispatchBodySchema = z
     testCommand: z.string().optional(),
     prNumber: z.union([z.number(), z.string()]).optional(),
     prUrl: z.string().optional(),
+    auditedHeadSha: z.string().nullable().optional(),
+    currentHeadSha: z.string().optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -340,6 +344,7 @@ export const VaultPostBodySchema = z
         sessionState: z.string().optional(),
         prUrl: z.string().optional(),
         prTitle: z.string().optional(),
+        auditedHeadSha: z.string().nullable().optional(),
         isRemediation: z.boolean().optional(),
       })
       .passthrough()
