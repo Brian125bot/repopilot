@@ -302,8 +302,22 @@ export const JulesMessageBodySchema = z
       .string({ message: 'Prompt is required. Provide prompt.' })
       .trim()
       .min(1, 'Prompt is required. Provide prompt.'),
+    isRemediation: z.boolean().optional(),
+    prUrl: z.string().optional(),
+    auditedHeadSha: z.string().nullable().optional(),
+    currentHeadSha: z.string().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (!data.isRemediation) return;
+    if (!data.prUrl?.trim() || !data.auditedHeadSha?.trim() || !data.currentHeadSha?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['auditedHeadSha'],
+        message: 'Remediation continuation requires PR URL and audited/current head SHAs.',
+      });
+    }
+  });
 
 // 7. app/api/jules/session
 export const JulesSessionQuerySchema = z.object({

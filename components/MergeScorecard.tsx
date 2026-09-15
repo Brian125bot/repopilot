@@ -271,7 +271,14 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/message', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sessionId: followUpSessionId, prompt: followUpText.trim() }),
+        body: JSON.stringify({
+          sessionId: followUpSessionId,
+          prompt: followUpText.trim(),
+          isRemediation: true,
+          prUrl: copyableUrl,
+          auditedHeadSha: blueprint?.auditedHeadSha,
+          currentHeadSha: blueprint?.auditedHeadSha,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) {
@@ -310,7 +317,14 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/message', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sessionId: continueSessionId, prompt: continuePrompt }),
+        body: JSON.stringify({
+          sessionId: continueSessionId,
+          prompt: continuePrompt,
+          isRemediation: true,
+          prUrl: copyableUrl,
+          auditedHeadSha: blueprint.auditedHeadSha,
+          currentHeadSha: blueprint.auditedHeadSha,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) {
