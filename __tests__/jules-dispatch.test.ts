@@ -464,6 +464,8 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
           startingBranch: 'feature/audited',
           branchName: 'feature/audited',
           isRemediation: true,
+          auditedHeadSha: 'abc123',
+          currentHeadSha: 'abc123',
         })
       );
       expect(res.status).toBe(200);

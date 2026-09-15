@@ -571,6 +571,7 @@ export function AuditEvaluationStage({
           {
             verdict: gradeVerdict,
             score: gradeScore,
+            auditedHeadSha: prMetadata?.headSha ?? null,
             unauthorizedCount:
               completed.grade?.diffFacts?.unauthorizedCount ??
               sanitizedResult.stats?.unauthorizedPaths?.length ??
@@ -585,6 +586,7 @@ export function AuditEvaluationStage({
         const briefed: Blueprint = {
           ...hydratedBlueprint,
           prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+          auditedHeadSha: prMetadata?.headSha ?? null,
           lastBrief: buildFailureBrief(
             completed,
             {
