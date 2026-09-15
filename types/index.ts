@@ -72,6 +72,8 @@ export interface Blueprint {
   prUrl?: string;
   prTitle?: string;
   isRemediation?: boolean;
+  /** GitHub PR head commit audited by the last successful evaluation. */
+  auditedHeadSha?: string | null;
   /** Latest compact outcome brief for continuation (v0.3 outcome memory). */
   lastBrief?: FailureBrief;
 }
@@ -82,6 +84,7 @@ export interface FailureBrief {
   sessionId?: string;
   sessionState?: string;
   prUrl?: string;
+  auditedHeadSha?: string | null;
   verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
   score: number;
   unmetIds: string[];
@@ -257,6 +260,7 @@ export interface PRMetadata {
   baseBranch: string;
   headBranch: string;
   state: string;
+  headSha?: string | null;
   body?: string;
   embeddedBlueprint?: Blueprint | null;
   /** Physical GitHub merge readiness (checks + mergeable). Null when unavailable (e.g. manual diffs). */

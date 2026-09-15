@@ -15,6 +15,7 @@ function dispatchBody(overrides: Record<string, unknown> = {}) {
       { id: '3', text: 'Zero modifications to package.json', category: 'constraint' },
     ],
     dryRun: true,
+    prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
     ...overrides,
   };
 }
@@ -77,6 +78,9 @@ describe('dispatch pre-dispatch gate (P0)', () => {
         dispatchBody({
           criteria: [],
           isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'abc123',
+          currentHeadSha: 'abc123',
           // remediation gets default criteria, so should succeed in dryRun
         })
       )
@@ -84,6 +88,71 @@ describe('dispatch pre-dispatch gate (P0)', () => {
     expect(remediation.status).toBe(200);
     const data = await remediation.json();
     expect(data.blueprint.isRemediation).toBe(true);
+  });
+
+  it('allows remediation when currentHeadSha matches auditedHeadSha', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ head: { sha: 'abc123' } }),
+    } as unknown as Response);
+    const res = await POST(
+      req(
+        dispatchBody({
+          criteria: [],
+          isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'abc123',
+          currentHeadSha: 'abc123',
+        })
+      )
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('blocks remediation without an audited head SHA', async () => {
+    const res = await POST(
+      req(
+        dispatchBody({
+          criteria: [],
+          isRemediation: true,
+          startingBranch: 'jules/test-gate',
+        })
+      )
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('auditedHeadSha');
+  });
+
+  it('blocks remediation when currentHeadSha is omitted', async () => {
+    const res = await POST(
+      req(
+        dispatchBody({
+          criteria: [],
+          isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'abc123',
+        })
+      )
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('currentHeadSha');
+  });
+
+  it('blocks remediation when the current head differs from the audited SHA', async () => {
+    const res = await POST(
+      req(
+        dispatchBody({
+          criteria: [],
+          isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'audited123',
+          currentHeadSha: 'current456',
+        })
+      )
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('Head moved since audit');
   });
 
   it('embeds category + Why and DoD self-check in compiled first-pass prompt', async () => {

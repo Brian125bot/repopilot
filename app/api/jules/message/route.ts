@@ -23,7 +23,19 @@ export async function POST(req: NextRequest) {
     const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req, '/api/jules/message', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
-    const { sessionId, prompt } = bodyValidation.data;
+    const { sessionId, prompt, isRemediation, auditedHeadSha, currentHeadSha } = bodyValidation.data;
+    if (
+      isRemediation &&
+      (!auditedHeadSha?.trim() ||
+        !currentHeadSha?.trim() ||
+        currentHeadSha.trim() !== auditedHeadSha.trim())
+    ) {
+      return apiError('/api/jules/message', requestId, {
+        status: 400,
+        code: 'INVALID_INPUT',
+        message: 'Head moved since audit — re-evaluate.',
+      });
+    }
 
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 

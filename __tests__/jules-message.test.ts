@@ -115,6 +115,40 @@ describe('POST /api/jules/message', () => {
     }
   });
 
+  it('returns 400 for remediation continuation with missing SHA values', async () => {
+    const req = new NextRequest('http://localhost:3000/api/jules/message', {
+      method: 'POST',
+      headers: { 'x-jules-api-key': 'test-key' },
+      body: JSON.stringify({
+        sessionId: 'sessions/session_9',
+        prompt: 'Fix it',
+        isRemediation: true,
+        prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+        auditedHeadSha: 'abc123',
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for remediation continuation with mismatched SHA values', async () => {
+    const req = new NextRequest('http://localhost:3000/api/jules/message', {
+      method: 'POST',
+      headers: { 'x-jules-api-key': 'test-key' },
+      body: JSON.stringify({
+        sessionId: 'sessions/session_9',
+        prompt: 'Fix it',
+        isRemediation: true,
+        prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+        auditedHeadSha: 'abc123',
+        currentHeadSha: 'def456',
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('Head moved since audit');
+  });
+
   it('returns success/sessionId on a mocked 200 send', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: unknown) => {
       expect(String(input)).toContain('/v1alpha/sessions/session_9:sendMessage');
