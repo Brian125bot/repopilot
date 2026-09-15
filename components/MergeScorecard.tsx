@@ -165,7 +165,7 @@ export function MergeScorecard({
   // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch.
   // When a stored brief exists, continue from it instead of rebuilding from the raw report.
   const defaultRemediationPrompt = React.useMemo(() => {
-    if (blueprint?.lastBrief) {
+    if (blueprint?.lastBrief && blueprint.auditedHeadSha?.trim()) {
       return compileContinuationPrompt({ blueprint, brief: blueprint.lastBrief });
     }
     return compileRemediationPrompt({
@@ -241,7 +241,7 @@ export function MergeScorecard({
   }, [blueprint, report]);
 
   const continuePrompt = React.useMemo(() => {
-    if (!blueprint || !continueBrief) return '';
+    if (!blueprint || !continueBrief || !blueprint.auditedHeadSha?.trim()) return '';
     return compileContinuationPrompt({ blueprint, brief: continueBrief });
   }, [blueprint, continueBrief]);
 
@@ -309,9 +309,31 @@ export function MergeScorecard({
   const handleContinueJulesSession = async () => {
     if (verdictForGate === 'READY_TO_MERGE') return;
     if (!blueprint || !continueSessionId || !continuePrompt) return;
+    const auditedHeadSha = blueprint.auditedHeadSha?.trim() || '';
+    if (!auditedHeadSha) {
+      setHeadMovedToast('Re-evaluate before remediation — no audited head SHA is stored.');
+      return;
+    }
     setIsContinuing(true);
     setContinueResult(null);
     try {
+      const refreshHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (githubPat) refreshHeaders['x-github-pat'] = githubPat;
+      const refreshRes = await fetch('/api/audit/fetch-diff', {
+        method: 'POST',
+        headers: refreshHeaders,
+        body: JSON.stringify({ prUrl: copyableUrl }),
+      });
+      const refreshData = await refreshRes.json();
+      const currentHeadSha =
+        refreshRes.ok && typeof refreshData.pr?.headSha === 'string'
+          ? refreshData.pr.headSha.trim()
+          : '';
+      if (!currentHeadSha || currentHeadSha !== auditedHeadSha) {
+        setHeadMovedToast('Head moved since audit — re-evaluate.');
+        return;
+      }
+
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (julesKey) headers['x-jules-api-key'] = julesKey;
       const res = await fetch('/api/jules/message', {
@@ -322,8 +344,8 @@ export function MergeScorecard({
           prompt: continuePrompt,
           isRemediation: true,
           prUrl: copyableUrl,
-          auditedHeadSha: blueprint.auditedHeadSha,
-          currentHeadSha: blueprint.auditedHeadSha,
+          auditedHeadSha,
+          currentHeadSha,
         }),
       });
       const data = await res.json();

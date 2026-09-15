@@ -157,7 +157,9 @@ export function compileContinuationPrompt(input: {
   brief: FailureBrief;
 }): string {
   const { blueprint, brief } = input;
-  if (!blueprint.auditedHeadSha?.trim()) return '';
+  if (!blueprint.auditedHeadSha?.trim()) {
+    throw new Error('Cannot compile continuation prompt without an audited head SHA.');
+  }
   const prRef = brief.prUrl || blueprint.prUrl;
   const header = `<!-- CONTINUATION_CONTRACT: ${blueprint.blueprintId} -->`;
 
@@ -207,7 +209,7 @@ export function compileContinuationPrompt(input: {
   const lock = [
     '## 6. Branch lock',
     `Work ONLY on branch \`${blueprint.branchName}\`${prRef ? ` (PR: ${prRef})` : ''}.`,
-    `Audited head SHA: \`${blueprint.auditedHeadSha.trim()}\`.`,
+    `Audited PR head SHA: \`${blueprint.auditedHeadSha.trim()}\`.`,
     'The branch must still point to this exact audited commit before any remediation starts.',
     'Commit and push there so the existing pull request updates.',
     'Do not create a new branch and do not open a new pull request.',

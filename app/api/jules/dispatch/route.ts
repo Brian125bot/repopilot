@@ -10,7 +10,6 @@ import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { AcceptanceCriterion, Blueprint } from '@/types';
 import { preDispatchGate } from '@/lib/contract-lint';
 import { parseRequestBody, JulesDispatchBodySchema } from '@/lib/validation';
-import { verifyAuditedHead } from '@/lib/audited-head';
 
 export async function POST(req: NextRequest) {
   const requestId = createRequestId();
@@ -82,28 +81,9 @@ export async function POST(req: NextRequest) {
         : [];
 
     const headerJulesKey = req.headers.get('x-jules-api-key');
-    const headerGithubPat = req.headers.get('x-github-pat');
     const julesApiKey =
       sanitizeJulesCredential(headerJulesKey || '') ||
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
-    const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
-
-    if (isRemediation) {
-      const headCheck = await verifyAuditedHead({
-        repo: cleanRepo,
-        prUrl: bodyValidation.data.prUrl,
-        prNumber,
-        auditedHeadSha: auditedHeadSha || '',
-        githubPat,
-      });
-      if (!headCheck.ok) {
-        return apiError('/api/jules/dispatch', requestId, {
-          status: headCheck.status,
-          code: 'INVALID_INPUT',
-          message: headCheck.error,
-        });
-      }
-    }
 
     if (!dryRun && !julesApiKey) {
       return apiError('/api/jules/dispatch', requestId, { status: 401, code: 'UNAUTHORIZED', message: 'No Google Jules API key configured. Provide an API key via request headers or environment variables, or enable dryRun mode.', details: { dryRun: false } });
@@ -159,19 +139,6 @@ export async function POST(req: NextRequest) {
       baseBranch.trim() ||
       'main';
 
-    if (githubPat) {
-      try {
-        const ghCheck = await fetch(`https://api.github.com/repos/${cleanRepo}`, {
-          headers: {
-            Authorization: `Bearer ${githubPat}`,
-            'User-Agent': 'RepoPilot-AuditEngine',
-          },
-        });
-        if (!ghCheck.ok && ghCheck.status !== 404) {
-        }
-      } catch (err) {
-      }
-    }
 
     let sessionId: string | undefined = undefined;
     let sessionUrl: string | undefined = undefined;

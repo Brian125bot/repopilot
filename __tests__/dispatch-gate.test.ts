@@ -124,6 +124,21 @@ describe('dispatch pre-dispatch gate (P0)', () => {
     expect((await res.json()).error).toContain('auditedHeadSha');
   });
 
+  it('blocks remediation when currentHeadSha is omitted', async () => {
+    const res = await POST(
+      req(
+        dispatchBody({
+          criteria: [],
+          isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'abc123',
+        })
+      )
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain('currentHeadSha');
+  });
+
   it('blocks remediation when the current head differs from the audited SHA', async () => {
     const res = await POST(
       req(

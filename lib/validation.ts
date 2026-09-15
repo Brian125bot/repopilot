@@ -269,9 +269,7 @@ export const JulesDispatchBodySchema = z
     }
     if (
       isRemediation &&
-      data.auditedHeadSha?.trim() &&
-      data.currentHeadSha !== undefined &&
-      data.currentHeadSha?.trim() !== data.auditedHeadSha.trim()
+      (!data.currentHeadSha?.trim() || data.currentHeadSha.trim() !== data.auditedHeadSha?.trim())
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -310,7 +308,12 @@ export const JulesMessageBodySchema = z
   .strict()
   .superRefine((data, ctx) => {
     if (!data.isRemediation) return;
-    if (!data.prUrl?.trim() || !data.auditedHeadSha?.trim() || !data.currentHeadSha?.trim()) {
+    if (
+      !data.prUrl?.trim() ||
+      !data.auditedHeadSha?.trim() ||
+      !data.currentHeadSha?.trim() ||
+      data.currentHeadSha.trim() !== data.auditedHeadSha.trim()
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['auditedHeadSha'],

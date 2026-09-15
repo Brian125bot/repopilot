@@ -139,6 +139,25 @@ describe('extractPathsFromReferences', () => {
 });
 
 describe('compileContinuationPrompt', () => {
+  it('throws when the audited head SHA is missing', () => {
+    const missingSha = { ...blueprint, auditedHeadSha: null };
+    expect(() =>
+      compileContinuationPrompt({
+        blueprint: missingSha,
+        brief: buildFailureBrief(buildReport(), missingSha, []),
+      })
+    ).toThrow('audited head SHA');
+  });
+
+  it('embeds the audited head SHA in Section 6', () => {
+    const prompt = compileContinuationPrompt({
+      blueprint,
+      brief: buildFailureBrief(buildReport(), blueprint, []),
+    });
+    expect(prompt).toContain('## 6. Branch lock');
+    expect(prompt).toContain('Audited PR head SHA: `abc123`.');
+  });
+
   it('MET-only brief says do not reopen MET and opens no tasks', () => {
     const report = buildReport({
       criteriaResults: [
