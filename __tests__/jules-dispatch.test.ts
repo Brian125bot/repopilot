@@ -107,7 +107,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ full_name: 'acme-corp/api-gateway' }),
+        json: async () => ({ full_name: 'acme-corp/api-gateway', head: { sha: 'abc123' } }),
       } as unknown as Response;
     });
 
@@ -124,6 +124,8 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
         isRemediation: true,
         prNumber: 42,
         prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+        auditedHeadSha: 'abc123',
+        currentHeadSha: 'abc123',
         objective: 'Fix rate limiter test',
       }),
     });
@@ -322,7 +324,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
           json: async () => ({ sources: [{ name: 'sources/src_other', githubRepo: { owner: 'other', repo: 'svc' } }] }),
         } as unknown as Response;
       }
-      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => ({ head: { sha: 'abc123' } }) } as unknown as Response;
     });
 
     const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
@@ -380,7 +382,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
           json: async () => ({ error: { message: 'Invalid API Key provided' } }),
         } as unknown as Response;
       }
-      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+      return { ok: true, status: 200, json: async () => ({ head: { sha: 'abc123' } }) } as unknown as Response;
     });
 
     const req = new NextRequest('http://localhost:3000/api/jules/dispatch', {
@@ -422,7 +424,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
         if (url.includes('/v1alpha/sessions')) {
           return { ok: true, status: 200, json: async () => sessionPayload } as unknown as Response;
         }
-        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+        return { ok: true, status: 200, json: async () => ({ head: { sha: 'abc123' } }) } as unknown as Response;
       });
     }
 
@@ -466,6 +468,7 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
           isRemediation: true,
           auditedHeadSha: 'abc123',
           currentHeadSha: 'abc123',
+          prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
         })
       );
       expect(res.status).toBe(200);
@@ -599,7 +602,7 @@ describe('Jules client library (lib/jules.ts)', () => {
             json: async () => ({ name: 'sessions/s_pair', state: 'QUEUED' }),
           } as unknown as Response;
         }
-        return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+        return { ok: true, status: 200, json: async () => ({ head: { sha: 'abc123' } }) } as unknown as Response;
       });
 
       const firstPass = new NextRequest('http://localhost:3000/api/jules/dispatch', {
@@ -620,6 +623,9 @@ describe('Jules client library (lib/jules.ts)', () => {
           branchName: 'jules/pair-fix',
           startingBranch: 'jules/pair-fix',
           isRemediation: true,
+          prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+          auditedHeadSha: 'abc123',
+          currentHeadSha: 'abc123',
           objective: 'Fix',
           criteria: [{ id: '1', text: 'Fix', category: 'functional' }],
         }),
