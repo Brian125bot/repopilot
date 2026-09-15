@@ -102,6 +102,7 @@ export function MergeScorecard({
   const [troubleshootOpen, setTroubleshootOpen] = React.useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = React.useState(false);
   const [customPromptText, setCustomPromptText] = React.useState<string>('');
+  const [mismatchToast, setMismatchToast] = React.useState<string | null>(null);
 
   const { criteriaResults, scopeIntegrity, mergeVerdict } = report;
 
@@ -336,6 +337,20 @@ export function MergeScorecard({
 
   const handleDispatchRemediationToJules = async (promptOverride?: string) => {
     if (verdictForGate === 'READY_TO_MERGE') return;
+
+    const auditedSha = blueprint?.auditedHeadSha ?? report?.auditedHeadSha ?? null;
+    const currentHeadSha = prMetadata?.headSha?.trim() || "";
+    if (!auditedSha || (currentHeadSha && currentHeadSha !== auditedSha)) {
+      const msg = "Head moved since audit — re-evaluate.";
+      setMismatchToast(msg);
+      setDispatchResult({
+        success: false,
+        warningMessage: msg,
+        targetBranch: auditedBranch,
+      });
+      return;
+    }
+
     setIsDispatching(true);
     setDispatchResult(null);
 
@@ -358,6 +373,8 @@ export function MergeScorecard({
           baseBranch: prMetadata?.baseBranch || 'main',
           branchName: auditedBranch,
           startingBranch: auditedBranch, // DIRECTS JULES JUST TO MAKE THE CHANGES ON THE AUDITED BRANCH
+          auditedHeadSha: auditedSha,
+          currentHeadSha: currentHeadSha || undefined,
           isRemediation: true,
           prNumber: prMetadata?.number,
           prUrl: copyableUrl,
@@ -509,6 +526,15 @@ export function MergeScorecard({
         copiedSummary={copiedSummary}
         onCopySummary={handleCopyScorecardSummary}
       />
+      {mismatchToast && (
+        <Alert variant="destructive" className="border-amber-400 bg-amber-950 text-amber-100 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+            <AlertTitle className="text-xs font-bold text-amber-100">{mismatchToast}</AlertTitle>
+          </div>
+          <button onClick={() => setMismatchToast(null)} className="text-xs text-amber-300 hover:text-white underline cursor-pointer">Dismiss</button>
+        </Alert>
+      )}
       <WhyNextCard grade={displayGrade} auditedBranch={auditedBranch} />
 
       {/* Scope Drift Warning Callout */}

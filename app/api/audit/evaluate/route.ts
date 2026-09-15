@@ -100,6 +100,9 @@ export async function POST(req: NextRequest) {
 
     if (diffFacts && !report.diffFacts) report.diffFacts = diffFacts;
 
+    const auditedHeadSha = (bodyValidation.data.auditedHeadSha ?? prMetadata?.headSha ?? null);
+    report.auditedHeadSha = auditedHeadSha;
+
     if (prMetadata) {
       report.prTitle = prMetadata.title;
       report.prAuthor = prMetadata.author;

@@ -566,6 +566,7 @@ export function AuditEvaluationStage({
         const completed = data.report as GeminiAuditReport;
         const gradeVerdict = completed.grade?.verdict ?? completed.mergeVerdict.status;
         const gradeScore = completed.grade?.overallScore ?? completed.mergeVerdict.overallScore;
+        const auditedSha = completed.auditedHeadSha ?? prMetadata?.headSha ?? null;
         updateStoredOutcomeRow(
           { blueprintId: hydratedBlueprint.blueprintId, sessionId: hydratedBlueprint.sessionId },
           {
@@ -578,6 +579,7 @@ export function AuditEvaluationStage({
             unmetIds: (completed.criteriaResults || [])
               .filter((c) => c.status !== 'MET')
               .map((c) => c.id),
+            auditedHeadSha: auditedSha,
           }
         );
         // Outcome memory: attach the compact brief so remediation can continue
@@ -585,11 +587,13 @@ export function AuditEvaluationStage({
         const briefed: Blueprint = {
           ...hydratedBlueprint,
           prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+          auditedHeadSha: auditedSha,
           lastBrief: buildFailureBrief(
             completed,
             {
               ...hydratedBlueprint,
               prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+              auditedHeadSha: auditedSha,
             },
             sanitizedResult.stats?.unauthorizedPaths || []
           ),

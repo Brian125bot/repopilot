@@ -71,6 +71,7 @@ export interface Blueprint {
   /** Pull request harvested from the session once Jules opens one. */
   prUrl?: string;
   prTitle?: string;
+  auditedHeadSha?: string | null;
   isRemediation?: boolean;
   /** Latest compact outcome brief for continuation (v0.3 outcome memory). */
   lastBrief?: FailureBrief;
@@ -91,6 +92,7 @@ export interface FailureBrief {
   doNotTouch: string[];
   requiredFixes: string[];
   evidenceById?: Record<string, string>;
+  auditedHeadSha?: string | null;
   turn?: OutcomeTurn;
 }
 
@@ -222,6 +224,7 @@ export interface GeminiAuditReport {
   prUrl?: string;
   baseBranch?: string;
   headBranch?: string;
+  auditedHeadSha?: string | null;
   /** Sanitizer file/line facts stamped at evaluate time. */
   diffFacts?: AuditDiffFacts;
   /** Server-computed single truth. UI renders this; recompute client-side only when missing (old cached reports). */
@@ -256,6 +259,7 @@ export interface PRMetadata {
   htmlUrl: string;
   baseBranch: string;
   headBranch: string;
+  headSha?: string;
   state: string;
   body?: string;
   embeddedBlueprint?: Blueprint | null;

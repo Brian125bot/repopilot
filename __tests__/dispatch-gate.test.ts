@@ -77,6 +77,7 @@ describe('dispatch pre-dispatch gate (P0)', () => {
         dispatchBody({
           criteria: [],
           isRemediation: true,
+          auditedHeadSha: 'sha123',
           // remediation gets default criteria, so should succeed in dryRun
         })
       )

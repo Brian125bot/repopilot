@@ -23,6 +23,7 @@ export interface OutcomeLogRow {
   unauthorizedCount?: number;
   unmetIds?: string[];
   usedPriorSession: boolean;
+  auditedHeadSha?: string | null;
   at: string;
 }
 const EVIDENCE_SNIPPET_CHARS = 240;
@@ -124,6 +125,7 @@ export function buildFailureBrief(
   // Prefer server grade truth when present; fall back to legacy mergeVerdict.
   const verdict = report.grade?.verdict ?? report.mergeVerdict.status;
   const score = report.grade?.overallScore ?? report.mergeVerdict.overallScore;
+  const auditedHeadSha = report.auditedHeadSha ?? blueprint.auditedHeadSha ?? null;
 
   return {
     sessionId: blueprint.sessionId,
@@ -138,6 +140,7 @@ export function buildFailureBrief(
     doNotTouch,
     requiredFixes,
     evidenceById,
+    auditedHeadSha,
     ...(turn ? { turn } : {}),
   };
 }
@@ -181,6 +184,9 @@ export function compileContinuationPrompt(input: {
           .join('\n')
       : `No open fixes. Verdict: ${brief.verdict} (${brief.score}/100). Do not start new work and do not reopen the MET criteria above.`;
 
+  const shaRef = brief.auditedHeadSha || blueprint.auditedHeadSha;
+  const shaText = shaRef ? ` at commit \`${shaRef}\`` : "";
+
   const main = [
     '# Continuation Contract (follow-up — no new scope)',
     '',
@@ -203,7 +209,7 @@ export function compileContinuationPrompt(input: {
 
   const lock = [
     '## 6. Branch lock',
-    `Work ONLY on branch \`${blueprint.branchName}\`${prRef ? ` (PR: ${prRef})` : ''}.`,
+    `Work ONLY on branch \`${blueprint.branchName}\`${shaText}${prRef ? ` (PR: ${prRef})` : ''}.`,
     'Commit and push there so the existing pull request updates.',
     'Do not create a new branch and do not open a new pull request.',
   ].join('\n');
@@ -276,6 +282,7 @@ export function buildOutcomeRow(input: {
   score?: number;
   unauthorizedCount?: number;
   unmetIds?: string[];
+  auditedHeadSha?: string | null;
   at?: string;
 }): OutcomeLogRow {
   return {
@@ -288,6 +295,7 @@ export function buildOutcomeRow(input: {
     unauthorizedCount: input.unauthorizedCount,
     unmetIds: input.unmetIds,
     usedPriorSession: input.usedPriorSession,
+    auditedHeadSha: input.auditedHeadSha,
     at: input.at || new Date().toISOString(),
   };
 }
@@ -307,7 +315,7 @@ export function appendOutcomeRow(rows: OutcomeLogRow[], row: OutcomeLogRow): Out
 export function updateOutcomeRow(
   rows: OutcomeLogRow[],
   match: { blueprintId: string; sessionId?: string },
-  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds' | 'auditedHeadSha'>
 ): OutcomeLogRow[] {
   const list = Array.isArray(rows) ? [...rows] : [];
   for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -360,7 +368,7 @@ export function recordOutcomeRow(row: OutcomeLogRow): OutcomeLogRow[] {
 /** Patches the persisted log's matching row; returns the updated list. */
 export function updateStoredOutcomeRow(
   match: { blueprintId: string; sessionId?: string },
-  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds' | 'auditedHeadSha'>
 ): OutcomeLogRow[] {
   const next = updateOutcomeRow(loadOutcomeLog(), match, patch);
   saveOutcomeLog(next);
