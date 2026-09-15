@@ -22,6 +22,7 @@ const blueprint: Blueprint = {
   sessionUrl: 'https://jules.google.com/session/session_9',
   sessionState: 'COMPLETED',
   prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+  auditedHeadSha: 'abc123',
 };
 
 const buildReport = (overrides?: Partial<GeminiAuditReport>): GeminiAuditReport => ({
@@ -211,6 +212,20 @@ describe('compileContinuationPrompt', () => {
     const prompt = compileContinuationPrompt({
       blueprint,
       brief: buildFailureBrief(buildReport(), blueprint, []),
+    });
+
+    it('embeds auditedHeadSha in compileContinuationPrompt Section 6', () => {
+      const prompt = compileContinuationPrompt({
+        blueprint,
+        brief: buildFailureBrief(buildReport(), blueprint, []),
+      });
+      expect(prompt).toContain('## 6. Branch lock');
+      expect(prompt).toContain('Audited head SHA: `abc123`');
+    });
+
+    it('propagates blueprint.auditedHeadSha into FailureBrief', () => {
+      const brief = buildFailureBrief(buildReport(), blueprint, []);
+      expect(brief.auditedHeadSha).toBe('abc123');
     });
 
     expect(prompt).toContain('Implement an IP-based sliding window rate limiter');

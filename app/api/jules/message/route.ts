@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { apiError, createRequestId } from '@/lib/api-error';
 import { sendJulesMessage, sanitizeJulesCredential } from '@/lib/jules';
 import { parseRequestBody, JulesMessageBodySchema } from '@/lib/validation';
+import { verifyAuditedHead } from '@/lib/audited-head';
 
 /**
  * Sends a follow-up message to an existing Jules session.
@@ -23,7 +24,22 @@ export async function POST(req: NextRequest) {
     const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req, '/api/jules/message', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
-    const { sessionId, prompt } = bodyValidation.data;
+    const { sessionId, prompt, isRemediation, prUrl, auditedHeadSha } = bodyValidation.data;
+
+    if (isRemediation) {
+      const headCheck = await verifyAuditedHead({
+        prUrl,
+        auditedHeadSha: auditedHeadSha || '',
+        githubPat: req.headers.get('x-github-pat'),
+      });
+      if (!headCheck.ok) {
+        return apiError('/api/jules/message', requestId, {
+          status: headCheck.status,
+          code: 'INVALID_INPUT',
+          message: headCheck.error,
+        });
+      }
+    }
 
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 

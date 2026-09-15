@@ -86,6 +86,7 @@ export function MergeScorecard({
   const [copiedPrompt, setCopiedPrompt] = React.useState(false);
   const [copiedSummary, setCopiedSummary] = React.useState(false);
   const [copiedUrl, setCopiedUrl] = React.useState(false);
+  const [headMovedToast, setHeadMovedToast] = React.useState<string | null>(null);
 
   // Remediation Dispatch State
   const [isDispatching, setIsDispatching] = React.useState(false);
@@ -270,7 +271,14 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/message', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sessionId: followUpSessionId, prompt: followUpText.trim() }),
+        body: JSON.stringify({
+          sessionId: followUpSessionId,
+          prompt: followUpText.trim(),
+          isRemediation: true,
+          prUrl: copyableUrl,
+          auditedHeadSha: blueprint?.auditedHeadSha,
+          currentHeadSha: blueprint?.auditedHeadSha,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) {
@@ -309,7 +317,14 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/message', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sessionId: continueSessionId, prompt: continuePrompt }),
+        body: JSON.stringify({
+          sessionId: continueSessionId,
+          prompt: continuePrompt,
+          isRemediation: true,
+          prUrl: copyableUrl,
+          auditedHeadSha: blueprint.auditedHeadSha,
+          currentHeadSha: blueprint.auditedHeadSha,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) {
@@ -336,10 +351,32 @@ export function MergeScorecard({
 
   const handleDispatchRemediationToJules = async (promptOverride?: string) => {
     if (verdictForGate === 'READY_TO_MERGE') return;
+    const auditedHeadSha = blueprint?.auditedHeadSha?.trim() || '';
+    if (!auditedHeadSha) {
+      setHeadMovedToast('Re-evaluate before remediation — no audited head SHA is stored.');
+      return;
+    }
     setIsDispatching(true);
     setDispatchResult(null);
 
     try {
+      const refreshHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (githubPat) refreshHeaders['x-github-pat'] = githubPat;
+      const refreshRes = await fetch('/api/audit/fetch-diff', {
+        method: 'POST',
+        headers: refreshHeaders,
+        body: JSON.stringify({ prUrl: copyableUrl }),
+      });
+      const refreshData = await refreshRes.json();
+      const currentHeadSha =
+        refreshRes.ok && typeof refreshData.pr?.headSha === 'string'
+          ? refreshData.pr.headSha.trim()
+          : '';
+      if (!currentHeadSha || currentHeadSha !== auditedHeadSha) {
+        setHeadMovedToast('Head moved since audit — re-evaluate.');
+        return;
+      }
+
       const promptToSend =
         (promptOverride !== undefined ? promptOverride : customPromptText).trim() ||
         defaultRemediationPrompt;
@@ -359,6 +396,8 @@ export function MergeScorecard({
           branchName: auditedBranch,
           startingBranch: auditedBranch, // DIRECTS JULES JUST TO MAKE THE CHANGES ON THE AUDITED BRANCH
           isRemediation: true,
+          auditedHeadSha,
+          currentHeadSha,
           prNumber: prMetadata?.number,
           prUrl: copyableUrl,
           customPrompt: promptToSend,
@@ -498,6 +537,13 @@ export function MergeScorecard({
 
   return (
     <div className="space-y-6 animate-in fade-in-50 duration-300">
+      {headMovedToast && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Remediation blocked</AlertTitle>
+          <AlertDescription>{headMovedToast}</AlertDescription>
+        </Alert>
+      )}
       <ScoreHeader
         report={report}
         prMetadata={prMetadata}

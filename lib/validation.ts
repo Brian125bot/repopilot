@@ -162,6 +162,7 @@ export const AuditEvaluateBodySchema = z.object({
       htmlUrl: z.string().optional(),
       baseBranch: z.string().optional(),
       headBranch: z.string().optional(),
+      headSha: z.string().nullable().optional(),
     })
     .optional(),
 });
@@ -236,6 +237,8 @@ export const JulesDispatchBodySchema = z
     testCommand: z.string().optional(),
     prNumber: z.union([z.number(), z.string()]).optional(),
     prUrl: z.string().optional(),
+    auditedHeadSha: z.string().nullable().optional(),
+    currentHeadSha: z.string().nullable().optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -255,6 +258,25 @@ export const JulesDispatchBodySchema = z
         code: z.ZodIssueCode.custom,
         path: ['branchName'],
         message: 'Remediation requires startingBranch = audited PR head',
+      });
+    }
+    if (isRemediation && !data.auditedHeadSha?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['auditedHeadSha'],
+        message: 'Remediation requires auditedHeadSha from a successful evaluation.',
+      });
+    }
+    if (
+      isRemediation &&
+      data.auditedHeadSha?.trim() &&
+      data.currentHeadSha !== undefined &&
+      data.currentHeadSha?.trim() !== data.auditedHeadSha.trim()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['currentHeadSha'],
+        message: 'Head moved since audit — re-evaluate.',
       });
     }
 
@@ -280,8 +302,22 @@ export const JulesMessageBodySchema = z
       .string({ message: 'Prompt is required. Provide prompt.' })
       .trim()
       .min(1, 'Prompt is required. Provide prompt.'),
+    isRemediation: z.boolean().optional(),
+    prUrl: z.string().optional(),
+    auditedHeadSha: z.string().nullable().optional(),
+    currentHeadSha: z.string().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (!data.isRemediation) return;
+    if (!data.prUrl?.trim() || !data.auditedHeadSha?.trim() || !data.currentHeadSha?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['auditedHeadSha'],
+        message: 'Remediation continuation requires PR URL and audited/current head SHAs.',
+      });
+    }
+  });
 
 // 7. app/api/jules/session
 export const JulesSessionQuerySchema = z.object({
