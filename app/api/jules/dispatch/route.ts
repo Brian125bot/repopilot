@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
       repoContext,
       testCommand = '',
       prNumber,
+      auditedHeadSha,
     } = bodyValidation.data;
 
     const explicitStartingBranch = startingBranch || explicitStartingBranchArg;
@@ -214,6 +215,7 @@ export async function POST(req: NextRequest) {
       prUrl: undefined,
       prTitle: undefined,
       isRemediation,
+      auditedHeadSha: isRemediation ? auditedHeadSha?.trim() || null : undefined,
     };
 
     return NextResponse.json({
