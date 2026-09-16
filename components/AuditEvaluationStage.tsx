@@ -42,6 +42,7 @@ import {
   buildFailureBrief,
 } from '@/lib/outcome-memory';
 import { parseAuditIngestTarget } from '@/lib/github';
+import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
 import { applySessionSnapshotToBlueprint, type SessionPollAction } from '@/lib/session-poll';
 import { matchVaultBlueprint, stage2Prefill } from '@/lib/stage-handoff';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
@@ -524,6 +525,14 @@ export function AuditEvaluationStage({
 
   const handleRunAudit = async () => {
     setAuditError(null);
+    if (
+      typeof window !== 'undefined' &&
+      !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
+    ) {
+      setAuditError(VERIFY_BEFORE_DISPATCH_MESSAGE);
+      onOpenSettings();
+      return;
+    }
     if (!sanitizedResult || !sanitizedResult.sanitizedDiff) {
       setAuditError('No diff available to evaluate. Please fetch a PR first.');
       return;

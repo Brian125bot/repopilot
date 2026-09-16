@@ -7,7 +7,8 @@ export type ApiErrorCode =
   | 'NOT_FOUND'
   | 'UPSTREAM_ERROR'
   | 'INTERNAL_ERROR'
-  | 'REQUEST_FAILED';
+  | 'REQUEST_FAILED'
+  | 'TIMEOUT';
 
 export interface ApiErrorBody {
   success: false;
