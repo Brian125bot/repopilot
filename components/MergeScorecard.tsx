@@ -54,6 +54,7 @@ import {
 } from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
+import { LOCKED_MESSAGE } from '@/lib/credential-vault';
 
 interface MergeScorecardProps {
   report: GeminiAuditReport;
@@ -64,6 +65,7 @@ interface MergeScorecardProps {
   hydrationSource?: string | null;
   julesKey?: string;
   githubPat?: string;
+  vaultLocked?: boolean;
   onViewDiff?: () => void;
   onOpenSettings?: () => void;
   onSaveBlueprint?: (blueprint: Blueprint) => void;
@@ -79,6 +81,7 @@ export function MergeScorecard({
   hydrationSource,
   julesKey = '',
   githubPat = '',
+  vaultLocked = false,
   onViewDiff,
   onOpenSettings,
   onSaveBlueprint,
@@ -379,6 +382,11 @@ export function MergeScorecard({
   };
 
   const requireVerifiedKey = (): boolean => {
+    if (vaultLocked) {
+      setHeadMovedToast(LOCKED_MESSAGE);
+      onOpenSettings?.();
+      return false;
+    }
     if (
       typeof window !== 'undefined' &&
       !hasVerifiedKey(window.localStorage as unknown as KeyStorage)

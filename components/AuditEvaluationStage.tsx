@@ -43,6 +43,7 @@ import {
 } from '@/lib/outcome-memory';
 import { parseAuditIngestTarget } from '@/lib/github';
 import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
+import { LOCKED_MESSAGE } from '@/lib/credential-vault';
 import { applySessionSnapshotToBlueprint, type SessionPollAction } from '@/lib/session-poll';
 import { matchVaultBlueprint, stage2Prefill } from '@/lib/stage-handoff';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
@@ -52,6 +53,7 @@ interface AuditEvaluationStageProps {
   julesKey?: string;
   geminiKey: string;
   githubPat: string;
+  vaultLocked?: boolean;
   activeBlueprint: Blueprint | null;
   blueprints: Blueprint[];
   onOpenSettings: () => void;
@@ -159,6 +161,7 @@ export function AuditEvaluationStage({
   julesKey,
   geminiKey,
   githubPat,
+  vaultLocked = false,
   activeBlueprint,
   blueprints,
   onOpenSettings,
@@ -530,6 +533,11 @@ export function AuditEvaluationStage({
       !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
     ) {
       setAuditError(VERIFY_BEFORE_DISPATCH_MESSAGE);
+      onOpenSettings();
+      return;
+    }
+    if (vaultLocked) {
+      setAuditError(LOCKED_MESSAGE);
       onOpenSettings();
       return;
     }
@@ -1228,6 +1236,7 @@ export function AuditEvaluationStage({
           hydrationSource={hydrationSource}
           julesKey={julesKey}
           githubPat={githubPat}
+          vaultLocked={vaultLocked}
           onViewDiff={() => setDiffModalOpen(true)}
           onOpenSettings={onOpenSettings}
           onSaveBlueprint={onSaveBlueprint}

@@ -19,6 +19,14 @@ import {
   markKeyVerified,
   type KeyStorage,
 } from '@/lib/settings-keys';
+import {
+  LOCKED_MESSAGE,
+  PLAINTEXT_EXPORT_WARNING,
+  exportPlaintextOptIn,
+  hasLegacyPlaintext,
+  importPlaintextOptIn,
+} from '@/lib/credential-vault';
+import type { CredentialVaultApi } from '@/hooks/use-credential-vault';
 
 interface SettingsModalProps {
   open: boolean;
@@ -29,6 +37,7 @@ interface SettingsModalProps {
   setGeminiKey: (key: string) => void;
   githubPat: string;
   setGithubPat: (pat: string) => void;
+  vault: CredentialVaultApi;
 }
 
 export interface GithubVerifyResult {
@@ -62,6 +71,7 @@ export function SettingsModal({
   setGeminiKey,
   githubPat,
   setGithubPat,
+  vault,
 }: SettingsModalProps) {
   const [localJules, setLocalJules] = React.useState(julesKey);
   const [localGemini, setLocalGemini] = React.useState(geminiKey);
@@ -81,6 +91,12 @@ export function SettingsModal({
   const [julesVerifyRepo, setJulesVerifyRepo] = React.useState('');
   const [clearAllNotice, setClearAllNotice] = React.useState<string | null>(null);
   const [verifyGateNotice, setVerifyGateNotice] = React.useState<string | null>(null);
+  const [passphrase, setPassphrase] = React.useState('');
+  const [vaultNotice, setVaultNotice] = React.useState<string | null>(null);
+  const [legacyNotice, setLegacyNotice] = React.useState<string | null>(null);
+  const [importText, setImportText] = React.useState('');
+  const [allowPlainExport, setAllowPlainExport] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
     if (open) {
@@ -95,6 +111,7 @@ export function SettingsModal({
         setGeminiVerify(null);
         setJulesVerify(null);
         setClearAllNotice(null);
+        setVaultNotice(null);
         setVerifyGateNotice(
           typeof window !== 'undefined' && !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
             ? VERIFY_BEFORE_DISPATCH_MESSAGE
@@ -104,6 +121,23 @@ export function SettingsModal({
       return () => clearTimeout(timer);
     }
   }, [julesKey, geminiKey, githubPat, open]);
+
+  React.useEffect(() => {
+    if (open && typeof window !== 'undefined') {
+      const timer = setTimeout(() => {
+        try {
+          setLegacyNotice(
+            hasLegacyPlaintext(window.localStorage as unknown as KeyStorage)
+              ? 'Plaintext provider keys were found in this browser. Set a passphrase to migrate them into the encrypted vault.'
+              : null
+          );
+        } catch {
+          setLegacyNotice(null);
+        }
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [open]);
 
   // Check if server environment variables are available
   React.useEffect(() => {
@@ -262,20 +296,158 @@ export function SettingsModal({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!passphrase.trim() && typeof window !== 'undefined') {
+      try {
+        if (hasLegacyPlaintext(window.localStorage as unknown as KeyStorage) || !vault.vaultExists) {
+          setVaultNotice('Set a passphrase to encrypt credentials before saving.');
+          return;
+        }
+      } catch {
+        // Fall through to vault save attempt.
+      }
+    }
+    const ok = await vault.saveCredentials(
+      { julesKey: localJules.trim(), geminiKey: localGemini.trim(), githubPat: localPat.trim() },
+      passphrase
+    );
+    if (!ok) {
+      setVaultNotice(vault.lastError || LOCKED_MESSAGE);
+      return;
+    }
     setJulesKey(localJules.trim());
     setGeminiKey(localGemini.trim());
     setGithubPat(localPat.trim());
     if (typeof window !== 'undefined') {
-      localStorage.setItem(JULES_KEY_STORAGE_KEY, localJules.trim());
-      localStorage.setItem(GEMINI_KEY_STORAGE_KEY, localGemini.trim());
-      localStorage.setItem(GITHUB_PAT_STORAGE_KEY, localPat.trim());
+      localStorage.removeItem(JULES_KEY_STORAGE_KEY);
+      localStorage.removeItem(GEMINI_KEY_STORAGE_KEY);
+      localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
     }
+    setPassphrase('');
+    setVaultNotice(null);
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       onOpenChange(false);
     }, 600);
+  };
+
+  const handleUnlock = async () => {
+    setVaultNotice(null);
+    const ok = await vault.unlock(passphrase);
+    if (!ok) {
+      setVaultNotice(vault.lastError || LOCKED_MESSAGE);
+      return;
+    }
+    const creds = vault.credentials;
+    if (creds) {
+      setLocalJules(creds.julesKey);
+      setLocalGemini(creds.geminiKey);
+      setLocalPat(creds.githubPat);
+      setJulesKey(creds.julesKey);
+      setGeminiKey(creds.geminiKey);
+      setGithubPat(creds.githubPat);
+    }
+    setPassphrase('');
+    setVaultNotice('Vault unlocked — keys live in memory only.');
+  };
+
+  const handleMigrateLegacy = async () => {
+    setVaultNotice(null);
+    try {
+      const result = await vault.setupAndMigrate(passphrase);
+      const creds = vault.credentials;
+      if (creds) {
+        setLocalJules(creds.julesKey);
+        setLocalGemini(creds.geminiKey);
+        setLocalPat(creds.githubPat);
+        setJulesKey(creds.julesKey);
+        setGeminiKey(creds.geminiKey);
+        setGithubPat(creds.githubPat);
+      }
+      setPassphrase('');
+      setLegacyNotice(null);
+      setVaultNotice(
+        result.migrated.length > 0
+          ? `Migrated ${result.migrated.length} key${result.migrated.length === 1 ? '' : 's'} and wiped plaintext localStorage.`
+          : 'No plaintext keys found — vault is ready.'
+      );
+    } catch (err) {
+      setVaultNotice(err instanceof Error ? err.message : 'Migration failed — vault remains locked.');
+    }
+  };
+
+  const handleExportEncrypted = async () => {
+    const json = await vault.exportVault();
+    if (!json) {
+      setVaultNotice('No encrypted vault to export yet.');
+      return;
+    }
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'repopilot-vault-encrypted.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setVaultNotice('Exported encrypted vault file.');
+  };
+
+  const handleExportPlaintext = () => {
+    if (!allowPlainExport) return;
+    const blob = new Blob(
+      [exportPlaintextOptIn({ julesKey: localJules.trim(), geminiKey: localGemini.trim(), githubPat: localPat.trim() })],
+      { type: 'application/json' }
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'repopilot-keys-plaintext.json';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setAllowPlainExport(false);
+    setVaultNotice('Exported plaintext keys — rotate them if this file leaves your machine.');
+  };
+
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    const text = await file.text();
+    const looksPlain = (() => {
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>;
+        return typeof parsed.julesKey === 'string';
+      } catch {
+        return false;
+      }
+    })();
+    if (looksPlain) {
+      try {
+        const creds = importPlaintextOptIn(text);
+        setLocalJules(creds.julesKey);
+        setLocalGemini(creds.geminiKey);
+        setLocalPat(creds.githubPat);
+        setVaultNotice('Plaintext file loaded into the form — set a passphrase and save to encrypt.');
+      } catch {
+        setVaultNotice('Import file is not an encrypted vault — plaintext imports are blocked.');
+      }
+      return;
+    }
+    setImportText(text);
+    const ok = await vault.importVaultFile(text, passphrase);
+    if (!ok) {
+      setVaultNotice(vault.lastError || LOCKED_MESSAGE);
+      return;
+    }
+    const creds = vault.credentials;
+    if (creds) {
+      setLocalJules(creds.julesKey);
+      setLocalGemini(creds.geminiKey);
+      setLocalPat(creds.githubPat);
+      setJulesKey(creds.julesKey);
+      setGeminiKey(creds.geminiKey);
+      setGithubPat(creds.githubPat);
+    }
+    setVaultNotice('Imported encrypted vault and unlocked.');
   };
 
   const handleClearProvider = (which: 'jules' | 'gemini' | 'github') => {
@@ -303,11 +475,12 @@ export function SettingsModal({
     }
   };
 
-  const handleClearAllKeys = () => {
+  const handleClearAllKeys = async () => {
     if (typeof window === 'undefined') return;
     if (!window.confirm('Clear all saved provider keys in this browser?')) return;
     const removed = clearRepopilotKeys(window.localStorage as unknown as KeyStorage);
     clearAllVerifiedFlags(window.localStorage as unknown as KeyStorage);
+    await vault.clearVault();
     setLocalJules('');
     setLocalGemini('');
     setLocalPat('');
@@ -325,7 +498,7 @@ export function SettingsModal({
     );
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     setLocalJules('');
     setLocalGemini('');
     setLocalPat('');
@@ -344,6 +517,7 @@ export function SettingsModal({
       localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
       clearAllVerifiedFlags(window.localStorage as unknown as KeyStorage);
     }
+    await vault.clearVault();
   };
 
   return (
@@ -360,6 +534,91 @@ export function SettingsModal({
 
       <DialogContent>
         <div className="space-y-5">
+          <div className="space-y-2 p-3.5 rounded-xl bg-slate-900 text-white">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">Encrypted credential vault</span>
+              <Badge
+                variant="outline"
+                className={`text-[11px] ${
+                  vault.status === 'unlocked'
+                    ? 'text-emerald-300 border-emerald-400'
+                    : vault.status === 'locked'
+                      ? 'text-amber-300 border-amber-400'
+                      : 'text-slate-300 border-slate-500'
+                }`}
+              >
+                {vault.status === 'unlocked' ? 'Unlocked' : vault.status === 'locked' ? 'Locked' : 'No vault'}
+              </Badge>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Keys are wrapped with AES-GCM from your passphrase and stored in IndexedDB. Unlocking restores them in memory only.
+            </p>
+            {legacyNotice && (
+              <p className="text-[11px] font-medium text-amber-300">{legacyNotice}</p>
+            )}
+            <Input
+              type="password"
+              placeholder="Vault passphrase"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              className="font-mono text-xs bg-white text-slate-900"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={handleUnlock} className="text-xs bg-white/10 border-white/30 text-white hover:bg-white/20">
+                Unlock
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={handleMigrateLegacy} className="text-xs bg-white/10 border-white/30 text-white hover:bg-white/20">
+                Encrypt & wipe plaintext
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => vault.lock()} className="text-xs bg-white/10 border-white/30 text-white hover:bg-white/20">
+                Lock
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={handleExportEncrypted} className="text-xs bg-white/10 border-white/30 text-white hover:bg-white/20">
+                Export encrypted
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-xs bg-white/10 border-white/30 text-white hover:bg-white/20"
+              >
+                Import file
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  void handleImportFile(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+            {importText ? (
+              <p className="text-[11px] text-slate-400">Import file staged — enter the passphrase and press Import file again to unlock.</p>
+            ) : null}
+            <label className="flex items-start gap-2 text-[11px] text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowPlainExport}
+                onChange={(e) => setAllowPlainExport(e.target.checked)}
+                className="mt-0.5 rounded border-slate-500"
+              />
+              <span>
+                Opt in to plaintext JSON export. {PLAINTEXT_EXPORT_WARNING}
+              </span>
+            </label>
+            {allowPlainExport && (
+              <Button type="button" variant="outline" size="sm" onClick={handleExportPlaintext} className="text-xs bg-amber-500/20 border-amber-400 text-amber-100 hover:bg-amber-500/30">
+                Export plaintext (not recommended)
+              </Button>
+            )}
+            {(vaultNotice || vault.lastError) && (
+              <p className="text-[11px] font-medium text-slate-200">{vaultNotice || vault.lastError}</p>
+            )}
+          </div>
           {verifyGateNotice && (
             <Alert variant="info" className="bg-indigo-50 border-indigo-200">
               <AlertDescription className="text-xs text-indigo-900">{verifyGateNotice}</AlertDescription>

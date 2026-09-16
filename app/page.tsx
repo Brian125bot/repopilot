@@ -9,6 +9,9 @@ import { BlueprintVaultModal } from '@/components/BlueprintVaultModal';
 import { DocumentationModal } from '@/components/DocumentationModal';
 import { Blueprint } from '@/types';
 import { GitPullRequest, Send, Sparkles } from 'lucide-react';
+import { useCredentialVault } from '@/hooks/use-credential-vault';
+import { hasLegacyPlaintext } from '@/lib/credential-vault';
+import type { KeyStorage } from '@/lib/settings-keys';
 
 export default function RepoPilotPage() {
   const [currentStage, setCurrentStage] = React.useState<'stage1' | 'stage2'>('stage1');
@@ -16,7 +19,8 @@ export default function RepoPilotPage() {
   const [vaultOpen, setVaultOpen] = React.useState(false);
   const [docsOpen, setDocsOpen] = React.useState(false);
 
-  // API credentials stored in localStorage
+  // API credentials live in the encrypted vault (memory only when unlocked).
+  const vault = useCredentialVault();
   const [julesKey, setJulesKey] = React.useState('');
   const [geminiKey, setGeminiKey] = React.useState('');
   const [githubPat, setGithubPat] = React.useState('');
@@ -28,18 +32,16 @@ export default function RepoPilotPage() {
   const [blueprints, setBlueprints] = React.useState<Blueprint[]>([]);
   const [activeBlueprint, setActiveBlueprint] = React.useState<Blueprint | null>(null);
 
-  // Hydrate credentials & blueprints from localStorage on mount
+  // Hydrate blueprints from localStorage on mount; credentials come only from
+  // the encrypted vault (memory when unlocked). Legacy plaintext keys force
+  // Settings open for a passphrase migration — never auto-read into state.
   React.useEffect(() => {
     const timer = setTimeout(() => {
       if (typeof window !== 'undefined') {
-        const storedJules = localStorage.getItem('repopilot_jules_key') || '';
-        const storedGemini = localStorage.getItem('repopilot_gemini_key') || '';
-        const storedPat = localStorage.getItem('repopilot_github_pat') || '';
+        if (hasLegacyPlaintext(window.localStorage as unknown as KeyStorage)) {
+          setSettingsOpen(true);
+        }
         const storedBlueprints = localStorage.getItem('repopilot_vault_blueprints');
-
-        if (storedJules) setJulesKey(storedJules);
-        if (storedGemini) setGeminiKey(storedGemini);
-        if (storedPat) setGithubPat(storedPat);
         if (!localStorage.getItem('repopilot_onboarding_dismissed')) {
           setBannerDismissed(false);
         }
@@ -78,6 +80,17 @@ export default function RepoPilotPage() {
     }, 0);
     return () => clearTimeout(timer);
   }, []);
+
+  // Mirror vault credentials into the key props consumed by stage components.
+  // Deferred to a microtask so the setState lands outside the effect body.
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setJulesKey(vault.credentials?.julesKey || '');
+      setGeminiKey(vault.credentials?.geminiKey || '');
+      setGithubPat(vault.credentials?.githubPat || '');
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [vault.credentials]);
 
   const handleDismissBanner = () => {
     setBannerDismissed(true);
@@ -148,6 +161,7 @@ export default function RepoPilotPage() {
         blueprintsCount={blueprints.length}
         githubPat={githubPat}
         activeBlueprint={activeBlueprint}
+        vaultStatus={vault.status}
       />
 
       {/* Main App Container */}
@@ -204,6 +218,7 @@ export default function RepoPilotPage() {
             julesKey={julesKey}
             geminiKey={geminiKey}
             githubPat={githubPat}
+            vaultLocked={vault.isLocked}
             onDispatchSuccess={handleSaveBlueprint}
             onNavigateToStage2={(bp) => {
               if (bp) setActiveBlueprint(bp);
@@ -216,6 +231,7 @@ export default function RepoPilotPage() {
             julesKey={julesKey}
             geminiKey={geminiKey}
             githubPat={githubPat}
+            vaultLocked={vault.isLocked}
             activeBlueprint={activeBlueprint}
             blueprints={blueprints}
             onOpenSettings={() => setSettingsOpen(true)}
@@ -258,6 +274,7 @@ export default function RepoPilotPage() {
         setGeminiKey={setGeminiKey}
         githubPat={githubPat}
         setGithubPat={setGithubPat}
+        vault={vault}
       />
 
       <BlueprintVaultModal

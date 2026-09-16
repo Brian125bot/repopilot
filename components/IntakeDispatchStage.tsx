@@ -43,6 +43,7 @@ import {
 import { buildFirstPassFeatures, recordOutcomeRowWithFeatures } from '@/lib/first-pass-analytics';
 import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
 import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
+import { LOCKED_MESSAGE } from '@/lib/credential-vault';
 import { applySessionSnapshotToBlueprint } from '@/lib/session-poll';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
 import { emptyStage1Defaults, SAMPLE_RATE_LIMITER_CONTRACT } from '@/lib/sample-contract';
@@ -53,6 +54,7 @@ interface IntakeDispatchStageProps {
   julesKey: string;
   geminiKey: string;
   githubPat: string;
+  vaultLocked?: boolean;
   onDispatchSuccess: (blueprint: Blueprint) => void;
   onNavigateToStage2: (blueprint?: Blueprint) => void;
   onOpenSettings: () => void;
@@ -62,6 +64,7 @@ export function IntakeDispatchStage({
   julesKey,
   geminiKey,
   githubPat,
+  vaultLocked = false,
   onDispatchSuccess,
   onNavigateToStage2,
   onOpenSettings,
@@ -352,6 +355,11 @@ export function IntakeDispatchStage({
       !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
     ) {
       setDispatchError(VERIFY_BEFORE_DISPATCH_MESSAGE);
+      onOpenSettings();
+      return;
+    }
+    if (vaultLocked) {
+      setDispatchError(LOCKED_MESSAGE);
       onOpenSettings();
       return;
     }
