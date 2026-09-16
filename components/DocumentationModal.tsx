@@ -320,15 +320,15 @@ export function DocumentationModal({ open, onClose }: DocumentationModalProps) {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
                       <Zap className="h-4 w-4 text-indigo-600" />
-                      How Review Works Here
+                      Operator-True System Mechanics
                     </span>
                   </div>
-                  <ul className="text-xs text-slate-700 leading-relaxed list-disc list-inside space-y-1">
-                    <li>Two stages: dispatch contract → wait for PR → evaluate → continue or new session with brief.</li>
-                    <li>Sanitizer outranks the model: unauthorizedPaths nonempty → −35 and never READY_TO_MERGE.</li>
-                    <li>Continue Jules session posts FailureBrief to the same session; New session with brief omits automationMode and locks startingBranch to the PR head.</li>
-                    <li>READY sends nothing. Every send is a click.</li>
-                    <li>Local gate: npm test && npx tsc --noEmit.</li>
+                  <ul className="text-xs text-slate-700 leading-relaxed list-disc list-inside space-y-1.5">
+                    <li><strong>Decoupled Two-Stage Lifecycle:</strong> Explicitly separates Stage 1 (Intake &amp; Scope Dispatch) from Stage 2 (Gemini PR Audit &amp; Operator Remediation).</li>
+                    <li><strong>Deterministic Sanitizer Priority:</strong> The diff sanitizer outranks LLM evaluation. If <code className="font-mono text-[11px]">unauthorizedPaths</code> exist, it attaches a −35 scope penalty and strictly caps verdict at <code className="font-mono text-[11px]">NEEDS_REVISION</code> (never <code className="font-mono text-[11px]">READY_TO_MERGE</code>).</li>
+                    <li><strong>Click-Gated Operator Remediation:</strong> Offers two explicit paths—&quot;Continue Jules session&quot; (<code className="font-mono text-[11px]">POST /api/jules/message</code> with FailureBrief) and &quot;New session with brief&quot; (remediation targeted to same PR head branch).</li>
+                    <li><strong>Local Browser Analytics:</strong> The <code className="font-mono text-[11px]">First-pass READY N / M</code> navbar readout is sourced solely from local browser storage (<code className="font-mono text-[11px]">repopilot_outcome_log</code>).</li>
+                    <li><strong>Authoritative Local Gate:</strong> Enforces local verification contract (<code className="font-mono text-[11px]">npm ci &amp;&amp; npm test &amp;&amp; npm run lint &amp;&amp; npm run build &amp;&amp; npx tsc --noEmit</code>).</li>
                   </ul>
                 </div>
 
