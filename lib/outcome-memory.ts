@@ -24,6 +24,8 @@ export interface OutcomeLogRow {
   unmetIds?: string[];
   usedPriorSession: boolean;
   at: string;
+  /** COR-40: PR head SHA locked at Evaluate time. Null blocks remediation. */
+  auditedHeadSha?: string | null;
 }
 const EVIDENCE_SNIPPET_CHARS = 240;
 const FIX_LINE_CHARS = 350;
@@ -125,10 +127,14 @@ export function buildFailureBrief(
   const verdict = report.grade?.verdict ?? report.mergeVerdict.status;
   const score = report.grade?.overallScore ?? report.mergeVerdict.overallScore;
 
+  const auditedHeadSha =
+    (blueprint.auditedHeadSha || '').trim() || (report.auditedHeadSha || '').trim() || null;
+
   return {
     sessionId: blueprint.sessionId,
     sessionState: blueprint.sessionState,
     prUrl: blueprint.prUrl,
+    auditedHeadSha,
     verdict,
     score,
     unmetIds,
@@ -155,6 +161,10 @@ export function compileContinuationPrompt(input: {
   brief: FailureBrief;
 }): string {
   const { blueprint, brief } = input;
+  // COR-40: fail-closed — never emit a prompt Jules can run from main without a locked SHA.
+  if (!blueprint.auditedHeadSha?.trim()) {
+    throw new Error('Cannot compile continuation prompt without an audited head SHA. Re-evaluate to lock audited head SHA.');
+  }
   const prRef = brief.prUrl || blueprint.prUrl;
   const header = `<!-- CONTINUATION_CONTRACT: ${blueprint.blueprintId} -->`;
 
@@ -201,9 +211,11 @@ export function compileContinuationPrompt(input: {
     '',
   ].join('\n');
 
+  const auditedSha = blueprint.auditedHeadSha.trim();
   const lock = [
     '## 6. Branch lock',
     `Work ONLY on branch \`${blueprint.branchName}\`${prRef ? ` (PR: ${prRef})` : ''}.`,
+    `LOCKED HEAD BRANCH: ${blueprint.branchName} LOCKED AUDITED SHA: ${auditedSha} If HEAD is not exactly this SHA, stop. Do not create a new branch from main. Operator must re-evaluate.`,
     'Commit and push there so the existing pull request updates.',
     'Do not create a new branch and do not open a new pull request.',
   ].join('\n');
@@ -269,15 +281,19 @@ export function applyNewRemediationSession(
  * completes them via updateOutcomeRow — nothing is invented up front.
  */
 export function buildOutcomeRow(input: {
-  blueprint: Pick<Blueprint, 'blueprintId' | 'repo' | 'sessionId'>;
+  blueprint: Pick<Blueprint, 'blueprintId' | 'repo' | 'sessionId' | 'auditedHeadSha'>;
   turn: OutcomeTurn;
   usedPriorSession: boolean;
   verdict?: OutcomeLogRow['verdict'];
   score?: number;
   unauthorizedCount?: number;
   unmetIds?: string[];
+  auditedHeadSha?: string | null;
   at?: string;
 }): OutcomeLogRow {
+  const fromInput = (input.auditedHeadSha || '').trim();
+  const fromBlueprint = ((input.blueprint as { auditedHeadSha?: string | null }).auditedHeadSha || '').trim();
+  const auditedHeadSha = fromInput || fromBlueprint || null;
   return {
     blueprintId: input.blueprint.blueprintId,
     repo: input.blueprint.repo,
@@ -289,6 +305,7 @@ export function buildOutcomeRow(input: {
     unmetIds: input.unmetIds,
     usedPriorSession: input.usedPriorSession,
     at: input.at || new Date().toISOString(),
+    auditedHeadSha,
   };
 }
 
@@ -307,7 +324,7 @@ export function appendOutcomeRow(rows: OutcomeLogRow[], row: OutcomeLogRow): Out
 export function updateOutcomeRow(
   rows: OutcomeLogRow[],
   match: { blueprintId: string; sessionId?: string },
-  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+  patch: Partial<Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds' | 'auditedHeadSha'>>
 ): OutcomeLogRow[] {
   const list = Array.isArray(rows) ? [...rows] : [];
   for (let i = list.length - 1; i >= 0; i -= 1) {
@@ -360,7 +377,7 @@ export function recordOutcomeRow(row: OutcomeLogRow): OutcomeLogRow[] {
 /** Patches the persisted log's matching row; returns the updated list. */
 export function updateStoredOutcomeRow(
   match: { blueprintId: string; sessionId?: string },
-  patch: Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds'>
+  patch: Partial<Pick<OutcomeLogRow, 'verdict' | 'score' | 'unauthorizedCount' | 'unmetIds' | 'auditedHeadSha'>>
 ): OutcomeLogRow[] {
   const next = updateOutcomeRow(loadOutcomeLog(), match, patch);
   saveOutcomeLog(next);

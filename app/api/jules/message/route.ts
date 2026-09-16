@@ -23,7 +23,27 @@ export async function POST(req: NextRequest) {
     const bodyValidation = await parseRequestBody(JulesMessageBodySchema, req, '/api/jules/message', requestId);
     if (!bodyValidation.success) return bodyValidation.response;
 
-    const { sessionId, prompt } = bodyValidation.data;
+    const { sessionId, prompt, isRemediation, auditedHeadSha, currentHeadSha } = bodyValidation.data;
+    // COR-40: continuation lock without changing sendJulesMessage signature.
+    // Missing or mismatched SHA → 4xx with the same human error. Case-insensitive after trim.
+    if (isRemediation) {
+      const audited = (auditedHeadSha || '').trim();
+      const current = (currentHeadSha || '').trim();
+      if (!audited || !current) {
+        return apiError('/api/jules/message', requestId, {
+          status: 400,
+          code: 'INVALID_INPUT',
+          message: 'Head moved since audit — re-evaluate.',
+        });
+      }
+      if (current.toLowerCase() !== audited.toLowerCase()) {
+        return apiError('/api/jules/message', requestId, {
+          status: 409,
+          code: 'INVALID_INPUT',
+          message: 'Head moved since audit — re-evaluate.',
+        });
+      }
+    }
 
     const result = await sendJulesMessage({ apiKey: julesApiKey, sessionId, prompt });
 

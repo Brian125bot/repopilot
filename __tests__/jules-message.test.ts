@@ -132,4 +132,61 @@ describe('POST /api/jules/message', () => {
     expect(data.success).toBe(true);
     expect(data.sessionId).toBe('sessions/session_9');
   });
+
+  describe('COR-40 continuation SHA lock', () => {
+    const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
+    const OTHER = 'ffffffffffffffffffffffffffffffffffffffff';
+
+    function msgReq(body: unknown) {
+      return new NextRequest('http://localhost:3000/api/jules/message', {
+        method: 'POST',
+        headers: { 'x-jules-api-key': 'test-key' },
+        body: JSON.stringify(body),
+      });
+    }
+
+    it('blocks remediation continuation when SHA is missing', async () => {
+      const res = await POST(
+        msgReq({
+          sessionId: 'sessions/session_9',
+          prompt: 'Fix it',
+          isRemediation: true,
+          auditedHeadSha: SHA,
+        })
+      );
+      expect([400, 409]).toContain(res.status);
+      expect(String((await res.json()).error || '')).toContain('Head moved since audit');
+    });
+
+    it('blocks remediation continuation when SHA mismatches', async () => {
+      const res = await POST(
+        msgReq({
+          sessionId: 'sessions/session_9',
+          prompt: 'Fix it',
+          isRemediation: true,
+          auditedHeadSha: SHA,
+          currentHeadSha: OTHER,
+        })
+      );
+      expect([400, 409]).toContain(res.status);
+      expect(String((await res.json()).error || '')).toContain('Head moved since audit');
+    });
+
+    it('allows remediation continuation when SHA matches (case-insensitive)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        return { ok: true, status: 200, text: async () => '' } as unknown as Response;
+      });
+      const res = await POST(
+        msgReq({
+          sessionId: 'sessions/session_9',
+          prompt: 'Fix it',
+          isRemediation: true,
+          auditedHeadSha: SHA,
+          currentHeadSha: SHA.toUpperCase(),
+        })
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).success).toBe(true);
+    });
+  });
 });

@@ -45,6 +45,7 @@ const blueprint: Blueprint = {
   sessionUrl: 'https://jules.google.com/session/session_quality',
   sessionState: 'COMPLETED',
   prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+  auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
 };
 
 function criterion(overrides: Partial<CriterionResult> & Pick<CriterionResult, 'id' | 'status'>): CriterionResult {
