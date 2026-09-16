@@ -8,7 +8,7 @@ Public Production and Preview Vercel projects MUST leave `JULES_API_KEY`, `GEMIN
 
 ## Where credentials live
 
-- **Browser `localStorage` only:** Jules API key, Gemini API key, and GitHub PAT are entered in Settings and stored in that browser (`repopilot_jules_key`, `repopilot_gemini_key`, `repopilot_github_pat`).
+- **Encrypted browser vault (COR-35):** Jules API key, Gemini API key, and GitHub PAT are wrapped with WebCrypto AES-GCM from a passphrase-derived KEK and stored as ciphertext in IndexedDB (`repopilot-credential-vault`). Unlocking restores them in memory only. Legacy plaintext entries (`repopilot_jules_key`, `repopilot_gemini_key`, `repopilot_github_pat`) are migrated one-shot and wiped from `localStorage`; when locked, DevTools shows zero plaintext secrets. The vault auto-locks after 20 minutes idle and immediately when the tab hides/closes; Dispatch, Evaluate, and Continue fail closed while locked.
 - **Per-request headers:** The UI sends `x-jules-api-key`, `x-gemini-api-key`, and `x-github-pat` over HTTPS to same-origin `/api/*` routes. Those routes forward credentials to Jules, Gemini, or GitHub. They are not written to a database or the filesystem.
 - **Optional server defaults:** `JULES_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_PAT` in the environment are optional. A public Vercel deploy can run with none of them set.
 

@@ -9,6 +9,7 @@ import { deriveJobStatus, jobChromeTone, jobStatusDetail, type JobStatusLabel } 
 import { countFirstPassReady } from '@/lib/first-pass-analytics';
 import { loadOutcomeLog, OUTCOME_LOG_KEY } from '@/lib/outcome-memory';
 import { Blueprint } from '@/types';
+import type { VaultStatus } from '@/lib/credential-vault';
 
 interface NavbarProps {
   currentStage: 'stage1' | 'stage2';
@@ -20,6 +21,7 @@ interface NavbarProps {
   blueprintsCount: number;
   githubPat?: string;
   activeBlueprint?: Blueprint | null;
+  vaultStatus?: VaultStatus;
 }
 
 export function Navbar({
@@ -32,6 +34,7 @@ export function Navbar({
   blueprintsCount,
   githubPat = '',
   activeBlueprint = null,
+  vaultStatus,
 }: NavbarProps) {
   const jobLabel: JobStatusLabel = deriveJobStatus(activeBlueprint);
   const jobDetail = jobStatusDetail(activeBlueprint);
@@ -177,6 +180,26 @@ export function Navbar({
           >
             <Key className="h-3.5 w-3.5 text-indigo-600" />
             <span className="hidden sm:inline">Credentials</span>
+            {vaultStatus !== undefined && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                  vaultStatus === 'unlocked'
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : vaultStatus === 'locked'
+                      ? 'bg-amber-100 text-amber-800'
+                      : 'bg-slate-100 text-slate-600'
+                }`}
+                title={
+                  vaultStatus === 'unlocked'
+                    ? 'Credential vault unlocked'
+                    : vaultStatus === 'locked'
+                      ? 'Credential vault locked'
+                      : 'No encrypted vault yet'
+                }
+              >
+                {vaultStatus === 'unlocked' ? 'Unlocked' : vaultStatus === 'locked' ? 'Locked' : 'No vault'}
+              </span>
+            )}
             <span
               className={`h-2 w-2 rounded-full ${
                 hasCredentials ? 'bg-emerald-500 ring-2 ring-emerald-100' : 'bg-amber-400 ring-2 ring-amber-100'

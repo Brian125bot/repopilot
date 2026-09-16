@@ -2,6 +2,12 @@ export const JULES_KEY_STORAGE_KEY = 'repopilot_jules_key';
 export const GEMINI_KEY_STORAGE_KEY = 'repopilot_gemini_key';
 export const GITHUB_PAT_STORAGE_KEY = 'repopilot_github_pat';
 
+export const LEGACY_CREDENTIAL_STORAGE_KEYS = [
+  JULES_KEY_STORAGE_KEY,
+  GEMINI_KEY_STORAGE_KEY,
+  GITHUB_PAT_STORAGE_KEY,
+];
+
 export const VERIFIED_JULES_KEY = 'repopilot_verified_jules';
 export const VERIFIED_GEMINI_KEY = 'repopilot_verified_gemini';
 export const VERIFIED_GITHUB_KEY = 'repopilot_verified_github';
