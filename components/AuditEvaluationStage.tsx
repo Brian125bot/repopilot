@@ -566,11 +566,20 @@ export function AuditEvaluationStage({
         const completed = data.report as GeminiAuditReport;
         const gradeVerdict = completed.grade?.verdict ?? completed.mergeVerdict.status;
         const gradeScore = completed.grade?.overallScore ?? completed.mergeVerdict.overallScore;
+        // COR-40: lock the graded commit. Null blocks remediation until re-evaluate.
+        const auditedHeadSha =
+          (completed.auditedHeadSha ||
+            (data as { auditedHeadSha?: string | null }).auditedHeadSha ||
+            prMetadata?.headSha ||
+            ''
+          ).trim() || null;
+        (completed as GeminiAuditReport).auditedHeadSha = auditedHeadSha;
         updateStoredOutcomeRow(
           { blueprintId: hydratedBlueprint.blueprintId, sessionId: hydratedBlueprint.sessionId },
           {
             verdict: gradeVerdict,
             score: gradeScore,
+            auditedHeadSha,
             unauthorizedCount:
               completed.grade?.diffFacts?.unauthorizedCount ??
               sanitizedResult.stats?.unauthorizedPaths?.length ??
@@ -582,13 +591,17 @@ export function AuditEvaluationStage({
         );
         // Outcome memory: attach the compact brief so remediation can continue
         // from it (in-memory + vault, without disturbing the active hydration).
-        const briefed: Blueprint = {
+        const briefedBase: Blueprint = {
           ...hydratedBlueprint,
           prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
+          auditedHeadSha,
+        };
+        const briefed: Blueprint = {
+          ...briefedBase,
           lastBrief: buildFailureBrief(
             completed,
             {
-              ...hydratedBlueprint,
+              ...briefedBase,
               prUrl: prMetadata?.htmlUrl || hydratedBlueprint.prUrl,
             },
             sanitizedResult.stats?.unauthorizedPaths || []

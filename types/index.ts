@@ -72,6 +72,8 @@ export interface Blueprint {
   prUrl?: string;
   prTitle?: string;
   isRemediation?: boolean;
+  /** COR-40: PR head SHA locked at Evaluate time. Null when SHA was unavailable — remediation blocked. */
+  auditedHeadSha?: string | null;
   /** Latest compact outcome brief for continuation (v0.3 outcome memory). */
   lastBrief?: FailureBrief;
 }
@@ -82,6 +84,8 @@ export interface FailureBrief {
   sessionId?: string;
   sessionState?: string;
   prUrl?: string;
+  /** COR-40: audited PR head SHA carried from blueprint/report. Null blocks remediation. */
+  auditedHeadSha?: string | null;
   verdict: 'READY_TO_MERGE' | 'NEEDS_REVISION' | 'BLOCKED';
   score: number;
   unmetIds: string[];
@@ -222,6 +226,8 @@ export interface GeminiAuditReport {
   prUrl?: string;
   baseBranch?: string;
   headBranch?: string;
+  /** COR-40: PR head SHA that was graded. Null when unavailable — remediation blocked until re-evaluate. */
+  auditedHeadSha?: string | null;
   /** Sanitizer file/line facts stamped at evaluate time. */
   diffFacts?: AuditDiffFacts;
   /** Server-computed single truth. UI renders this; recompute client-side only when missing (old cached reports). */
@@ -256,6 +262,8 @@ export interface PRMetadata {
   htmlUrl: string;
   baseBranch: string;
   headBranch: string;
+  /** COR-40: live PR head SHA from GitHub (prData.head.sha). Null for manual diffs. */
+  headSha?: string | null;
   state: string;
   body?: string;
   embeddedBlueprint?: Blueprint | null;

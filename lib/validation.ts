@@ -162,6 +162,7 @@ export const AuditEvaluateBodySchema = z.object({
       htmlUrl: z.string().optional(),
       baseBranch: z.string().optional(),
       headBranch: z.string().optional(),
+      headSha: z.string().optional().nullable(),
     })
     .optional(),
 });
@@ -236,6 +237,8 @@ export const JulesDispatchBodySchema = z
     testCommand: z.string().optional(),
     prNumber: z.union([z.number(), z.string()]).optional(),
     prUrl: z.string().optional(),
+    auditedHeadSha: z.string().optional().nullable(),
+    currentHeadSha: z.string().optional().nullable(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -250,12 +253,35 @@ export const JulesDispatchBodySchema = z
     }
 
     const requestedHead = data.startingBranch?.trim() || data.branchName?.trim() || data.explicitStartingBranch?.trim() || '';
-    if (isRemediation && !requestedHead) {
+    // COR-11 kept: never allow missing or main/default fallback for remediation.
+    if (isRemediation && (!requestedHead || requestedHead.toLowerCase() === 'main')) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['branchName'],
         message: 'Remediation requires startingBranch = audited PR head',
       });
+    }
+
+    // COR-40: remediation is locked to the audited commit, not the drifted tip.
+    // Omission of currentHeadSha is a reject, not an allow.
+    if (isRemediation) {
+      const audited = (data.auditedHeadSha || '').trim();
+      if (!audited) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['auditedHeadSha'],
+          message: 'Remediation blocked — re-evaluate to lock audited head SHA.',
+        });
+      } else {
+        const current = (data.currentHeadSha || '').trim();
+        if (!current || current.toLowerCase() !== audited.toLowerCase()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['currentHeadSha'],
+            message: 'Head moved since audit — re-evaluate.',
+          });
+        }
+      }
     }
 
     const rawCriteria = data.criteria;
@@ -280,8 +306,26 @@ export const JulesMessageBodySchema = z
       .string({ message: 'Prompt is required. Provide prompt.' })
       .trim()
       .min(1, 'Prompt is required. Provide prompt.'),
+    isRemediation: z.boolean().optional(),
+    prUrl: z.string().optional(),
+    auditedHeadSha: z.string().optional().nullable(),
+    currentHeadSha: z.string().optional().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    // COR-40: continuation lock. Non-remediation follow-ups stay open.
+    // Empty / whitespace / null all reject with the same human error.
+    if (!data.isRemediation) return;
+    const audited = (data.auditedHeadSha || '').trim();
+    const current = (data.currentHeadSha || '').trim();
+    if (!audited || !current || current.toLowerCase() !== audited.toLowerCase()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['currentHeadSha'],
+        message: 'Head moved since audit — re-evaluate.',
+      });
+    }
+  });
 
 // 7. app/api/jules/session
 export const JulesSessionQuerySchema = z.object({

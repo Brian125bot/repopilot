@@ -222,10 +222,12 @@ export interface RemediationPromptInput {
   prUrl?: string;
   report: GeminiAuditReport;
   fileBoundaries?: string[];
+  /** COR-40: audited PR head SHA. When present it is locked into the branch directive. */
+  auditedHeadSha?: string | null;
 }
 
 export function compileRemediationPrompt(input: RemediationPromptInput): string {
-  const { targetBranch, baseBranch = 'main', prNumber, prUrl, report, fileBoundaries } = input;
+  const { targetBranch, baseBranch = 'main', prNumber, prUrl, report, fileBoundaries, auditedHeadSha } = input;
   const { criteriaResults, scopeIntegrity, mergeVerdict } = report;
 
   // Grade truth when the server attached it; otherwise derive the same math
@@ -286,12 +288,18 @@ export function compileRemediationPrompt(input: RemediationPromptInput): string 
     ? `\n- **Change Risk:** ${grade.blast.rating} — ${grade.diffFacts.filesTouched} files, +${grade.diffFacts.linesAdded}/−${grade.diffFacts.linesRemoved}${grade.diffFacts.truncated ? ' (diff truncated; risk may be understated)' : ''}${grade.blast.grounded ? '' : ' (model estimate — line stats unavailable)'}`
     : '';
 
+  const lockedSha = (auditedHeadSha || report.auditedHeadSha || '').trim() || null;
+  const shaLockLine = lockedSha
+    ? `\n- **Audited Head SHA:** \`${lockedSha}\` — remediate ONLY this commit. If the live head differs, stop and re-evaluate.`
+    : `\n- **Audited Head SHA:** missing — re-evaluate to lock the audited commit before remediating.`;
+
   return `### CRITICAL BRANCH WORKFLOW DIRECTIVE:
 You are assigned to remediate ${prReference}:
 ${prUrl || ''}
 
 You MUST check out and apply all code modifications directly to the audited branch:
 \`${targetBranch}\`
+${lockedSha ? `LOCKED HEAD BRANCH: ${targetBranch} LOCKED AUDITED SHA: ${lockedSha} If HEAD is not exactly this SHA, stop. Do not create a new branch from main. Operator must re-evaluate.` : 'LOCKED HEAD BRANCH: missing — re-evaluate to lock the audited commit before remediating.'}
 
 DO NOT create an alternate branch or start over from the base branch (${baseBranch}). All fixes, refactors, and test additions must be committed and pushed directly to \`${targetBranch}\` so the pull request automatically updates with your changes.
 
@@ -301,7 +309,7 @@ DO NOT create an alternate branch or start over from the base branch (${baseBran
 - **Verdict:** ${verdict} (${score}/100)
 - **Score:** ${grade.scoreParts.criteria} criteria − ${grade.scoreParts.scope} scope = ${score}
 - **Next:** ${nextStep}
-- **Scope Integrity:** ${scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}${unauthorizedSection}${changeRiskLine}
+- **Scope Integrity:** ${scopeIntegrity.strictlyInScope ? 'Compliant' : 'VIOLATED'}${unauthorizedSection}${changeRiskLine}${shaLockLine}
 
 #### Key Blockers:
 ${blockersSection}

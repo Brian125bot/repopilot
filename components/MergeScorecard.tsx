@@ -86,6 +86,7 @@ export function MergeScorecard({
   const [copiedPrompt, setCopiedPrompt] = React.useState(false);
   const [copiedSummary, setCopiedSummary] = React.useState(false);
   const [copiedUrl, setCopiedUrl] = React.useState(false);
+  const [headMovedToast, setHeadMovedToast] = React.useState<string | null>(null);
 
   // Remediation Dispatch State
   const [isDispatching, setIsDispatching] = React.useState(false);
@@ -161,11 +162,78 @@ export function MergeScorecard({
     return 'https://github.com';
   }, [prMetadata, cleanRepo, auditedBranch]);
 
+  // COR-40: audited commit lock — remediation targets the graded SHA, not the drifted tip.
+  const auditedHeadSha = React.useMemo(() => {
+    const fromBlueprint = (blueprint?.auditedHeadSha || '').trim();
+    if (fromBlueprint) return fromBlueprint;
+    const fromBrief = (blueprint?.lastBrief?.auditedHeadSha || '').trim();
+    if (fromBrief) return fromBrief;
+    const fromReport = (report.auditedHeadSha || '').trim();
+    return fromReport || null;
+  }, [blueprint, report]);
+
+  const liveHeadSha = React.useMemo(
+    () => (prMetadata?.headSha || '').trim() || null,
+    [prMetadata]
+  );
+
+  const resolveLiveHeadSha = React.useCallback(async (): Promise<string | null> => {
+    // Prefer a fresh fetch-diff read so a head that moved after ingest is caught.
+    // Fail-soft to the ingested headSha when the API is unreachable.
+    try {
+      const refreshHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (githubPat) refreshHeaders['x-github-pat'] = githubPat;
+      const refreshRes = await fetch('/api/audit/fetch-diff', {
+        method: 'POST',
+        headers: refreshHeaders,
+        body: JSON.stringify({ prUrl: copyableUrl }),
+      });
+      const refreshData = await refreshRes.json().catch(() => null);
+      const sha =
+        refreshRes.ok && refreshData && typeof refreshData.pr?.headSha === 'string'
+          ? refreshData.pr.headSha.trim()
+          : '';
+      if (sha) return sha;
+    } catch {
+      // Fall through to ingested SHA.
+    }
+    return liveHeadSha;
+  }, [copyableUrl, githubPat, liveHeadSha]);
+
+  /** COR-40 gate: null SHA blocks; drifted head blocks with the exact toast. */
+  const checkHeadFreshness = React.useCallback(
+    async (): Promise<{ ok: true; audited: string; live: string | null } | { ok: false; error: string }> => {
+      const audited = (auditedHeadSha || '').trim();
+      if (!audited) {
+        return { ok: false, error: 'Remediation blocked — re-evaluate to lock audited head SHA.' };
+      }
+      const live = await resolveLiveHeadSha();
+      if (live && live.toLowerCase() !== audited.toLowerCase()) {
+        return { ok: false, error: 'Head moved since audit — re-evaluate.' };
+      }
+      if (!live) {
+        return { ok: false, error: 'Head moved since audit — re-evaluate.' };
+      }
+      return { ok: true, audited, live };
+    },
+    [auditedHeadSha, resolveLiveHeadSha]
+  );
+
   // Formatted complete remediation prompt explicitly directing Jules to make changes on the audited branch.
   // When a stored brief exists, continue from it instead of rebuilding from the raw report.
   const defaultRemediationPrompt = React.useMemo(() => {
-    if (blueprint?.lastBrief) {
-      return compileContinuationPrompt({ blueprint, brief: blueprint.lastBrief });
+    if (blueprint?.lastBrief && auditedHeadSha) {
+      try {
+        return compileContinuationPrompt({
+          blueprint: { ...blueprint, auditedHeadSha },
+          brief: {
+            ...blueprint.lastBrief,
+            auditedHeadSha: blueprint.lastBrief.auditedHeadSha || auditedHeadSha,
+          },
+        });
+      } catch {
+        // Fall through to remediation prompt when lock cannot be built.
+      }
     }
     return compileRemediationPrompt({
       targetBranch: auditedBranch,
@@ -174,8 +242,9 @@ export function MergeScorecard({
       prUrl: copyableUrl,
       report,
       fileBoundaries,
+      auditedHeadSha,
     });
-  }, [blueprint, copyableUrl, auditedBranch, prMetadata, report, fileBoundaries]);
+  }, [blueprint, copyableUrl, auditedBranch, prMetadata, report, fileBoundaries, auditedHeadSha]);
 
   // Follow-up messaging on an existing session (continuation turn)
   const [followUpText, setFollowUpText] = React.useState('');
@@ -235,14 +304,24 @@ export function MergeScorecard({
 
   const continueBrief = React.useMemo(() => {
     if (!blueprint) return null;
-    if (blueprint.lastBrief) return blueprint.lastBrief;
-    return buildFailureBrief(report, blueprint, report.scopeIntegrity?.unauthorizedFiles || []);
-  }, [blueprint, report]);
+    const withSha: Blueprint = { ...blueprint, auditedHeadSha: blueprint.auditedHeadSha || auditedHeadSha };
+    if (blueprint.lastBrief)
+      return { ...blueprint.lastBrief, auditedHeadSha: blueprint.lastBrief.auditedHeadSha || auditedHeadSha };
+    try {
+      return buildFailureBrief(report, withSha, report.scopeIntegrity?.unauthorizedFiles || []);
+    } catch {
+      return null;
+    }
+  }, [blueprint, report, auditedHeadSha]);
 
   const continuePrompt = React.useMemo(() => {
-    if (!blueprint || !continueBrief) return '';
-    return compileContinuationPrompt({ blueprint, brief: continueBrief });
-  }, [blueprint, continueBrief]);
+    if (!blueprint || !continueBrief || !auditedHeadSha) return '';
+    try {
+      return compileContinuationPrompt({ blueprint: { ...blueprint, auditedHeadSha }, brief: continueBrief });
+    } catch {
+      return '';
+    }
+  }, [blueprint, continueBrief, auditedHeadSha]);
 
   // Active prompt in view or edit
   const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
@@ -301,6 +380,14 @@ export function MergeScorecard({
   const handleContinueJulesSession = async () => {
     if (verdictForGate === 'READY_TO_MERGE') return;
     if (!blueprint || !continueSessionId || !continuePrompt) return;
+    // COR-40: refuse continuation that would leave the audited commit.
+    const freshness = await checkHeadFreshness();
+    if (!freshness.ok) {
+      setHeadMovedToast(freshness.error);
+      setContinueResult({ success: false, error: freshness.error });
+      return;
+    }
+    setHeadMovedToast(null);
     setIsContinuing(true);
     setContinueResult(null);
     try {
@@ -309,7 +396,14 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/message', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ sessionId: continueSessionId, prompt: continuePrompt }),
+        body: JSON.stringify({
+          sessionId: continueSessionId,
+          prompt: continuePrompt,
+          isRemediation: true,
+          prUrl: copyableUrl,
+          auditedHeadSha: freshness.audited,
+          currentHeadSha: freshness.live,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.success === false) {
@@ -336,6 +430,14 @@ export function MergeScorecard({
 
   const handleDispatchRemediationToJules = async (promptOverride?: string) => {
     if (verdictForGate === 'READY_TO_MERGE') return;
+    // COR-40: compare live head SHA to the stored audited SHA before dispatch.
+    const freshness = await checkHeadFreshness();
+    if (!freshness.ok) {
+      setHeadMovedToast(freshness.error);
+      setDispatchResult({ success: false, warningMessage: freshness.error, targetBranch: auditedBranch });
+      return;
+    }
+    setHeadMovedToast(null);
     setIsDispatching(true);
     setDispatchResult(null);
 
@@ -359,6 +461,8 @@ export function MergeScorecard({
           branchName: auditedBranch,
           startingBranch: auditedBranch, // DIRECTS JULES JUST TO MAKE THE CHANGES ON THE AUDITED BRANCH
           isRemediation: true,
+          auditedHeadSha: freshness.audited,
+          currentHeadSha: freshness.live || liveHeadSha || freshness.audited,
           prNumber: prMetadata?.number,
           prUrl: copyableUrl,
           customPrompt: promptToSend,
@@ -498,6 +602,13 @@ export function MergeScorecard({
 
   return (
     <div className="space-y-6 animate-in fade-in-50 duration-300">
+      {headMovedToast && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Remediation blocked</AlertTitle>
+          <AlertDescription>{headMovedToast}</AlertDescription>
+        </Alert>
+      )}
       <ScoreHeader
         report={report}
         prMetadata={prMetadata}
@@ -783,6 +894,17 @@ export function MergeScorecard({
                 </p>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
                   The automated dispatch below passes <code className="font-mono text-slate-800">startingBranch: &quot;{auditedBranch}&quot;</code> directly into the Google Jules API. Jules will checkout and commit remediation fixes exclusively on this audited branch so the pull request automatically updates.
+                </p>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Audited head SHA:{' '}
+                  {auditedHeadSha ? (
+                    <code className="font-mono text-slate-800 bg-white px-1.5 py-0.5 rounded border border-indigo-200">{auditedHeadSha.slice(0, 12)}…</code>
+                  ) : (
+                    <span className="font-semibold text-amber-700">missing — re-evaluate to lock</span>
+                  )}
+                  {liveHeadSha && auditedHeadSha && liveHeadSha.toLowerCase() !== auditedHeadSha.toLowerCase() && (
+                    <span className="font-semibold text-red-700"> — live head has moved</span>
+                  )}
                 </p>
               </div>
             </div>

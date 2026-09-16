@@ -77,6 +77,9 @@ describe('dispatch pre-dispatch gate (P0)', () => {
         dispatchBody({
           criteria: [],
           isRemediation: true,
+          startingBranch: 'jules/test-gate',
+          auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+          currentHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
           // remediation gets default criteria, so should succeed in dryRun
         })
       )
@@ -84,6 +87,112 @@ describe('dispatch pre-dispatch gate (P0)', () => {
     expect(remediation.status).toBe(200);
     const data = await remediation.json();
     expect(data.blueprint.isRemediation).toBe(true);
+  });
+
+  describe('COR-40 audited SHA lock', () => {
+    const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
+    const OTHER = 'ffffffffffffffffffffffffffffffffffffffff';
+
+    it('allows remediation when currentHeadSha matches auditedHeadSha (case-insensitive)', async () => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'jules/test-gate',
+            auditedHeadSha: SHA,
+            currentHeadSha: SHA.toUpperCase(),
+          })
+        )
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.blueprint.auditedHeadSha).toBe(SHA);
+    });
+
+    it('blocks remediation when currentHeadSha is omitted', async () => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'jules/test-gate',
+            auditedHeadSha: SHA,
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(String(data.error || data.message || '')).toContain('Head moved since audit');
+    });
+
+    it.each([
+      { name: 'empty', value: '' },
+      { name: 'whitespace', value: '   ' },
+      { name: 'null', value: null },
+    ])('blocks remediation when currentHeadSha is $name', async ({ value }) => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'jules/test-gate',
+            auditedHeadSha: SHA,
+            currentHeadSha: value,
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+      expect(String((await res.json()).error || '')).toContain('Head moved since audit');
+    });
+
+    it('blocks remediation when current head differs from audited SHA', async () => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'jules/test-gate',
+            auditedHeadSha: SHA,
+            currentHeadSha: OTHER,
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+      expect(String((await res.json()).error || '')).toContain('Head moved since audit');
+    });
+
+    it('blocks remediation when auditedHeadSha is missing', async () => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'jules/test-gate',
+            currentHeadSha: SHA,
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('blocks remediation when startingBranch is main fallback', async () => {
+      const res = await POST(
+        req(
+          dispatchBody({
+            criteria: [],
+            isRemediation: true,
+            startingBranch: 'main',
+            branchName: 'main',
+            auditedHeadSha: SHA,
+            currentHeadSha: SHA,
+          })
+        )
+      );
+      expect(res.status).toBe(400);
+      expect(String((await res.json()).error || '')).toMatch(/startingBranch/i);
+    });
   });
 
   it('embeds category + Why and DoD self-check in compiled first-pass prompt', async () => {

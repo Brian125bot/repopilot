@@ -122,6 +122,8 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
         branchName: 'jules/pr-42-remediation-branch',
         startingBranch: 'jules/pr-42-remediation-branch',
         isRemediation: true,
+        auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+        currentHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
         prNumber: 42,
         prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
         objective: 'Fix rate limiter test',
@@ -464,6 +466,8 @@ describe('/api/jules/dispatch Route & Jules API Contract', () => {
           startingBranch: 'feature/audited',
           branchName: 'feature/audited',
           isRemediation: true,
+          auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+          currentHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
         })
       );
       expect(res.status).toBe(200);
@@ -618,6 +622,8 @@ describe('Jules client library (lib/jules.ts)', () => {
           branchName: 'jules/pair-fix',
           startingBranch: 'jules/pair-fix',
           isRemediation: true,
+          auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
+          currentHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
           objective: 'Fix',
           criteria: [{ id: '1', text: 'Fix', category: 'functional' }],
         }),

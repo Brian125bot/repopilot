@@ -32,7 +32,22 @@ export async function POST(req: NextRequest) {
       repoContext,
       testCommand = '',
       prNumber,
+      auditedHeadSha: rawAuditedHeadSha,
+      currentHeadSha: rawCurrentHeadSha,
     } = bodyValidation.data;
+
+    // COR-40: defense-in-depth — remediation is locked to the audited commit.
+    // Validation already rejects, but re-check here so a schema bypass can never dispatch.
+    if (isRemediation) {
+      const audited = (rawAuditedHeadSha || '').trim();
+      if (!audited) {
+        return apiError('/api/jules/dispatch', requestId, { status: 400, code: 'INVALID_INPUT', message: 'Remediation blocked — re-evaluate to lock audited head SHA.' });
+      }
+      const current = (rawCurrentHeadSha || '').trim();
+      if (!current || current.toLowerCase() !== audited.toLowerCase()) {
+        return apiError('/api/jules/dispatch', requestId, { status: 409, code: 'INVALID_INPUT', message: 'Head moved since audit — re-evaluate.' });
+      }
+    }
 
     const explicitStartingBranch = startingBranch || explicitStartingBranchArg;
 
@@ -80,11 +95,9 @@ export async function POST(req: NextRequest) {
         : [];
 
     const headerJulesKey = req.headers.get('x-jules-api-key');
-    const headerGithubPat = req.headers.get('x-github-pat');
     const julesApiKey =
       sanitizeJulesCredential(headerJulesKey || '') ||
       sanitizeJulesCredential(process.env.JULES_API_KEY || '');
-    const githubPat = headerGithubPat?.trim() || process.env.GITHUB_PAT?.trim();
 
     if (!dryRun && !julesApiKey) {
       return apiError('/api/jules/dispatch', requestId, { status: 401, code: 'UNAUTHORIZED', message: 'No Google Jules API key configured. Provide an API key via request headers or environment variables, or enable dryRun mode.', details: { dryRun: false } });
@@ -140,20 +153,6 @@ export async function POST(req: NextRequest) {
       baseBranch.trim() ||
       'main';
 
-    if (githubPat) {
-      try {
-        const ghCheck = await fetch(`https://api.github.com/repos/${cleanRepo}`, {
-          headers: {
-            Authorization: `Bearer ${githubPat}`,
-            'User-Agent': 'RepoPilot-AuditEngine',
-          },
-        });
-        if (!ghCheck.ok && ghCheck.status !== 404) {
-        }
-      } catch (err) {
-      }
-    }
-
     let sessionId: string | undefined = undefined;
     let sessionUrl: string | undefined = undefined;
     let sessionState: string | undefined = undefined;
@@ -197,6 +196,7 @@ export async function POST(req: NextRequest) {
       sessionId = `dry_${blueprintId}`;
     }
 
+    const normalizedAuditedHeadSha = (rawAuditedHeadSha || '').trim() || null;
     const completeBlueprint: Blueprint = {
       blueprintId,
       repo: cleanRepo,
@@ -214,6 +214,7 @@ export async function POST(req: NextRequest) {
       prUrl: undefined,
       prTitle: undefined,
       isRemediation,
+      ...(normalizedAuditedHeadSha ? { auditedHeadSha: normalizedAuditedHeadSha } : {}),
     };
 
     return NextResponse.json({

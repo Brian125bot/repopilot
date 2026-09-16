@@ -22,6 +22,7 @@ const blueprint: Blueprint = {
   sessionUrl: 'https://jules.google.com/session/session_9',
   sessionState: 'COMPLETED',
   prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+  auditedHeadSha: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4',
 };
 
 const buildReport = (overrides?: Partial<GeminiAuditReport>): GeminiAuditReport => ({
@@ -296,5 +297,35 @@ describe('applyNewRemediationSession', () => {
     expect(rebound.sessionUrl).toBe('https://jules.google.com/session/remediation_456');
     expect(rebound.sessionState).toBe('QUEUED');
     expect(rebound.blueprintId).toBe(blueprint.blueprintId);
+  });
+});
+
+describe('COR-40 audited SHA lock', () => {
+  const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4';
+
+  it('Section 6 embeds the audited SHA in plain text with branch lock', () => {
+    const prompt = compileContinuationPrompt({
+      blueprint,
+      brief: buildFailureBrief(buildReport(), blueprint, []),
+    });
+    expect(prompt).toContain('## 6. Branch lock');
+    expect(prompt).toContain(SHA);
+    expect(prompt).toContain('LOCKED HEAD BRANCH');
+    expect(prompt).toContain('LOCKED AUDITED SHA');
+    expect(prompt).toContain('Do not create a new branch from main');
+  });
+
+  it('missing SHA throws instead of emitting a runnable prompt', () => {
+    const bare = { ...blueprint, auditedHeadSha: null };
+    const brief = buildFailureBrief(buildReport(), { ...blueprint, auditedHeadSha: SHA }, []);
+    const bareBrief = { ...brief, auditedHeadSha: null };
+    expect(() =>
+      compileContinuationPrompt({ blueprint: bare, brief: bareBrief })
+    ).toThrow(/audited head SHA/i);
+  });
+
+  it('FailureBrief carries auditedHeadSha from blueprint/report', () => {
+    const brief = buildFailureBrief(buildReport(), blueprint, []);
+    expect(brief.auditedHeadSha).toBe(SHA);
   });
 });
