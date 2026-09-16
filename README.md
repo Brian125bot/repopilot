@@ -2,13 +2,13 @@
 
 <div align="center">
 
-[![Next.js](https://img.shields.io/badge/Next.js-15.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-15.5-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Vitest](https://img.shields.io/badge/Vitest-5.0.0-brightgreen?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Gemini](https://img.shields.io/badge/Gemini-PR%20Audit%20Engine-8E75B2?style=flat-square&logo=google)](https://ai.google.dev/)
 [![Jules](https://img.shields.io/badge/Google%20Jules-Async%20Cloud%20Agent-4285F4?style=flat-square&logo=googlecloud)](https://jules.google.com/)
 
-**Decoupled Autonomous Agent Architecture with Mathematical Anti-Drift Boundary Enforcement and Operator-in-the-Loop Continue-with-Brief Remediation**
+**Decoupled Autonomous Agent Control Plane with WebCrypto Credential Isolation, Deterministic Anti-Drift Boundary Enforcement, and Click-Gated Operator Remediation**
 
 </div>
 
@@ -16,15 +16,150 @@
 
 ## 📚 Documentation Hub
 
-RepoPilot **1.0.1** documentation:
+RepoPilot **1.0.2** documentation:
 
-- 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: Settings keys → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
+- 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: WebCrypto vault setup → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
 - ⚙️ **[Technical Systems Specification](./docs/TECHNICAL_SPECIFICATION.md)**: Architecture, diff parsing, glob compilation, hydration, Gemini schema, threat model.
-- 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally: `npm ci && npm test` (runs vitest) `&& npm run lint && npm run build && npx tsc --noEmit`.
+- 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally:
+added 464 packages, and audited 465 packages in 21s
+
+165 packages are looking for funding
+  run `npm fund` for details
+
+2 vulnerabilities (1 moderate, 1 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> repopilot@1.0.1 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90m/app[39m
+
+ [32m✓[39m __tests__/audit-grade.test.ts [2m([22m[2m34 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m __tests__/remediation-prompt-quality.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 73[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-memory.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m __tests__/jules-dispatch.test.ts [2m([22m[2m50 tests[22m[2m)[22m[32m 84[2mms[22m[39m
+ [32m✓[39m __tests__/audit-engine.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 57[2mms[22m[39m
+ [32m✓[39m __tests__/settings-verify.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 48[2mms[22m[39m
+ [32m✓[39m __tests__/validation.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m __tests__/merge-readiness.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m __tests__/jules-session.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m __tests__/dispatch-gate.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m __tests__/vault.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m __tests__/jules-message.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m __tests__/prompt-compiler.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m __tests__/diff-sanitizer.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m __tests__/audit-server-grade.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/gemini-scoring.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m __tests__/github-status.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m __tests__/diff-sanitizer-extended.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m __tests__/repo-inspect-deep.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m __tests__/tree-grounding.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m __tests__/first-pass-analytics.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m __tests__/contract-lint.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m __tests__/audited-sha-persist.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m __tests__/blueprint-vault.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m __tests__/scoring-extended.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-migration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 405[2mms[22m[39m
+ [32m✓[39m __tests__/remediation-workflow.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/jules-github-helpers.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m __tests__/security-headers.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/criteria-generate-balance.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m __tests__/github-pr-lookup.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-log.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-grade.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m __tests__/session-poll.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/job-status.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/scorecard-smoke.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-crypto.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 1969[2mms[22m[39m
+   [32m✓[39m credential vault AES-GCM round-trip [2m(11)[22m
+     [33m[2m✓[22m[39m fails closed with a fixed sentence on wrong passphrase[33m 385[2mms[22m[39m
+ [32m✓[39m __tests__/settings-keys.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/first-pass-storage.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/stage-handoff.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/api-routes-extended.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 169[2mms[22m[39m
+ [32m✓[39m __tests__/infra.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-lock.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 417[2mms[22m[39m
+ [32m✓[39m __tests__/v1-release.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/sample-contract.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/evaluate-timeout.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m46 passed[39m[22m[90m (46)[39m
+[2m      Tests [22m [1m[32m453 passed[39m[22m[90m (453)[39m
+[2m   Start at [22m 13:53:08
+[2m   Duration [22m 6.56s[2m (import 39%, tests 38%, transform 19%, worker 4%)[22m
+
+[2m    Isolate [22m [33m46 workers spawned[39m[2m · ~161ms startup each (spawn + environment, per file)[22m
+[2m            [22m [2mat least ~2.31s faster with [22m[33misolate: false[39m[2m — reuses workers across files instead of one per file[22m
+
+
+> repopilot@1.0.1 lint
+> eslint .
+
+
+/app/hooks/use-credential-vault.ts
+   72:6  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+   83:6  warning  React Hook React.useCallback has a missing dependency: 'vaultRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  140:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  174:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  192:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  199:6  warning  React Hook React.useCallback has a missing dependency: 'storeRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  217:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  225:5  warning  React Hook React.useCallback has a missing dependency: 'vaultRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  233:6  warning  React Hook React.useCallback has a missing dependency: 'storeRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+
+✖ 9 problems (0 errors, 9 warnings)
+
+
+> repopilot@1.0.1 build
+> next build
+
+   ▲ Next.js 15.5.25
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 3.9s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/17) ...
+   Generating static pages (4/17)
+   Generating static pages (8/17)
+   Generating static pages (12/17)
+ ✓ Generating static pages (17/17)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                 Size  First Load JS
+┌ ○ /                                    85.6 kB         188 kB
+├ ○ /_not-found                            991 B         104 kB
+├ ƒ /api/audit/evaluate                    153 B         103 kB
+├ ƒ /api/audit/fetch-diff                  153 B         103 kB
+├ ƒ /api/criteria/generate                 153 B         103 kB
+├ ƒ /api/github/status                     153 B         103 kB
+├ ƒ /api/jules/dispatch                    153 B         103 kB
+├ ƒ /api/jules/message                     153 B         103 kB
+├ ƒ /api/jules/session                     153 B         103 kB
+├ ƒ /api/jules/sources                     153 B         103 kB
+├ ƒ /api/repo/inspect                      153 B         103 kB
+├ ƒ /api/settings/verify-gemini            153 B         103 kB
+├ ƒ /api/settings/verify-github            153 B         103 kB
+├ ƒ /api/settings/verify-jules             153 B         103 kB
+└ ƒ /api/vault                             153 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/255-37e0f0325134c4d7.js       46.4 kB
+  ├ chunks/4bd1b696-c023c6e3521b1417.js  54.2 kB
+  └ other shared chunks (total)           1.9 kB
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand.
 - 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
-- 🔐 **[SECURITY.md](./SECURITY.md)**: Browser localStorage keys; the server persists nothing.
-- 📝 **[CHANGELOG](./CHANGELOG.md)**: 1.0.1 scope and 1.0.0 history.
+- 🔐 **[SECURITY.md](./SECURITY.md)**: WebCrypto vault specification, PBKDF2/AES-GCM isolation, session locking, and zero-server secret policy.
+- 📝 **[CHANGELOG](./CHANGELOG.md)**: Release history including 1.0.2 and 1.0.1 tag references.
 - 📄 **[LICENSE](./LICENSE)**: MIT.
 
 ---
@@ -33,14 +168,14 @@ RepoPilot **1.0.1** documentation:
 
 **Google Jules** is Google's cloud-native asynchronous coding agent designed to autonomously tackle engineering tasks directly on GitHub repositories. While Jules provides remarkable raw capabilities, running autonomous agents without guardrails introduces severe challenges:
 
-- **Scope Drift & Hallucinations**: Agents frequently edit out-of-scope files, alter root dependency manifests (`package.json`), and modify build configurations.
+- **Scope Drift & Hallucinations**: Agents frequently edit out-of-scope files, alter root dependency manifests (), and modify build configurations.
 - **High Review Friction**: Human reviewers must manually inspect sprawling diffs across dozens of files to verify if all acceptance criteria were met.
 - **Rogue Multi-Turn Branches**: Re-prompting Jules manually often creates new divergent branches rather than committing directly to the active pull request.
 
 **RepoPilot** is the **precision control plane and automated quality assurance layer** for Google Jules, introducing a strictly decoupled two-stage lifecycle:
 
 1. **Stage 1: Intent, Scope & Jules Cloud Dispatch**: Developers formulate crisp acceptance criteria and declared file boundary globs. RepoPilot compiles an anti-drift markdown contract (with embedded blueprint metadata) and dispatches asynchronously to Google Jules Cloud Agents with fail-closed error handling.
-2. **Stage 2: Gemini PR Audit & Operator-Approved Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, the operator picks one of two explicit paths — **Continue Jules session** (posts the FailureBrief back into the same session via `POST /api/jules/message`) or **New session with brief** (remediation dispatch on the same PR branch, `automationMode` omitted). Nothing is sent to Jules without a click.
+2. **Stage 2: Gemini PR Audit & Operator-Approved Remediation**: Upon PR creation, RepoPilot fetches the diff, sanitizes lockfiles and build noise, reconstitutes criteria from embedded PR comments, and executes an automated audit using Gemini structured outputs reconciled with deterministic scoring algorithms. If blockers exist, the operator picks one of two explicit paths — **Continue Jules session** (posts the FailureBrief back into the same session via ) or **New session with brief** (remediation dispatch on the same PR branch,  = PR head,  omitted). Nothing is sent to Jules without an explicit click.
 
 ---
 
@@ -48,242 +183,197 @@ RepoPilot **1.0.1** documentation:
 
 | Challenge with Raw Jules Prompts | How RepoPilot Helps | What the Operator Reviews |
 | :--- | :--- | :--- |
-| **Agent touches unrelated files** | Strict glob boundaries (`src/middleware/**`, `tests/**/*.test.ts`) parsed via regex without false prefix matches | Scorecard flags out-of-scope files; the sanitizer verdict forces a −35 scope penalty (never READY) |
-| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | Per-criterion evidence and status (`MET`, `PARTIALLY_MET`, `UNMET`) in the audit report for review |
+| **Agent touches unrelated files** | Strict glob boundaries (, ) parsed via regex without false prefix matches | Scorecard flags out-of-scope files; deterministic sanitizer forces a −35 scope penalty (never READY) |
+| **Vague acceptance criteria** | Structures requirements into atomic criteria across functional, security, and performance categories | Per-criterion evidence and status (, , ) in the audit report for review |
 | **Manual PR review bottleneck** | Automated Gemini evaluation produces per-criterion verdicts with line citations | Structured audit report with recommendations and blocker breakdown — the operator still decides |
-| **Remediation creates rogue branches** | Continue posts to the same session; new sessions lock `startingBranch` to the PR head branch | The operator picks **Continue Jules session** or **New session with brief**; each send is a click |
-| **Lockfiles blow out token context** | Automatically strips `package-lock.json`, `pnpm-lock.yaml`, and minified assets from diff payloads | Smaller, focused diffs forwarded to LLM evaluation |
-
----
-
-## Architectural Blueprint
-
-```
-+----------------------------------------------------------------------------------------+
-|                                    STAGE 1: INTAKE & DISPATCH                          |
-|                                                                                        |
-|   +---------------------+        +-----------------------+      +------------------+   |
-|   |  Task Objective &   | -----> | Anti-Drift Compiler   | ---> | Google Jules API |   |
-|   |  Acceptance Criteria|        | - Strict Boundary Reg |      | (Async Agent)    |   |
-|   |  - Target Globs     |        | - Blueprint Comment   |      | sessions.create  |   |
-|   +---------------------+        +-----------------------+      +------------------+   |
-+---------------------------------------------------------------------------|------------+
-                                                                            |
-                                                     Async GitHub PR Opened |
-                                                                            v
-+----------------------------------------------------------------------------------------+
-|                                    STAGE 2: AUDIT & REMEDIATION                        |
-|                                                                            v           |
-|   +---------------------+        +-----------------------+      +------------------+   |
-|   | GitHub Pull Request | -----> | Diff Sanitizer Engine | ---> | Gemini Evaluator |   |
-|   | - Commits & Diff    |        | - Strips lockfiles    |      | - Criteria tests |   |
-|   | - Blueprint comment |        | - Bounds verification |      | - Blast radius   |   |
-|   +---------------------+        +-----------------------+      +------------------+   |
-|                                                                            |           |
-|                                                                            v           |
-|   +------------------------------------+                         +------------------+  |
-|   | Closed-Loop Remediation Dispatch   | <---------------------- | Merge Readiness  |  |
-|   | Targets: PR audited branch directly|                         | Scorecard (0-100)|  |
-|   +------------------------------------+                         +------------------+  |
-+----------------------------------------------------------------------------------------+
-```
+| **Remediation creates rogue branches** | Continue posts to the same session; new sessions lock  to the PR head branch | The operator picks **Continue Jules session** or **New session with brief**; each send is a click |
+| **Lockfiles blow out token context** | Automatically strips , , and minified assets from diff payloads | Smaller, focused diffs forwarded to LLM evaluation |
 
 ---
 
 ## Key Capabilities
 
-### 1. Mathematical Anti-Drift Boundary Enforcement
-- Enforces strict file boundary globs (e.g. `src/middleware/**`, `tests/**/*.test.ts`).
-- Detects unauthorized file touches (e.g. lockfiles, root build configs, unrelated modules).
-- Automatically sanitizes noise, package-lock diffs, and generated artifacts to protect token budgets.
+### 1. WebCrypto Client-Side Credential Vault & Zero-Server Policy
+- **AES-GCM Encryption**: User credentials (, , ) are encrypted locally with WebCrypto AES-GCM 256-bit encryption.
+- **PBKDF2-SHA256 Derivation**: Keys are derived from a passphrase using **PBKDF2-SHA256** with **210,000 iterations** and a 16-byte random salt.
+- **IndexedDB Isolation**: Ciphertext envelopes are stored in IndexedDB (). Credentials exist in unlocked memory only.
+- **Session Lock & Legacy Wipe**: Auto-locks after 20 minutes of idle time or on tab hide/close (, , ). Automatically migrates and purges legacy plaintext  secrets (, , ).
+- **Zero-Server Guarantee**: User keys are sent via HTTPS request headers to  routes and forwarded directly to upstream services. Server routes like  reject all secret key payload attributes.
 
-### 2. Google Jules Cloud Agent Integration
-- Native REST integration with `https://jules.googleapis.com/v1alpha/sessions`.
-- Built-in GitHub organization repository authorization checker (`/api/jules/sources`).
-- Local dry-run simulation mode when developing offline or without an API key.
+### 2. Deterministic Diff Sanitizer Priority
+- Mechanically checks touched files against declared glob boundaries.
+- **Sanitizer Outranks LLM**: Sanitizer detection of unauthorized paths outranks LLM evaluation, applying a **−35 scope penalty** and capping the verdict at  or  (never ).
+- Automatically strips , minified assets, and generated build outputs from diff context.
 
-### 3. Gemini Structured Output PR Audit (server-graded)
-- Automated evaluation using strict JSON schema validation; the model authors prose + gaps, the server authors the score.
-- Per-criterion verification (`MET`, `PARTIALLY_MET`, `UNMET`) with `satisfiedAspects` (what holds) / `remainingWork` (concrete gap) and validated `path:lines` refs (`unverifiedReferences` = “cited, not in diff”).
-- Severity-grounded change risk (`LOW` ≤149 lines, `MEDIUM` 150–500 or non-critical drift, `HIGH` >500 or critical files) with `grounded` badge, `criteria − scope = total` breakdown, `Why this grade` + `Next` decision, and category rollup (`functional`/`security`/`testing`/`constraint`).
+### 3. Decoupled Two-Stage Lifecycle & Gemini PR Audit
+- Clear decoupling between Stage 1 (Scope Dispatch) and Stage 2 (Gemini PR Audit & Operator Remediation).
+- Automated evaluation using strict JSON schema validation; the server authors score and verdict.
+- Per-criterion verification (, , ) with satisfied aspects and line-level citations validated against diff facts.
 
-### 4. Operator-in-the-Loop Continue-with-Brief
-- If the PR needs revision or is blocked, RepoPilot builds a FailureBrief (open criteria, remaining work, files to revert) and offers two explicit paths:
-  - **Continue Jules session** — posts the brief back into the same session (`POST /api/jules/message`). COMPLETED sessions may reject follow-ups; that fallback is expected.
-  - **New session with brief** — remediation dispatch on the same PR branch (`startingBranch` = head, `automationMode` omitted) carrying the same brief.
-- **Audited Branch Preservation**: Both paths target `startingBranch` so Jules commits fixes directly to the active PR branch instead of creating rogue branches. Evaluate stays a click — re-run the audit after Jules pushes.
+### 4. Operator-in-the-Loop Continue-with-Brief Remediation
+- Click-gated remediation choices when a PR needs revision:
+  - **Continue Jules session**: Posts the structured  back into the live session ().
+  - **New session with brief**: Remediation dispatch targeting the PR head branch ( = head,  omitted).
+- Both paths preserve the audited branch so Jules commits fixes directly to the active PR rather than opening rogue branches.
 
-### 5. Grounded Verification & Dual-Runtime Vault
-- **GitHub Checks & Branch Health**: PR ingestion reads CI check runs and `mergeable` state; conflicts or failing checks cap `READY_TO_MERGE` at `NEEDS_REVISION` with named reasons, shown in a dedicated scorecard widget with external run links.
-- **Tree-grounded boundaries**: Criteria generation validates suggested globs against the real git tree, strips hallucinated paths (reported as `rejectedGlobs`), and falls back to real top-level directories.
-- **Unified diff budget**: One shared 90,000-char budget with reserved per-file allocation for criterion-relevant files; over-budget files get in-block truncation markers, omitted files keep their headers.
-- **Dual-runtime vault**: Blueprints (including `lastBrief`) persist to `.repopilot/vault.json` locally or Upstash REST on Vercel via `GET`/`POST`/`DELETE /api/vault`; the UI hydrates server-first with silent localStorage fallback.
-- **Resilient polling**: Tiered 15s → 30s → 60s backoff up to 25 minutes with instant refresh when the tab becomes visible, plus an on-demand **Check Session Status** button and a PR-detected handoff toast.
+### 5. Local Outcome Analytics
+- Tracks first-pass  outcome logging sourced strictly from local browser storage ().
+- Operates entirely client-side without external telemetry or aggregate reporting.
 
 ---
 
 ## Test Suite & Quality Assurance
 
-RepoPilot includes an enterprise-grade test suite built on **Vitest**. All test files reside in `/__tests__/` and run without external dependencies via isolated API mocks and pure-logic verifications.
+RepoPilot includes a comprehensive test suite built on **Vitest**. All test files reside in  and run without external dependencies via isolated API mocks.
 
-### Verification & Testing Gate
+### Verification Gate
 
-The sole authoritative acceptance gate for RepoPilot is local execution:
+The authoritative local acceptance gate for RepoPilot is:
 
-```bash
-npm ci && npm test && npm run lint && npm run build && npx tsc --noEmit
-```
 
-- **No Remote CI**: GitHub Actions CI workflows are not utilized and continuous integration is intentionally omitted.
-- **Obsolete Historical Checks**: Any historical failed GitHub Actions status checks on older commits are obsolete and do not reflect current branch health.
-- All code changes must be validated locally using the verification command above.
+added 464 packages, and audited 465 packages in 20s
 
-```bash
-# Run the test suite (361 tests across 38 files)
-npm test
+165 packages are looking for funding
+  run `npm fund` for details
 
-# Run tests in continuous watch mode during development
-npm run test:watch
-```
+2 vulnerabilities (1 moderate, 1 high)
 
-### Test Coverage Matrix
+To address all issues (including breaking changes), run:
+  npm audit fix --force
 
-| Suite | File | Tests | Focus Area |
-| :--- | :--- | :--- | :--- |
-| **Prompt Compiler** | `prompt-compiler.test.ts` | 9 | Anti-drift markdown generation & blueprint comment embedding |
-| **Diff Sanitizer** | `diff-sanitizer.test.ts` | 14 | Recursive glob matching (`**`, `*`), prefix rejection, lockfile exclusion |
-| **Diff Sanitizer Budget** | `diff-sanitizer-extended.test.ts` | 10 | Shared 90k budget, per-file reserve, hunk markers, omission headers |
-| **Jules Dispatch** | `jules-dispatch.test.ts` | 50 | API validation, fail-closed 401/404 handling, startingBranch resolution, source binding, automationMode, remediation head gate, real session ids |
-| **Jules Session** | `jules-session.test.ts` | 9 | Session poll route, harvest, vault recovery patch |
-| **Jules Message** | `jules-message.test.ts` | 8 | Follow-up `:sendMessage` lib + route, fail-closed 401/400/404 |
-| **GitHub Status** | `github-status.test.ts` | 7 | PAT validation, scopes extraction, rate limits, fail-closed auth handling |
-| **Remediation Loop** | `remediation-workflow.test.ts`| 2 | Audited branch targeting, blocker compilation & evidence preservation |
-| **Audit Engine** | `audit-engine.test.ts` | 13 | Diff ingestion, branch→PR lookup, evaluate timeout retry, diffFacts stamping |
-| **Audit Grade** | `audit-grade.test.ts` | 34 | Normalized category join, severity blast, line-ref validation, grade math, truncated summaries |
-| **Server Grade** | `audit-server-grade.test.ts` | 8 | Server single-truth sync, union paths, grade→brief→prompt wiring |
-| **Merge Readiness** | `merge-readiness.test.ts` | 12 | Check-run rollup, mergeability, verdict cap, fetch-diff status payload |
-| **Tree Grounding** | `tree-grounding.test.ts` | 9 | Boundary validation, hallucination filter, dir fallback, route wiring |
-| **Vault** | `vault.test.ts` | 10 | Driver selection, local round-trip, Upstash REST, route validation |
-| **Scoring Logic** | `gemini-scoring.test.ts` | 8 | Score algorithms, scope violation penalties, blast radius ratings, forced scope |
-| **Blueprint Vault** | `blueprint-vault.test.ts` | 5 | Local storage serialization, recovery, deduplication, Refresh patch, lastBrief round-trip |
-| **Outcome Memory** | `outcome-memory.test.ts` | 14 | FailureBrief build + continuation prompt caps + continue-session helpers |
-| **Outcome Log** | `outcome-log.test.ts` | 9 | Append/cap-50/turns/update/export, no aggregates |
-| **PR lookup** | `github-pr-lookup.test.ts` | 5 | PR URL / branch ingest parsers, pulls-by-head |
-| **Session poll** | `session-poll.test.ts` | 7 | Tiered backoff, 25-min cap, terminal states, snapshot patching |
-| **Stage handoff** | `stage-handoff.test.ts` | 5 | Prefill real PR URL, vault match |
-| **Sample contract** | `sample-contract.test.ts` | 3 | Empty Stage 1 defaults, Load sample rate-limiter |
-| **Job status** | `job-status.test.ts` | 7 | idle / watching / PR ready / last verdict |
-| **Evaluate timeout** | `evaluate-timeout.test.ts` | 3 | Timeout → retry payload, maxDuration |
-| **1.0 release** | `v1-release.test.ts` | 3 | Version, LICENSE, SECURITY, golden path, no credential logs |
+Run `npm audit` for details.
 
----
+> repopilot@1.0.1 test
+> vitest run
 
-## Quickstart & Installation
 
-### Prerequisites
-- Node.js 20+
-- npm or yarn
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90m/app[39m
 
-### Setup Instructions
+ [32m✓[39m __tests__/audit-grade.test.ts [2m([22m[2m34 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m __tests__/remediation-prompt-quality.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 72[2mms[22m[39m
+ [32m✓[39m __tests__/jules-dispatch.test.ts [2m([22m[2m50 tests[22m[2m)[22m[32m 81[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-memory.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m __tests__/audit-engine.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+ [32m✓[39m __tests__/settings-verify.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+ [32m✓[39m __tests__/validation.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 62[2mms[22m[39m
+ [32m✓[39m __tests__/merge-readiness.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m __tests__/jules-session.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+ [32m✓[39m __tests__/dispatch-gate.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 54[2mms[22m[39m
+ [32m✓[39m __tests__/vault.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m __tests__/jules-message.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m __tests__/prompt-compiler.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m __tests__/diff-sanitizer.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m __tests__/gemini-scoring.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m __tests__/audit-server-grade.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m __tests__/github-status.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m __tests__/diff-sanitizer-extended.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m __tests__/repo-inspect-deep.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 59[2mms[22m[39m
+ [32m✓[39m __tests__/tree-grounding.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m __tests__/first-pass-analytics.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m __tests__/contract-lint.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m __tests__/audited-sha-persist.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m __tests__/blueprint-vault.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m __tests__/scoring-extended.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-migration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 396[2mms[22m[39m
+ [32m✓[39m __tests__/remediation-workflow.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m __tests__/jules-github-helpers.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m __tests__/security-headers.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/criteria-generate-balance.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m __tests__/github-pr-lookup.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-log.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/outcome-grade.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m __tests__/session-poll.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/job-status.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/scorecard-smoke.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/settings-keys.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-crypto.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 1921[2mms[22m[39m
+   [32m✓[39m credential vault AES-GCM round-trip [2m(11)[22m
+     [33m[2m✓[22m[39m fails closed with a fixed sentence on wrong passphrase[33m 388[2mms[22m[39m
+ [32m✓[39m __tests__/first-pass-storage.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/stage-handoff.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m __tests__/api-routes-extended.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 166[2mms[22m[39m
+ [32m✓[39m __tests__/infra.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m __tests__/credential-vault-lock.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 404[2mms[22m[39m
+ [32m✓[39m __tests__/v1-release.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m __tests__/sample-contract.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m __tests__/evaluate-timeout.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 6[2mms[22m[39m
 
-```bash
-# 1. Clone repository and install dependencies
-git clone https://github.com/Brian125bot/repopilot.git
-cd repopilot
-npm ci
+[2m Test Files [22m [1m[32m46 passed[39m[22m[90m (46)[39m
+[2m      Tests [22m [1m[32m453 passed[39m[22m[90m (453)[39m
+[2m   Start at [22m 13:54:42
+[2m   Duration [22m 6.59s[2m (import 40%, tests 37%, transform 19%, worker 4%)[22m
 
-# 2. (Optional) Configure environment variables in .env.local
-cp .env.example .env.local
+[2m    Isolate [22m [33m46 workers spawned[39m[2m · ~161ms startup each (spawn + environment, per file)[22m
+[2m            [22m [2mat least ~2.31s faster with [22m[33misolate: false[39m[2m — reuses workers across files instead of one per file[22m
 
-# 3. Start development server on port 3000
-npm run dev
 
-# 4. Run test suite to verify installation
-npm test
-```
+> repopilot@1.0.1 lint
+> eslint .
 
-Open [http://localhost:3000](http://localhost:3000) to view the RepoPilot application.
 
-### After 1.0.1
+/app/hooks/use-credential-vault.ts
+   72:6  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+   83:6  warning  React Hook React.useCallback has a missing dependency: 'vaultRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  140:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  174:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  192:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  199:6  warning  React Hook React.useCallback has a missing dependency: 'storeRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  217:5  warning  React Hook React.useCallback has missing dependencies: 'storeRef' and 'vaultRef'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  225:5  warning  React Hook React.useCallback has a missing dependency: 'vaultRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
+  233:6  warning  React Hook React.useCallback has a missing dependency: 'storeRef'. Either include it or remove the dependency array                   react-hooks/exhaustive-deps
 
-Not in this release: auto-merge, webhooks/Cron, accounts/teams, multi-agent arbitration, auto-evaluate when a PR appears.
+✖ 9 problems (0 errors, 9 warnings)
 
-### Hosted Use (Vercel, no server setup)
 
-RepoPilot runs fully hosted with **zero environment variables**. Each user brings their own keys in the browser:
+> repopilot@1.0.1 build
+> next build
 
-1. Deploy with the Vercel Next.js preset (`npm ci` → `npm run build`). No env vars required.
-2. Open the deployed URL. A welcome banner offers **Configure API keys** — Jules, Gemini, and GitHub PAT are entered in the in-app Settings modal, stored only in that browser's `localStorage`, and sent per-request via `x-jules-api-key`, `x-gemini-api-key`, `x-github-pat` headers. The server persists nothing, so one deployment serves many users.
-3. No Jules key yet? Tick **Dry-run (no Jules key needed)** on the Stage 1 dispatch card to simulate a dispatch locally, or use **Load Demo PR** in Stage 2.
+   ▲ Next.js 15.5.25
 
----
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 3.5s
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/17) ...
+   Generating static pages (4/17)
+   Generating static pages (8/17)
+   Generating static pages (12/17)
+ ✓ Generating static pages (17/17)
+   Finalizing page optimization ...
+   Collecting build traces ...
 
-## Environment Variables
+Route (app)                                 Size  First Load JS
+┌ ○ /                                    85.6 kB         188 kB
+├ ○ /_not-found                            991 B         104 kB
+├ ƒ /api/audit/evaluate                    153 B         103 kB
+├ ƒ /api/audit/fetch-diff                  153 B         103 kB
+├ ƒ /api/criteria/generate                 153 B         103 kB
+├ ƒ /api/github/status                     153 B         103 kB
+├ ƒ /api/jules/dispatch                    153 B         103 kB
+├ ƒ /api/jules/message                     153 B         103 kB
+├ ƒ /api/jules/session                     153 B         103 kB
+├ ƒ /api/jules/sources                     153 B         103 kB
+├ ƒ /api/repo/inspect                      153 B         103 kB
+├ ƒ /api/settings/verify-gemini            153 B         103 kB
+├ ƒ /api/settings/verify-github            153 B         103 kB
+├ ƒ /api/settings/verify-jules             153 B         103 kB
+└ ƒ /api/vault                             153 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/255-37e0f0325134c4d7.js       46.4 kB
+  ├ chunks/4bd1b696-c023c6e3521b1417.js  54.2 kB
+  └ other shared chunks (total)           1.9 kB
 
-All optional. On a hosted deployment you can skip this section entirely and enter keys in the app's Settings modal instead.
 
-| Variable | Description | Required | Default |
-| :--- | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | Google Gemini API key for PR audit evaluation | Optional (can enter in UI) | Server-side only |
-| `JULES_API_KEY` | Google Jules API key for asynchronous cloud agent dispatch | Optional (dry-run available) | Client or Server |
-| `GITHUB_PAT` | GitHub Personal Access Token for private repository diffs | Optional (public repos work without PAT) | Optional |
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
 
-> **Note on Security:** Credentials can be saved in the client's local storage via the in-app Credentials modal. When configured, keys are sent in secure custom request headers (`x-jules-api-key`, `x-gemini-api-key`, `x-github-pat`) and are never written to server logs.
-
----
-
-## API Reference
-
-### `POST /api/jules/dispatch`
-Dispatches a new coding session to Google Jules or saves a local dry-run blueprint.
-
-**Payload:**
-```json
-{
-  "repo": "acme-corp/api-gateway",
-  "baseBranch": "main",
-  "branchName": "jules/rate-limiter",
-  "startingBranch": "jules/rate-limiter",
-  "fileBoundaries": ["src/middleware/**", "tests/**"],
-  "objective": "Implement Redis sliding window rate limiter",
-  "criteria": [
-    { "id": "1", "text": "Extracts client IP", "category": "functional" }
-  ],
-  "isRemediation": false,
-  "dryRun": false
-}
-```
-
-### `GET /api/jules/sources`
-Lists authorized GitHub repositories connected to your Google Jules cloud account.
-
-### `GET /api/jules/session?id=sessions/xxx`
-Reads a Jules session back (`getJulesSession`), returning `sessionId`, `sessionUrl`, `state`, and harvested `prUrl/prTitle`. Fail-closed `401` without a key, `400` without an id. Use from the Stage-1 confirmation **Refresh session** button after dispatch.
-
-### `GET /api/github/status`
-Validates a GitHub Personal Access Token (PAT) supplied via `x-github-pat` header or server environment, returning authenticated user identity, scopes, and hourly rate limit consumption.
-
-### `POST /api/audit/fetch-diff`
-Fetches a GitHub pull request diff, parses commit hunks, and applies noise-reduction filters.
-
-### `POST /api/audit/evaluate`
-Audits the sanitized pull request diff against declared acceptance criteria and returns a structured scorecard. Accepts `unauthorizedPaths: string[]` from the sanitizer — any entry forces `scopeIntegrity.strictlyInScope=false` via `forceScopeIntegrity` (empty = clean, omitted = unverified).
-
-### `POST /api/criteria/generate`
-Generates structured acceptance criteria from an issue description or objective. Validates against the actual repository file tree to reject hallucinations.
-
-### `POST /api/jules/message`
-Posts a follow-up message to an existing Jules session, typically containing the FailureBrief to trigger a remediation cycle on the same branch.
-
-### `POST /api/repo/inspect`
-Inspects the repository's file tree and detects framework signatures, feeding boundary generation and validating criteria paths.
-
-### `GET /api/vault`, `POST /api/vault`, `DELETE /api/vault`
-Manages the Blueprint Vault for storing and retrieving active session contracts. Backed by local `.repopilot/vault.json` or Upstash REST.
+- **No Remote CI**: GitHub Actions workflows are intentionally omitted; local execution serves as the single verification authority.
+- All changes must be verified locally using the command above.
 
 ---
 
-## License & Attribution
+## License
 
 Designed and maintained for mission-critical autonomous agent workflows.
 Built with Next.js, Tailwind CSS, Lucide Icons, Vitest, and Google Gemini.
+Licensed under MIT.
