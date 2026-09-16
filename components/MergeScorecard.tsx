@@ -53,6 +53,7 @@ import {
   shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
+import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
 
 interface MergeScorecardProps {
   report: GeminiAuditReport;
@@ -377,9 +378,25 @@ export function MergeScorecard({
     }
   };
 
+  const requireVerifiedKey = (): boolean => {
+    if (
+      typeof window !== 'undefined' &&
+      !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
+    ) {
+      setHeadMovedToast(VERIFY_BEFORE_DISPATCH_MESSAGE);
+      onOpenSettings?.();
+      return false;
+    }
+    return true;
+  };
+
   const handleContinueJulesSession = async () => {
     if (verdictForGate === 'READY_TO_MERGE') return;
     if (!blueprint || !continueSessionId || !continuePrompt) return;
+    if (!requireVerifiedKey()) {
+      setContinueResult({ success: false, error: VERIFY_BEFORE_DISPATCH_MESSAGE });
+      return;
+    }
     // COR-40: refuse continuation that would leave the audited commit.
     const freshness = await checkHeadFreshness();
     if (!freshness.ok) {
@@ -430,6 +447,10 @@ export function MergeScorecard({
 
   const handleDispatchRemediationToJules = async (promptOverride?: string) => {
     if (verdictForGate === 'READY_TO_MERGE') return;
+    if (!requireVerifiedKey()) {
+      setDispatchResult({ success: false, warningMessage: VERIFY_BEFORE_DISPATCH_MESSAGE, targetBranch: auditedBranch });
+      return;
+    }
     // COR-40: compare live head SHA to the stored audited SHA before dispatch.
     const freshness = await checkHeadFreshness();
     if (!freshness.ok) {

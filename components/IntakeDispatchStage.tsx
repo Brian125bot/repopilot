@@ -42,6 +42,7 @@ import {
 } from '@/lib/contract-lint';
 import { buildFirstPassFeatures, recordOutcomeRowWithFeatures } from '@/lib/first-pass-analytics';
 import { buildOutcomeRow, recordOutcomeRow } from '@/lib/outcome-memory';
+import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
 import { applySessionSnapshotToBlueprint } from '@/lib/session-poll';
 import { useJulesSessionPoll } from '@/hooks/use-jules-session-poll';
 import { emptyStage1Defaults, SAMPLE_RATE_LIMITER_CONTRACT } from '@/lib/sample-contract';
@@ -346,6 +347,14 @@ export function IntakeDispatchStage({
   const handleDispatch = async () => {
     setDispatchError(null);
     setDispatchDiagnostics(null);
+    if (
+      typeof window !== 'undefined' &&
+      !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
+    ) {
+      setDispatchError(VERIFY_BEFORE_DISPATCH_MESSAGE);
+      onOpenSettings();
+      return;
+    }
     if (!repo.includes('/')) {
       setDispatchError('Please specify repository in "owner/repo" format.');
       return;

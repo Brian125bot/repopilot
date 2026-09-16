@@ -7,6 +7,18 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
+import {
+  GEMINI_KEY_STORAGE_KEY,
+  GITHUB_PAT_STORAGE_KEY,
+  JULES_KEY_STORAGE_KEY,
+  VERIFY_BEFORE_DISPATCH_MESSAGE,
+  clearAllVerifiedFlags,
+  clearRepopilotKeys,
+  clearVerifiedFlag,
+  hasVerifiedKey,
+  markKeyVerified,
+  type KeyStorage,
+} from '@/lib/settings-keys';
 
 interface SettingsModalProps {
   open: boolean;
@@ -17,6 +29,28 @@ interface SettingsModalProps {
   setGeminiKey: (key: string) => void;
   githubPat: string;
   setGithubPat: (pat: string) => void;
+}
+
+export interface GithubVerifyResult {
+  ok: boolean;
+  login: string;
+  name: string;
+  scopes: string[];
+  tokenType: 'classic' | 'fine-grained' | 'unknown';
+  warnings: string[];
+}
+
+export interface GeminiVerifyResult {
+  ok: boolean;
+  sampleModels: string[];
+  emptyModelsNotice?: string;
+}
+
+export interface JulesVerifyResult {
+  ok: boolean;
+  sources: Array<{ name: string; id: string }>;
+  targetRepoConnected?: boolean;
+  notConnectedNotice?: string;
 }
 
 export function SettingsModal({
@@ -39,6 +73,14 @@ export function SettingsModal({
   const [julesTestResult, setJulesTestResult] = React.useState<{ valid?: boolean; message?: string } | null>(null);
   const [testingPat, setTestingPat] = React.useState(false);
   const [patTestResult, setPatTestResult] = React.useState<{ valid?: boolean; message?: string } | null>(null);
+  const [testingGemini, setTestingGemini] = React.useState(false);
+  const [geminiTestResult, setGeminiTestResult] = React.useState<{ valid?: boolean; message?: string } | null>(null);
+  const [githubVerify, setGithubVerify] = React.useState<GithubVerifyResult | null>(null);
+  const [geminiVerify, setGeminiVerify] = React.useState<GeminiVerifyResult | null>(null);
+  const [julesVerify, setJulesVerify] = React.useState<JulesVerifyResult | null>(null);
+  const [julesVerifyRepo, setJulesVerifyRepo] = React.useState('');
+  const [clearAllNotice, setClearAllNotice] = React.useState<string | null>(null);
+  const [verifyGateNotice, setVerifyGateNotice] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (open) {
@@ -48,6 +90,16 @@ export function SettingsModal({
         setLocalPat(githubPat);
         setJulesTestResult(null);
         setPatTestResult(null);
+        setGeminiTestResult(null);
+        setGithubVerify(null);
+        setGeminiVerify(null);
+        setJulesVerify(null);
+        setClearAllNotice(null);
+        setVerifyGateNotice(
+          typeof window !== 'undefined' && !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
+            ? VERIFY_BEFORE_DISPATCH_MESSAGE
+            : null
+        );
       }, 0);
       return () => clearTimeout(timer);
     }
@@ -75,17 +127,35 @@ export function SettingsModal({
   const handleTestJulesKey = async () => {
     setTestingJules(true);
     setJulesTestResult(null);
+    setJulesVerify(null);
     try {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (localJules.trim()) {
         headers['x-jules-api-key'] = localJules.trim();
       }
-      const res = await fetch('/api/jules/sources', { headers });
+      const res = await fetch('/api/settings/verify-jules', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(julesVerifyRepo.trim() ? { repo: julesVerifyRepo.trim() } : {}),
+      });
       const data = await res.json();
-      if (data.valid) {
+      if (res.ok && data.success !== false && data.ok) {
+        const result: JulesVerifyResult = {
+          ok: true,
+          sources: Array.isArray(data.sources) ? data.sources : [],
+          targetRepoConnected: data.targetRepoConnected,
+          notConnectedNotice: data.notConnectedNotice,
+        };
+        setJulesVerify(result);
+        if (typeof window !== 'undefined') {
+          markKeyVerified(window.localStorage as unknown as KeyStorage, 'jules');
+        }
         setJulesTestResult({
           valid: true,
-          message: `Connected successfully! (${data.sources?.length ?? 0} repository sources connected)`,
+          message:
+            result.targetRepoConnected === false && result.notConnectedNotice
+              ? result.notConnectedNotice
+              : `Connected successfully! (${result.sources.length} repository sources connected)`,
         });
       } else {
         setJulesTestResult({
@@ -103,25 +173,83 @@ export function SettingsModal({
     }
   };
 
+  const handleTestGeminiKey = async () => {
+    setTestingGemini(true);
+    setGeminiTestResult(null);
+    setGeminiVerify(null);
+    try {
+      const headers: Record<string, string> = {};
+      if (localGemini.trim()) {
+        headers['x-gemini-api-key'] = localGemini.trim();
+      }
+      const res = await fetch('/api/settings/verify-gemini', { method: 'POST', headers });
+      const data = await res.json();
+      if (res.ok && data.success !== false && data.ok) {
+        const result: GeminiVerifyResult = {
+          ok: true,
+          sampleModels: Array.isArray(data.sampleModels) ? data.sampleModels : [],
+          emptyModelsNotice: data.emptyModelsNotice,
+        };
+        setGeminiVerify(result);
+        if (typeof window !== 'undefined') {
+          markKeyVerified(window.localStorage as unknown as KeyStorage, 'gemini');
+        }
+        const first = result.sampleModels[0];
+        setGeminiTestResult({
+          valid: true,
+          message: first
+            ? `Connected successfully! (e.g. ${first})`
+            : result.emptyModelsNotice ||
+              'Key accepted but no models returned — confirm the Generative Language API is enabled.',
+        });
+      } else {
+        setGeminiTestResult({
+          valid: false,
+          message: data.error || data.message || 'Key rejected by Gemini API.',
+        });
+      }
+    } catch (e) {
+      setGeminiTestResult({
+        valid: false,
+        message: e instanceof Error ? e.message : 'Network test error',
+      });
+    } finally {
+      setTestingGemini(false);
+    }
+  };
+
   const handleTestPat = async () => {
     setTestingPat(true);
     setPatTestResult(null);
+    setGithubVerify(null);
     try {
       const headers: Record<string, string> = {};
       if (localPat.trim()) {
         headers['x-github-pat'] = localPat.trim();
       }
-      const res = await fetch('/api/github/status', { headers });
+      const res = await fetch('/api/settings/verify-github', { method: 'POST', headers });
       const data = await res.json();
-      if (data.isValid) {
+      if (res.ok && data.success !== false && data.ok) {
+        const result: GithubVerifyResult = {
+          ok: true,
+          login: data.login || '',
+          name: data.name || '',
+          scopes: Array.isArray(data.scopes) ? data.scopes : [],
+          tokenType: data.tokenType || 'unknown',
+          warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        };
+        setGithubVerify(result);
+        if (typeof window !== 'undefined') {
+          markKeyVerified(window.localStorage as unknown as KeyStorage, 'github');
+        }
         setPatTestResult({
           valid: true,
-          message: `Connected as @${data.login || 'user'}! (${data.rateLimit?.remaining ?? 5000} req/hr remaining)`,
+          message: `Connected as @${result.login || 'user'}!`,
         });
       } else {
         setPatTestResult({
           valid: false,
-          message: data.error || 'GitHub token rejected (401 Bad credentials)',
+          message: data.error || data.message || 'GitHub token rejected (401 Bad credentials)',
         });
       }
     } catch (e) {
@@ -139,15 +267,62 @@ export function SettingsModal({
     setGeminiKey(localGemini.trim());
     setGithubPat(localPat.trim());
     if (typeof window !== 'undefined') {
-      localStorage.setItem('repopilot_jules_key', localJules.trim());
-      localStorage.setItem('repopilot_gemini_key', localGemini.trim());
-      localStorage.setItem('repopilot_github_pat', localPat.trim());
+      localStorage.setItem(JULES_KEY_STORAGE_KEY, localJules.trim());
+      localStorage.setItem(GEMINI_KEY_STORAGE_KEY, localGemini.trim());
+      localStorage.setItem(GITHUB_PAT_STORAGE_KEY, localPat.trim());
     }
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
       onOpenChange(false);
     }, 600);
+  };
+
+  const handleClearProvider = (which: 'jules' | 'gemini' | 'github') => {
+    if (typeof window !== 'undefined') {
+      clearVerifiedFlag(window.localStorage as unknown as KeyStorage, which);
+    }
+    if (which === 'jules') {
+      setLocalJules('');
+      setJulesKey('');
+      setJulesTestResult(null);
+      setJulesVerify(null);
+      if (typeof window !== 'undefined') localStorage.removeItem(JULES_KEY_STORAGE_KEY);
+    } else if (which === 'gemini') {
+      setLocalGemini('');
+      setGeminiKey('');
+      setGeminiTestResult(null);
+      setGeminiVerify(null);
+      if (typeof window !== 'undefined') localStorage.removeItem(GEMINI_KEY_STORAGE_KEY);
+    } else {
+      setLocalPat('');
+      setGithubPat('');
+      setPatTestResult(null);
+      setGithubVerify(null);
+      if (typeof window !== 'undefined') localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
+    }
+  };
+
+  const handleClearAllKeys = () => {
+    if (typeof window === 'undefined') return;
+    if (!window.confirm('Clear all saved provider keys in this browser?')) return;
+    const removed = clearRepopilotKeys(window.localStorage as unknown as KeyStorage);
+    clearAllVerifiedFlags(window.localStorage as unknown as KeyStorage);
+    setLocalJules('');
+    setLocalGemini('');
+    setLocalPat('');
+    setJulesKey('');
+    setGeminiKey('');
+    setGithubPat('');
+    setJulesTestResult(null);
+    setPatTestResult(null);
+    setGeminiTestResult(null);
+    setGithubVerify(null);
+    setGeminiVerify(null);
+    setJulesVerify(null);
+    setClearAllNotice(
+      removed.length > 0 ? `Cleared ${removed.length} saved key${removed.length === 1 ? '' : 's'}.` : 'No saved keys found.'
+    );
   };
 
   const handleClear = () => {
@@ -159,10 +334,15 @@ export function SettingsModal({
     setGithubPat('');
     setJulesTestResult(null);
     setPatTestResult(null);
+    setGeminiTestResult(null);
+    setGithubVerify(null);
+    setGeminiVerify(null);
+    setJulesVerify(null);
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('repopilot_jules_key');
-      localStorage.removeItem('repopilot_gemini_key');
-      localStorage.removeItem('repopilot_github_pat');
+      localStorage.removeItem(JULES_KEY_STORAGE_KEY);
+      localStorage.removeItem(GEMINI_KEY_STORAGE_KEY);
+      localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
+      clearAllVerifiedFlags(window.localStorage as unknown as KeyStorage);
     }
   };
 
@@ -180,6 +360,11 @@ export function SettingsModal({
 
       <DialogContent>
         <div className="space-y-5">
+          {verifyGateNotice && (
+            <Alert variant="info" className="bg-indigo-50 border-indigo-200">
+              <AlertDescription className="text-xs text-indigo-900">{verifyGateNotice}</AlertDescription>
+            </Alert>
+          )}
           {/* 1. Google Jules API Key */}
           <div className="space-y-2 p-3.5 rounded-xl bg-indigo-50/40 border border-indigo-100/80">
             <div className="flex items-center justify-between">
@@ -212,6 +397,7 @@ export function SettingsModal({
                 onChange={(e) => {
                   setLocalJules(e.target.value);
                   setJulesTestResult(null);
+                  setJulesVerify(null);
                 }}
                 className="font-mono text-xs flex-1 bg-white"
               />
@@ -223,8 +409,30 @@ export function SettingsModal({
                 disabled={testingJules || (!localJules && !hasServerJules)}
                 className="text-xs shrink-0"
               >
-                {testingJules ? 'Testing...' : 'Test Key'}
+                {testingJules ? 'Verifying...' : 'Verify'}
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => handleClearProvider('jules')}
+                disabled={!localJules && !julesVerify}
+                className="text-xs shrink-0 text-slate-500 hover:text-red-600"
+              >
+                Clear
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                placeholder="owner/repo (optional — checks Jules connection)"
+                value={julesVerifyRepo}
+                onChange={(e) => {
+                  setJulesVerifyRepo(e.target.value);
+                  setJulesVerify(null);
+                  setJulesTestResult(null);
+                }}
+                className="font-mono text-xs flex-1 bg-white"
+              />
             </div>
 
             {julesTestResult && (
@@ -235,6 +443,20 @@ export function SettingsModal({
               >
                 {julesTestResult.message}
               </p>
+            )}
+
+            {julesVerify && (
+              <div className="rounded-lg border border-indigo-200 bg-white p-2.5 space-y-1 text-xs text-slate-700">
+                <p>
+                  Sources connected: <strong>{julesVerify.sources.length}</strong>
+                </p>
+                {julesVerify.targetRepoConnected === true && (
+                  <p className="text-emerald-700 font-medium">Target repo is connected.</p>
+                )}
+                {julesVerify.targetRepoConnected === false && julesVerify.notConnectedNotice && (
+                  <p className="text-amber-700 font-medium">{julesVerify.notConnectedNotice}</p>
+                )}
+              </div>
             )}
 
             <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
@@ -271,13 +493,61 @@ export function SettingsModal({
                 </Badge>
               )}
             </div>
-            <Input
-              type="password"
-              placeholder={hasServerGemini ? 'Inheriting server GEMINI_API_KEY (optional override)' : 'AIzaSy...'}
-              value={localGemini}
-              onChange={(e) => setLocalGemini(e.target.value)}
-              className="font-mono text-xs"
-            />
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder={hasServerGemini ? 'Inheriting server GEMINI_API_KEY (optional override)' : 'AIzaSy...'}
+                value={localGemini}
+                onChange={(e) => {
+                  setLocalGemini(e.target.value);
+                  setGeminiTestResult(null);
+                  setGeminiVerify(null);
+                }}
+                className="font-mono text-xs flex-1 bg-white"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleTestGeminiKey}
+                disabled={testingGemini || (!localGemini.trim() && !hasServerGemini)}
+                className="text-xs shrink-0"
+              >
+                {testingGemini ? 'Verifying...' : 'Verify'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => handleClearProvider('gemini')}
+                disabled={!localGemini && !geminiVerify}
+                className="text-xs shrink-0 text-slate-500 hover:text-red-600"
+              >
+                Clear
+              </Button>
+            </div>
+
+            {geminiTestResult && (
+              <p
+                className={`text-[11px] font-medium ${
+                  geminiTestResult.valid ? 'text-emerald-700' : 'text-rose-600'
+                }`}
+              >
+                {geminiTestResult.message}
+              </p>
+            )}
+
+            {geminiVerify && geminiVerify.sampleModels.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-700">
+                <p className="font-semibold text-slate-800">Sample models</p>
+                <ul className="list-disc list-inside font-mono text-[11px]">
+                  {geminiVerify.sampleModels.slice(0, 3).map((m) => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <p className="text-xs text-slate-500 leading-relaxed">
               Powers Stage 1 AI Criteria Architect and Stage 2 Structured PR Evaluation via server-side Gemini 3.8 models.
             </p>
@@ -309,6 +579,7 @@ export function SettingsModal({
                 onChange={(e) => {
                   setLocalPat(e.target.value);
                   setPatTestResult(null);
+                  setGithubVerify(null);
                 }}
                 className="font-mono text-xs flex-1 bg-white"
               />
@@ -320,7 +591,17 @@ export function SettingsModal({
                 disabled={testingPat || !localPat.trim()}
                 className="text-xs shrink-0"
               >
-                {testingPat ? 'Testing...' : 'Test Token'}
+                {testingPat ? 'Verifying...' : 'Verify'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => handleClearProvider('github')}
+                disabled={!localPat && !githubVerify}
+                className="text-xs shrink-0 text-slate-500 hover:text-red-600"
+              >
+                Clear
               </Button>
             </div>
 
@@ -334,10 +615,45 @@ export function SettingsModal({
               </p>
             )}
 
+            {githubVerify && (
+              <div className="rounded-lg border border-slate-200 bg-white p-2.5 space-y-1 text-xs text-slate-700">
+                <p>
+                  Identity: <strong className="font-mono">@{githubVerify.login || 'unknown'}</strong>
+                  {githubVerify.name ? ` (${githubVerify.name})` : ''}
+                </p>
+                <p>
+                  Token type: <strong className="font-mono">{githubVerify.tokenType}</strong>
+                </p>
+                {githubVerify.scopes.length > 0 && (
+                  <p>
+                    Scopes:{' '}
+                    <span className="font-mono text-[11px]">{githubVerify.scopes.join(', ')}</span>
+                  </p>
+                )}
+                {githubVerify.warnings.map((w) => (
+                  <p key={w} className="text-amber-700 font-medium">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {githubVerify?.tokenType === 'classic' && githubVerify.scopes.length > 0 && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">
+                <p className="font-semibold">Classic PAT with broad scopes</p>
+                <p className="font-mono text-[11px]">{githubVerify.scopes.join(', ')}</p>
+                <p>Fine-grained is recommended.</p>
+              </div>
+            )}
+
             <p className="text-xs text-slate-500 leading-relaxed">
               Required for private repositories, pre-dispatch accessibility checks, and avoiding GitHub unauthenticated rate limits.
             </p>
           </div>
+
+          {clearAllNotice && (
+            <p className="text-[11px] font-medium text-slate-600">{clearAllNotice}</p>
+          )}
 
           {/* Security Guarantee Alert */}
           <Alert variant="info" className="bg-slate-50 border-slate-200">
@@ -353,6 +669,9 @@ export function SettingsModal({
       <DialogFooter>
         <Button variant="ghost" size="sm" onClick={handleClear} className="text-slate-500 hover:text-red-600">
           Clear Keys
+        </Button>
+        <Button variant="ghost" size="sm" onClick={handleClearAllKeys} className="text-slate-500 hover:text-red-600">
+          Clear all keys
         </Button>
         <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
           Cancel
