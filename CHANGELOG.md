@@ -5,7 +5,28 @@
 - Added security headers (`Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Permissions-Policy`) via `vercel.json` and `next.config.ts` for hosted hybrid Vercel deployments.
 - Documented public empty-environment contract across `.env.example` and `SECURITY.md`: public Vercel projects MUST leave `JULES_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_PAT` unset to ensure multi-user credential isolation.
 
-## 1.0.1 — 2026-09-14
+## 1.0.2 — 2026-09-15
+
+Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, audited PR head SHA drift rejection, provider key verification on first paint, and documentation honesty.
+
+### Landed Tickets & Architectural Changes
+
+- **COR-40: Persisted audited PR head SHA & drift rejection**:
+  - Locked remediation dispatch and continuation prompt compilation to the exact `auditedHeadSha` captured during Stage 2 evaluation.
+  - Fail-closed gate (`400 INVALID_INPUT`) blocks remediation if the current PR head branch diverges from the audited SHA, preventing Jules from executing fixes on un-audited commits or falling back to `main`.
+- **COR-34: Settings provider key verify-on-connect at first paint**:
+  - Automatic verify-on-connect check for provider credentials (Google Jules, Google Gemini, GitHub PAT) when opening or interacting with the Settings modal.
+  - Validates key authorizations, scopes, and target repository connections without exposing secret key material in error payloads or logs.
+- **COR-35: Encrypted WebCrypto browser vault & plaintext wipe**:
+  - Implemented WebCrypto AES-GCM 256-bit client-side credential vault backed by PBKDF2-SHA256 key derivation (210,000 iterations).
+  - Ciphertext envelopes stored in IndexedDB under database `repopilot-credential-vault` (`vault-v1`), keeping unlocked keys exclusively in non-persisted browser memory (`MemoryVault`).
+  - Session auto-locking after 20 minutes of idle time (`VAULT_IDLE_TIMEOUT_MS = 1,200,000ms`) or on tab close/hide (`visibilitychange`, `pagehide`, `beforeunload`).
+  - Automatic one-shot migration and purging of legacy plaintext `localStorage` credentials (`repopilot_jules_key`, `repopilot_gemini_key`, `repopilot_github_pat`). Server endpoints reject secret key attributes (`/api/vault`).
+- **COR-10: Purged fabricated benchmarks & documentation honesty**:
+  - Repo-wide audit and removal of unverified benchmark statistics (e.g., legacy fabricated marketing percentages) across documentation.
+  - Aligned documentation with true system mechanics: deterministic diff sanitizer priority (-35 penalty), click-gated operator remediation ("Continue Jules session" and "New session with brief"), and local outcome analytics (`repopilot_outcome_log`).
+
+## 1.0.1 — 2026-09-14 (@ 1f4f4e7)
 
 First tagged update to the frozen two-stage loop. Everything below shipped between the `v1.0.0` tag and this release: operator-in-the-loop Continue-with-brief remediation, first-pass intake quality gates, grounded server-side grading, and a dual-runtime vault with grounded PR verification.
 
