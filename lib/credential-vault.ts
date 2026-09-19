@@ -200,29 +200,9 @@ export interface VaultIdbStore {
   clear(): Promise<void>;
 }
 
-export const VAULT_IDB_DB = 'repopilot-credential-vault';
+import { VAULT_IDB_DB, VAULT_IDB_VERSION, openVaultDb } from './vault/open-db';
+export { VAULT_IDB_DB, VAULT_IDB_VERSION, openVaultDb };
 export const VAULT_IDB_KEY = 'vault-v1';
-
-function isIndexedDbAvailable(): boolean {
-  return typeof indexedDB !== 'undefined';
-}
-
-function openVaultDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (!isIndexedDbAvailable()) {
-      reject(new Error('Credential vault storage is unavailable in this environment.'));
-      return;
-    }
-    const request = indexedDB.open(VAULT_IDB_DB, 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains('vault')) {
-        request.result.createObjectStore('vault');
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(new Error('Credential vault storage is unavailable in this environment.'));
-  });
-}
 
 function idbRequest<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
