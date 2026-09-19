@@ -41,6 +41,8 @@ export const ConventionEntrySchema = z
   })
   .strict();
 
+export type ConventionEntry = z.infer<typeof ConventionEntrySchema>;
+
 export const RepoProfileSchema = z
   .object({
     id: z.string({ message: 'Profile id is required.' }).trim().min(1, 'Profile id is required.'),
