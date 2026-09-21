@@ -74,7 +74,7 @@ All test files are organized in the `/__tests__/` directory:
 ├── session-poll.test.ts            # Tiered backoff, 25-min cap, terminal states (7)
 ├── stage-handoff.test.ts           # Prefill real PR URL, vault match (5)
 ├── tree-grounding.test.ts          # Boundary validation, hallucination filter, dir fallback (9)
-├── v1-release.test.ts              # 1.0.1 artifacts, local gate, no credential logs (3)
+├── v1-release.test.ts              # 1.0.2 artifacts, local gate, no credential logs (3)
 └── vault.test.ts                   # Driver selection, local round-trip, Upstash REST (10)
 ```
 
