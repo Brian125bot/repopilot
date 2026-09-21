@@ -68,6 +68,7 @@ export const RepoProfileSchema = z
       .number({ message: 'Version must be a positive integer schema version.' })
       .int('Version must be a positive integer schema version.')
       .min(1, 'Version must be a positive integer schema version.'),
+    incomplete: z.boolean().optional(),
   })
   .strict();
 

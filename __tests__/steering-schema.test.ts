@@ -46,6 +46,12 @@ describe('RepoProfile schema', () => {
     expect(parseRepoProfile(profile())).toEqual(profile());
   });
 
+  it('accepts a profile with incomplete flag', () => {
+    const inc = profile({ incomplete: true });
+    expect(RepoProfileSchema.safeParse(inc).success).toBe(true);
+    expect(parseRepoProfile(inc).incomplete).toBe(true);
+  });
+
   it('accepts a profile without optional fields', () => {
     const minimal = profile({ customInstructions: undefined, notes: undefined });
     delete minimal.customInstructions;
