@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, Key, FolderArchive, BookOpen } from 'lucide-react';
+import { Compass, Key, FolderArchive, BookOpen, GitFork } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { GitHubStatusIndicator } from './GitHubStatusIndicator';
@@ -146,6 +147,20 @@ export function Navbar({
           </span>
           {/* Real-time GitHub Connection Status Indicator */}
           <GitHubStatusIndicator githubPat={githubPat} onOpenSettings={onOpenSettings} />
+
+          <Link href="/settings/repos" passHref legacyBehavior>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="hidden md:flex items-center gap-1.5 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              <a>
+                <GitFork className="h-3.5 w-3.5 text-slate-500" />
+                <span className="hidden sm:inline">Repos</span>
+              </a>
+            </Button>
+          </Link>
 
           <Button
             variant="outline"

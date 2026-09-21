@@ -32,6 +32,7 @@ function toParseIssues(error: z.ZodError): Array<{ field: string; message: strin
   }));
 }
 
+export type ConventionEntry = z.infer<typeof ConventionEntrySchema>;
 export const ConventionEntrySchema = z
   .object({
     id: z.string({ message: 'Convention id is required.' }).trim().min(1, 'Convention id is required.'),
@@ -67,6 +68,7 @@ export const RepoProfileSchema = z
       .number({ message: 'Version must be a positive integer schema version.' })
       .int('Version must be a positive integer schema version.')
       .min(1, 'Version must be a positive integer schema version.'),
+    incomplete: z.boolean().optional(),
   })
   .strict();
 
