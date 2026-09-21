@@ -405,3 +405,35 @@ export type RepoInspectBody = z.infer<typeof RepoInspectBodySchema>;
 export type VaultGetQuery = z.infer<typeof VaultGetQuerySchema>;
 export type VaultDeleteQuery = z.infer<typeof VaultDeleteQuerySchema>;
 export type VaultPostBody = z.infer<typeof VaultPostBodySchema>;
+
+// 11. app/api/goal/extract
+export const GoalExtractBodySchema = z.object({
+  rawText: z
+    .string({ message: 'rawText is required.' })
+    .trim()
+    .min(1, 'rawText cannot be empty.'),
+});
+
+export const GoalExtractedSchema = z
+  .object({
+    title: z.string(),
+    scope: z.array(z.string()),
+    acceptanceCriteria: z.array(z.string()),
+    assumptions: z.array(z.string()),
+    ambiguityFlags: z.array(z.string()),
+  })
+  .refine(
+    (data) => {
+      if (data.title === 'UNCLEAR') {
+        return data.ambiguityFlags.length > 0;
+      }
+      return true;
+    },
+    {
+      message: 'Goal marked UNCLEAR must contain non-empty ambiguityFlags.',
+      path: ['ambiguityFlags'],
+    }
+  );
+
+export type GoalExtractBody = z.infer<typeof GoalExtractBodySchema>;
+export type GoalExtractedValidated = z.infer<typeof GoalExtractedSchema>;

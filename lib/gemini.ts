@@ -441,3 +441,64 @@ Generate the complete criteria matrix now.`;
   return parsed;
 }
 
+
+import { GoalExtracted } from '@/lib/goals/types';
+import { buildGoalExtractPrompt } from '@/lib/goals/extract-prompt';
+
+const goalExtractionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    title: { type: Type.STRING, description: '3-7 word summary of the goal, or "UNCLEAR" if input is vague' },
+    scope: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'List of touched scope areas or modules',
+    },
+    acceptanceCriteria: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'List of testable acceptance criteria',
+    },
+    assumptions: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'List of assumptions or guesses made due to lack of explicit detail',
+    },
+    ambiguityFlags: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      description: 'List of ambiguity flags explaining why goal is unclear when title is UNCLEAR',
+    },
+  },
+  required: ['title', 'scope', 'acceptanceCriteria', 'assumptions', 'ambiguityFlags'],
+};
+
+export async function extractGoalFromText({
+  rawText,
+  customApiKey,
+}: {
+  rawText: string;
+  customApiKey?: string;
+}): Promise<GoalExtracted> {
+  const ai = getGeminiClient(customApiKey);
+  const { systemPrompt, userPrompt } = buildGoalExtractPrompt(rawText);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.8-flash',
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      responseMimeType: 'application/json',
+      responseSchema: goalExtractionSchema,
+      temperature: 0.1,
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    throw new Error('Gemini API returned an empty goal extraction response.');
+  }
+
+  const parsed = JSON.parse(text) as GoalExtracted;
+  return parsed;
+}
