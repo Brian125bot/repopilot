@@ -32,6 +32,7 @@ function toParseIssues(error: z.ZodError): Array<{ field: string; message: strin
   }));
 }
 
+export type ConventionEntry = z.infer<typeof ConventionEntrySchema>;
 export const ConventionEntrySchema = z
   .object({
     id: z.string({ message: 'Convention id is required.' }).trim().min(1, 'Convention id is required.'),

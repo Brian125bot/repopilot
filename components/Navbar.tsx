@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, Key, FolderArchive, BookOpen } from 'lucide-react';
+import { Compass, Key, FolderArchive, BookOpen, GitFork } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { GitHubStatusIndicator } from './GitHubStatusIndicator';
