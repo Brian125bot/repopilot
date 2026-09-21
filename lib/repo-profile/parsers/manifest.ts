@@ -5,19 +5,22 @@ export interface ParsedManifest {
   scripts: string[];
   packageManager?: string;
   frameworks: string[];
+  testRunner?: string;
 }
 
 const FRAMEWORKS = [
-  'next',
-  'react',
-  'vue',
-  'angular',
-  'svelte',
-  'nuxt',
-  'express',
-  'fastify',
-  'nestjs'
+  "next",
+  "react",
+  "vue",
+  "angular",
+  "svelte",
+  "nuxt",
+  "express",
+  "fastify",
+  "nestjs"
 ];
+
+const TEST_RUNNERS = ["vitest", "jest", "mocha"];
 
 export function parsePackageJson(content: string): ParsedManifest {
   try {
@@ -27,10 +30,10 @@ export function parsePackageJson(content: string): ParsedManifest {
     const devDependencies = Object.keys(pkg.devDependencies || {});
     const scripts = Object.keys(pkg.scripts || {});
 
-    const frameworks = [
-      ...dependencies,
-      ...devDependencies
-    ].filter(dep => FRAMEWORKS.includes(dep));
+    const allDeps = new Set([...dependencies, ...devDependencies]);
+
+    const frameworks = Array.from(allDeps).filter(dep => FRAMEWORKS.includes(dep));
+    const testRunner = TEST_RUNNERS.find(runner => allDeps.has(runner));
 
     return {
       name: pkg.name,
@@ -38,7 +41,8 @@ export function parsePackageJson(content: string): ParsedManifest {
       devDependencies,
       scripts,
       packageManager: pkg.packageManager,
-      frameworks: [...new Set(frameworks)],
+      frameworks,
+      testRunner,
     };
   } catch (err) {
     return {
