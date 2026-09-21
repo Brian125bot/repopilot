@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
 
-- Added security headers (`Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Permissions-Policy`) via `vercel.json` and `next.config.ts` for hosted hybrid Vercel deployments.
-- Documented public empty-environment contract across `.env.example` and `SECURITY.md`: public Vercel projects MUST leave `JULES_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_PAT` unset to ensure multi-user credential isolation.
+## 1.0.2 — 2026-09-21
 
-## 1.0.2 — 2026-09-15
-
-Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, audited PR head SHA drift rejection, provider key verification on first paint, and documentation honesty.
+Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.
 
 ### Landed Tickets & Architectural Changes
 
+- **COR-36: Security headers & public empty-environment contract**:
+  - Added security headers (`Content-Security-Policy`, `Referrer-Policy`, `X-Content-Type-Options`, `X-Frame-Options`, `Permissions-Policy`) via `vercel.json` and `next.config.ts` for hosted hybrid Vercel deployments.
+  - Documented public empty-environment contract across `.env.example` and `SECURITY.md`: public Vercel projects MUST leave `JULES_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_PAT` unset to ensure multi-user credential isolation.
 - **COR-40: Persisted audited PR head SHA & drift rejection**:
   - Locked remediation dispatch and continuation prompt compilation to the exact `auditedHeadSha` captured during Stage 2 evaluation.
   - Fail-closed gate (`400 INVALID_INPUT`) blocks remediation if the current PR head branch diverges from the audited SHA, preventing Jules from executing fixes on un-audited commits or falling back to `main`.
