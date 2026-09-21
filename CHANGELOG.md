@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **COR-53: Encrypted steering store & unified IndexedDB storage**:
+  - Implemented client-side WebCrypto AES-GCM encrypted steering store for repository profiles and steering snippets in IndexedDB (`profiles-v1` and `snippets-v1`).
+  - Unified IndexedDB database opener (`lib/vault/open-db.ts`) with schema version 2 to prevent version conflict errors across vault and steering stores.
+- **COR-54: GitHub scan pipeline hardening & scan UI**:
+  - Hardened multi-stage scan engine with internal AbortController, deadline enforcement, fatal Stage 1 gate, and fail-soft later stages.
+  - Implemented typed scan errors (`ScanError`), rate limit backoff retry policy, and UTF-8 base64 decoding.
+  - Enhanced repo picker with debounced pagination, client-side filtering, and manual ref validation alongside a never-downgrade profile save policy.
+
 ## 1.0.2 — 2026-09-21
 
 Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.

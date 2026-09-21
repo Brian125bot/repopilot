@@ -17,7 +17,14 @@ export function detectLintFormat(files: string[]): ParsedLintFormat {
     if (file.startsWith('.eslintrc') || file.startsWith('eslint.config.')) {
       result.eslint = true;
     }
-    if (file.startsWith('.prettierrc') || file === 'prettier.config.js' || file === '.prettierignore') {
+    if (
+      file.startsWith('.prettierrc') ||
+      file === 'prettier.config.js' ||
+      file === 'prettier.config.cjs' ||
+      file === 'prettier.config.mjs' ||
+      file === 'prettier.config.ts' ||
+      file === '.prettierignore'
+    ) {
       result.prettier = true;
     }
     if (file === 'biome.json' || file === 'biome.jsonc') {
