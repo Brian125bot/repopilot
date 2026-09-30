@@ -8,12 +8,8 @@ import { RepoPicker } from '@/components/RepoPicker';
 import { ScanProgress } from '@/components/ScanProgress';
 import { scanRepository } from '@/lib/repo-profile/scan';
 import { ScanResult, ScanStage } from '@/lib/repo-profile/types';
-import {
-  decideSave,
-  isProfileEmpty,
-  EMPTY_REPLACE_MESSAGE,
-  SaveDecision,
-} from '@/lib/repo-profile/save-policy';
+import { isProfileEmpty } from '@/lib/repo-profile/save-policy';
+import { useProfileSave } from './use-profile-save';
 import { describeScanOutcome, describeScanError } from '@/lib/repo-profile/describe';
 import { RepoProfile } from '@/lib/types/steering';
 import { indexedDbSteeringStore } from '@/lib/vault/steering-store';
@@ -33,14 +29,10 @@ export default function ReposSettingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [saveDecision, setSaveDecision] = useState<SaveDecision | null>(null);
-  const [operatorSaved, setOperatorSaved] = useState(false);
-  const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const [savedProfiles, setSavedProfiles] = useState<RepoProfile[]>([]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const existingProfileRef = useRef<RepoProfile | null>(null);
 
   const loadProfiles = useCallback(async () => {
     if (!isUnlocked) return;
@@ -60,6 +52,13 @@ export default function ReposSettingsPage() {
       void loadProfiles();
     }
   }, [isUnlocked, loadProfiles]);
+
+  const saveController = useProfileSave({
+    passphrase,
+    isUnlocked,
+    reloadProfiles: loadProfiles,
+  });
+  const { state: saveState, action: saveAction } = saveController;
 
   const handleUnlock = async () => {
     if (!passphrase.trim()) return;
@@ -96,12 +95,9 @@ export default function ReposSettingsPage() {
       return;
     }
     setError(null);
-    setStatusNotice(null);
     setScanning(true);
     setScanResult(null);
-    setSaveDecision(null);
-    setOperatorSaved(false);
-    existingProfileRef.current = null;
+    saveController.beginScan();
 
     abortControllerRef.current = new AbortController();
 
@@ -124,27 +120,9 @@ export default function ReposSettingsPage() {
       const existing = existingProfiles.find(
         (p) => p.id.toLowerCase() === result.profile.id.toLowerCase()
       ) || null;
-      existingProfileRef.current = existing;
 
-      const decision = decideSave(existing, result);
-      setSaveDecision(decision);
-
-      if (decision.action === 'save' && result.outcome === 'complete') {
-        await store.saveRepoProfile(decision.profile);
-        await loadProfiles();
-        setStatusNotice('Scan completed and profile saved.');
-      } else if (decision.action === 'save') {
-        setStatusNotice('Incomplete scan. Review it below, then choose Save to keep it.');
-      } else if (existing && !existing.incomplete && result.outcome !== 'complete') {
-        const formattedDate = existing.updatedAt
-          ? new Date(existing.updatedAt).toLocaleDateString()
-          : 'earlier';
-        setStatusNotice(`Kept your saved profile from ${formattedDate}`);
-      } else if (result.outcome === 'cancelled' || result.outcome === 'timed_out') {
-        setStatusNotice('Cancelled before any data was collected. Nothing saved.');
-      } else {
-        setStatusNotice('Nothing meaningful was collected. Nothing saved.');
-      }
+      // The hook owns the decision, the write, and the resulting button state.
+      await saveController.applyScanResult(result, existing);
     } catch (err: unknown) {
       setError(describeScanError(err));
     } finally {
@@ -156,34 +134,6 @@ export default function ReposSettingsPage() {
   const handleCancel = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-    }
-  };
-
-  const handleConfirmSave = async () => {
-    if (!saveDecision || !isUnlocked) return;
-    if (isProfileEmpty(saveDecision.profile)) {
-      setError(EMPTY_REPLACE_MESSAGE);
-      return;
-    }
-    const wasReplace = existingProfileRef.current !== null;
-    try {
-      const store = indexedDbSteeringStore();
-      store.unlock(passphrase);
-
-      await store.saveRepoProfile(saveDecision.profile);
-      await loadProfiles();
-
-      setSaveDecision((prev) => (prev ? { ...prev, action: 'save' } : null));
-      setOperatorSaved(true);
-      setStatusNotice(
-        saveDecision.profile.incomplete
-          ? wasReplace
-            ? 'Replaced saved profile with this partial scan.'
-            : 'Saved incomplete profile.'
-          : 'Scan completed and profile saved.'
-      );
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save profile');
     }
   };
 
@@ -199,13 +149,9 @@ export default function ReposSettingsPage() {
     }
   };
 
-  const activeProfile = saveDecision?.profile || scanResult?.profile || null;
-  const candidateProfile = saveDecision?.profile ?? null;
+  const candidateProfile = saveState.decision?.profile ?? null;
+  const activeProfile = candidateProfile || scanResult?.profile || null;
   const isCandidateEmpty = candidateProfile ? isProfileEmpty(candidateProfile) : false;
-  const isAlreadySaved = saveDecision?.action === 'save';
-  const isSaved = isAlreadySaved && (!candidateProfile?.incomplete || operatorSaved);
-  const isPendingSave = isAlreadySaved && Boolean(candidateProfile?.incomplete) && !operatorSaved;
-  const canReplace = !isAlreadySaved && !isCandidateEmpty;
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
@@ -298,9 +244,15 @@ export default function ReposSettingsPage() {
                     {describeScanOutcome(scanResult)}
                   </div>
 
-                  {statusNotice && (
+                  {saveState.notice && (
                     <div className="p-2 bg-indigo-50 text-indigo-800 text-xs rounded border border-indigo-200">
-                      {statusNotice}
+                      {saveState.notice}
+                    </div>
+                  )}
+
+                  {saveState.error && (
+                    <div className="p-2 bg-red-50 text-red-800 text-xs rounded border border-red-200">
+                      {saveState.error}
                     </div>
                   )}
 
@@ -344,26 +296,31 @@ export default function ReposSettingsPage() {
                     </div>
                   )}
 
+                  {saveAction.requiresConfirm && saveState.confirmPending && saveAction.lossWarning && (
+                    <Alert variant="destructive" className="mt-4">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>This will overwrite your saved profile</AlertTitle>
+                      <AlertDescription>{saveAction.lossWarning}</AlertDescription>
+                    </Alert>
+                  )}
+
                   <div className="flex gap-2 pt-4">
-                    {isSaved ? (
-                      <Button disabled className="flex-1">
+                    <Button
+                      onClick={saveController.requestSave}
+                      disabled={saveAction.disabled}
+                      className="flex-1"
+                    >
+                      {saveAction.kind === 'saved' ? (
                         <Check className="w-4 h-4 mr-2" />
-                        Saved
-                      </Button>
-                    ) : isPendingSave ? (
-                      <Button onClick={handleConfirmSave} className="flex-1">
+                      ) : (
                         <Save className="w-4 h-4 mr-2" />
-                        Save partial profile
-                      </Button>
-                    ) : canReplace ? (
-                      <Button onClick={handleConfirmSave} className="flex-1">
-                        <Save className="w-4 h-4 mr-2" />
-                        Replace saved profile with this partial
-                      </Button>
-                    ) : (
-                      <Button disabled className="flex-1">
-                        <Save className="w-4 h-4 mr-2" />
-                        Nothing to save from this scan
+                      )}
+                      {saveAction.label}
+                    </Button>
+
+                    {saveState.confirmPending && (
+                      <Button variant="outline" onClick={saveController.cancelConfirm}>
+                        Keep saved profile
                       </Button>
                     )}
 
@@ -371,13 +328,10 @@ export default function ReposSettingsPage() {
                       variant="outline"
                       onClick={() => {
                         setScanResult(null);
-                        setSaveDecision(null);
-                        setOperatorSaved(false);
-                        setStatusNotice(null);
-                        existingProfileRef.current = null;
+                        saveController.discard();
                       }}
                     >
-                      {isSaved ? 'Close' : 'Discard'}
+                      {saveAction.kind === 'saved' ? 'Close' : 'Discard'}
                     </Button>
                   </div>
 

@@ -16,6 +16,19 @@ export interface ScanOptions {
   onProgress?: (stage: ScanStage, message: string) => void;
 }
 
+/**
+ * GitHub's git-trees endpoint takes a ref name, not a single path segment, so a
+ * branch like `feature/COR-54` must reach the API with its slashes intact.
+ * `encodeURIComponent` would turn that into `feature%2FCOR-54`, which the endpoint
+ * does not resolve as a ref. Encode each segment and rejoin with "/".
+ */
+export function encodeRefPath(ref: string): string {
+  return ref
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function decodeBase64Content(raw: string): string {
   const cleaned = raw.replace(/\s+/g, "");
   if (typeof atob === "function" && typeof TextDecoder !== "undefined") {
@@ -72,18 +85,29 @@ async function fetchWithBackoff(
       .then((res) => ({ response: res }))
       .catch((err) => ({ error: err }));
 
+    let onAbort: (() => void) | undefined;
     const abortPromise = new Promise<FetchResult>((resolve) => {
       if (internalSignal.aborted) {
         resolve({ error: new DOMException("The operation was aborted", "AbortError") });
         return;
       }
-      const onAbort = () => {
+      onAbort = () => {
         resolve({ error: new DOMException("The operation was aborted", "AbortError") });
       };
       internalSignal.addEventListener("abort", onAbort, { once: true });
     });
 
-    return Promise.race([fetchPromise, abortPromise]);
+    try {
+      return await Promise.race([fetchPromise, abortPromise]);
+    } finally {
+      // The listener only exists to win the race. When the fetch settles first the
+      // abort promise never resolves, so without this the listener would stay
+      // attached to the long-lived internal controller for the rest of the scan and
+      // accumulate one closure per request.
+      if (onAbort) {
+        internalSignal.removeEventListener("abort", onAbort);
+      }
+    }
   };
 
   const initial = await executeFetch(url, options);
@@ -449,7 +473,7 @@ export async function scanRepository(
     if (!ctrl.signal.aborted) {
       onProgress?.("config", "Detecting lint and formatting configuration...");
       const targetBranch = profile.repoRef.defaultBranch || "main";
-      const treeUrl = `https://api.github.com/repos/${encodeURIComponent(validated.owner)}/${encodeURIComponent(validated.repo)}/git/trees/${encodeURIComponent(targetBranch)}?recursive=0`;
+      const treeUrl = `https://api.github.com/repos/${encodeURIComponent(validated.owner)}/${encodeURIComponent(validated.repo)}/git/trees/${encodeRefPath(targetBranch)}?recursive=0`;
       const treeRes = await fetchWithBackoff(treeUrl, { headers }, ctrl.signal, getRemainingMs);
 
       if (!ctrl.signal.aborted) {

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { scanRepository } from "./scan";
+import { scanRepository, encodeRefPath } from "./scan";
 import { ScanError } from "./types";
 
 const mockFetch = vi.fn();
@@ -147,6 +147,73 @@ describe("scanRepository", () => {
     expect(result.profile.conventions).toContainEqual(
       expect.objectContaining({ id: "lint-format" })
     );
+  });
+
+  it("throws on the Stage 1 gate and captures no profile data at all", async () => {
+    // A fatal Stage 1 failure must reject with a typed error rather than returning
+    // a partial result, and must never reach the later stages.
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    await expect(
+      scanRepository({ owner: "foo", repo: "bar" }, { githubPat: "fake" })
+    ).rejects.toThrowError(
+      expect.objectContaining({ name: "ScanError", code: "not_found", status: 404 })
+    );
+
+    // Exactly one request: the gate failed before languages/manifest/commits/tree.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a genuinely empty profile when cancelled during the Stage 1 gate", async () => {
+    // The counterpart to the throw case: an operator cancel during Stage 1 resolves
+    // with a cancelled result whose profile carries no extracted data. This is the
+    // input the save policy must refuse.
+    const ac = new AbortController();
+    mockFetch.mockImplementation(async () => {
+      ac.abort();
+      return { ok: true, json: async () => ({ default_branch: "main", owner: { login: "foo" }, name: "bar" }) };
+    });
+
+    const result = await scanRepository(
+      { owner: "foo", repo: "bar" },
+      { githubPat: "fake", signal: ac.signal }
+    );
+
+    expect(result.outcome).toBe("cancelled");
+    expect(result.profile.incomplete).toBe(true);
+    // No default branch, no languages, no stack detail, no conventions.
+    expect(result.profile.repoRef.defaultBranch).toBeUndefined();
+    expect(result.profile.stack.languages).toEqual([]);
+    expect(result.profile.stack.packageManager).toBeUndefined();
+    expect(result.profile.stack.framework).toBeUndefined();
+    expect(result.profile.stack.testRunner).toBeUndefined();
+    expect(result.profile.conventions).toEqual([]);
+    expect(result.profile.notes).toBeUndefined();
+  });
+
+  it("returns a branch-only profile when the cancel lands after Stage 1 metadata", async () => {
+    // The near-empty case: non-empty (a branch was captured) so the save policy
+    // allows it, but still incomplete and still requiring operator confirmation
+    // when a complete profile already exists.
+    const ac = new AbortController();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ default_branch: "main", owner: { login: "foo" }, name: "bar" }),
+    });
+    mockFetch.mockImplementation(async () => {
+      ac.abort();
+      return { ok: true, json: async () => ({ TypeScript: 100 }) };
+    });
+
+    const result = await scanRepository(
+      { owner: "foo", repo: "bar" },
+      { githubPat: "fake", signal: ac.signal }
+    );
+
+    expect(result.outcome).toBe("cancelled");
+    expect(result.profile.incomplete).toBe(true);
+    expect(result.profile.repoRef.defaultBranch).toBe("main");
+    expect(result.profile.conventions).toEqual([]);
   });
 
   it("continues to later stages when languages fetch throws", async () => {
@@ -451,5 +518,134 @@ describe("scanRepository", () => {
     expect(result.issues).toContainEqual(
       expect.objectContaining({ stage: "config", code: "parse" })
     );
+  });
+
+  it("requests the git tree with slashes intact for branches containing '/'", async () => {
+    // Stage 1 metadata returns a slashed default branch
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        default_branch: "feature/COR-54 harden",
+        owner: { login: "foo" },
+        name: "bar",
+      }),
+    });
+    // Stage 1b languages
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ TypeScript: 100 }) });
+    // Stage 2 manifest
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    // Stage 3 commits
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    // Stage 4 tree
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ tree: [{ path: ".eslintrc.json" }] }),
+    });
+
+    await scanRepository({ owner: "foo", repo: "bar" }, { githubPat: "fake" });
+
+    const treeCall = mockFetch.mock.calls.find((call) =>
+      String(call[0]).includes("/git/trees/")
+    );
+    expect(treeCall).toBeDefined();
+
+    const treeUrl = new URL(String(treeCall![0]));
+    // Slashes survive; the space is percent-encoded within its segment.
+    expect(treeUrl.pathname).toBe("/repos/foo/bar/git/trees/feature/COR-54%20harden");
+    expect(String(treeCall![0])).not.toContain("%2F");
+  });
+
+  it("does not accumulate abort listeners on the internal controller across requests", async () => {
+    // executeFetch registers an abort listener purely to win a Promise.race. The
+    // scan makes several sequential requests against one long-lived internal
+    // controller, so a listener that is not detached after the request settles
+    // piles up for the lifetime of the scan.
+    const live = new Map<AbortSignal, Set<EventListenerOrEventListenerObject>>();
+    let maxLiveOnOneSignal = 0;
+    let signalCount = 0;
+
+    const proto = AbortSignal.prototype as AbortSignal;
+    const originalAdd = proto.addEventListener;
+    const originalRemove = proto.removeEventListener;
+
+    proto.addEventListener = function patchedAdd(
+      this: AbortSignal,
+      type: string,
+      fn: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions
+    ) {
+      if (type === "abort" && fn) {
+        let set = live.get(this);
+        if (!set) {
+          set = new Set();
+          live.set(this, set);
+          signalCount++;
+        }
+        set.add(fn);
+        maxLiveOnOneSignal = Math.max(maxLiveOnOneSignal, set.size);
+      }
+      return originalAdd.call(this, type, fn as EventListenerOrEventListenerObject, options);
+    } as typeof proto.addEventListener;
+
+    proto.removeEventListener = function patchedRemove(
+      this: AbortSignal,
+      type: string,
+      fn: EventListenerOrEventListenerObject | null,
+      options?: boolean | EventListenerOptions
+    ) {
+      if (type === "abort" && fn) {
+        live.get(this)?.delete(fn);
+      }
+      return originalRemove.call(this, type, fn as EventListenerOrEventListenerObject, options);
+    } as typeof proto.removeEventListener;
+
+    try {
+      // Five sequential requests: metadata, languages, manifest, commits, tree.
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url.includes("/languages")) {
+          return { ok: true, json: async () => ({ TypeScript: 100 }) };
+        }
+        if (url.includes("/commits")) {
+          return { ok: true, json: async () => [] };
+        }
+        if (url.includes("/git/trees/")) {
+          return { ok: true, json: async () => ({ tree: [{ path: ".eslintrc.json" }] }) };
+        }
+        if (url.includes("/contents/package.json")) {
+          return {
+            ok: true,
+            json: async () => ({
+              content: Buffer.from(JSON.stringify({ name: "leak-app" })).toString("base64"),
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({ default_branch: "main", owner: { login: "foo" }, name: "bar" }),
+        };
+      });
+
+      await scanRepository({ owner: "foo", repo: "bar" }, { githubPat: "fake" });
+
+      // The spy actually observed abort listeners, so the assertion is not vacuous.
+      expect(signalCount).toBeGreaterThan(0);
+      // At most one live abort listener per controller at any point: the scan's own
+      // user-cancel bridge. Without the fix this climbs to 5+ during the scan.
+      expect(maxLiveOnOneSignal).toBeLessThanOrEqual(1);
+    } finally {
+      proto.addEventListener = originalAdd;
+      proto.removeEventListener = originalRemove;
+    }
+  });
+});
+
+describe("encodeRefPath", () => {
+  it("preserves slashes and encodes each segment", () => {
+    expect(encodeRefPath("main")).toBe("main");
+    expect(encodeRefPath("feature/COR-54")).toBe("feature/COR-54");
+    expect(encodeRefPath("release/2026/q1")).toBe("release/2026/q1");
+    expect(encodeRefPath("feature/my branch")).toBe("feature/my%20branch");
+    expect(encodeRefPath("feat/a#b?c")).toBe("feat/a%23b%3Fc");
+    expect(encodeRefPath("")).toBe("");
   });
 });
