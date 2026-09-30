@@ -2,17 +2,9 @@
 
 ## [Unreleased]
 
-- **COR-53: Encrypted steering store & unified IndexedDB storage**:
-  - Implemented client-side WebCrypto AES-GCM encrypted steering store for repository profiles and steering snippets in IndexedDB (`profiles-v1` and `snippets-v1`).
-  - Unified IndexedDB database opener (`lib/vault/open-db.ts`) with schema version 2 to prevent version conflict errors across vault and steering stores.
-- **COR-54: GitHub scan pipeline hardening & scan UI**:
-  - Hardened multi-stage scan engine with internal AbortController, deadline enforcement, fatal Stage 1 gate, and fail-soft later stages.
-  - Implemented typed scan errors (`ScanError`), rate limit backoff retry policy, and UTF-8 base64 decoding.
-  - Enhanced repo picker with debounced pagination, client-side filtering, and manual ref validation alongside a never-downgrade profile save policy.
-
 ## 1.0.2 — 2026-09-21
 
-Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.
+Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, encrypted IndexedDB steering storage, hardened GitHub scan pipeline, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.
 
 ### Landed Tickets & Architectural Changes
 
@@ -33,6 +25,16 @@ Zero-auth, zero-server release featuring client-side WebCrypto credential isolat
 - **COR-10: Purged fabricated benchmarks & documentation honesty**:
   - Repo-wide audit and removal of unverified benchmark statistics (e.g., legacy fabricated marketing percentages) across documentation.
   - Aligned documentation with true system mechanics: deterministic diff sanitizer priority (-35 penalty), click-gated operator remediation ("Continue Jules session" and "New session with brief"), and local outcome analytics (`repopilot_outcome_log`).
+- **COR-53: Repo profile & steering snippet types with encrypted IndexedDB storage**:
+  - Added Zod schemas `RepoProfileSchema` and `SnippetSchema` (`lib/types/steering.ts`) covering repository profiles, convention entries, and steering snippets, with `parseRepoProfile` / `parseSnippet` guards and strict field validation.
+  - Implemented a client-side WebCrypto AES-GCM encrypted steering store (`lib/vault/steering-store.ts`) for repository profiles and steering snippets in IndexedDB (`profiles-v1` and `snippets-v1`). Plaintext never touches storage; keys stay in non-persisted browser memory.
+  - Unified the IndexedDB database opener (`lib/vault/open-db.ts`) at schema version 2 so the credential vault and the steering store share a single upgrade path and cannot race on `onupgradeneeded`.
+- **COR-54: Hardened GitHub scan pipeline, cancelable scan progress, repository picker, and save policy**:
+  - Rebuilt the scan engine as four typed stages (`metadata` / `manifest` / `commits` / `config`) with an internal `AbortController` and a 15s deadline: Stage 1 is a fatal gate (repository must resolve before anything is collected), later stages are fail-soft and record a `ScanIssue` instead of aborting the run.
+  - Added typed `ScanError` codes (`invalid_ref`, `unauthorized`, `forbidden`, `not_found`, `rate_limited`, `network`, `http_error`), rate-limit backoff with a single abortable retry, and correct UTF-8 base64 decoding of manifest contents.
+  - Cancelable scan progress (`ScanProgress`) labels the active stage as "Step N of 4" and always offers an explicit cancel that returns a `cancelled` / `timed_out` result flagged `incomplete: true`.
+  - Debounced repository picker (`RepoPicker`) with Link-header pagination, client-side filtering, retry on failure, and `owner/repo` manual entry validated against the same ref rules the scanner enforces.
+  - Never-downgrade save policy (`decideSave`): an incomplete scan never replaces a complete saved profile, and an empty or cancelled scan is refused outright — the replace control is hidden and the save handler rejects with *"Cannot replace existing profile with an empty scan result."* Complete scans auto-save; incomplete results always require an explicit operator click.
 
 ## 1.0.1 — 2026-09-14 (@ 1f4f4e7)
 
