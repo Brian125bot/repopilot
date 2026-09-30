@@ -244,6 +244,44 @@ describe("scanRepository", () => {
     expect(result.profile.incomplete).toBe(true);
   });
 
+  it("signals incomplete: true when aborted during config/file extraction (Stage 4)", async () => {
+    const ac = new AbortController();
+
+    // Stage 1 metadata
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ default_branch: "main", owner: { login: "foo" }, name: "bar" }),
+    });
+    // Stage 1b languages
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ TypeScript: 100 }) });
+    // Stage 2 manifest
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ content: Buffer.from(JSON.stringify({ name: "cfg-app" })).toString("base64") }),
+    });
+    // Stage 3 commits
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+    // Stage 4 git tree: abort while this request is in flight
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes("/git/trees/")) {
+        ac.abort();
+        return { ok: true, json: async () => ({ tree: [{ path: ".eslintrc.json" }] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    const result = await scanRepository(
+      { owner: "foo", repo: "bar" },
+      { githubPat: "fake", signal: ac.signal }
+    );
+
+    expect(result.outcome).toBe("cancelled");
+    expect(result.profile.incomplete).toBe(true);
+    // Data collected before the abort is retained, and lint-format was not added.
+    expect(result.profile.stack.languages).toEqual(["TypeScript"]);
+    expect(result.profile.conventions.map((c) => c.id)).not.toContain("lint-format");
+  });
+
   it("handles rate limits: bare 403 not retried, 429 retried once, reset > 5s surfaces rate_limited", async () => {
     // 1. Bare 403 is forbidden, not retried
     mockFetch.mockResolvedValueOnce({ ok: false, status: 403, headers: new Headers() });

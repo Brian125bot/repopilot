@@ -1,12 +1,21 @@
 import { RepoProfile } from "@/lib/types/steering";
 import { ScanResult } from "./types";
 
+export const EMPTY_REPLACE_MESSAGE =
+  "Cannot replace existing profile with an empty scan result.";
+
 export interface SaveDecision {
   action: "save" | "skip";
   profile: RepoProfile & { incomplete?: boolean };
 }
 
-function isProfileEmpty(profile: RepoProfile & { incomplete?: boolean }): boolean {
+/**
+ * A profile is "empty" when a cancelled or timed-out scan collected no meaningful
+ * extracted data. `RepoProfile` carries no summary/scripts/dependencies fields, so
+ * the meaningful signals are the default branch, detected languages, any tech-stack
+ * detail, and detected conventions.
+ */
+export function isProfileEmpty(profile: RepoProfile & { incomplete?: boolean }): boolean {
   const hasBranch = Boolean(profile.repoRef.defaultBranch);
   const hasLanguages = (profile.stack.languages ?? []).length > 0;
   const hasConventions = (profile.conventions ?? []).length > 0;

@@ -8,7 +8,12 @@ import { RepoPicker } from '@/components/RepoPicker';
 import { ScanProgress } from '@/components/ScanProgress';
 import { scanRepository } from '@/lib/repo-profile/scan';
 import { ScanResult, ScanStage } from '@/lib/repo-profile/types';
-import { decideSave, SaveDecision } from '@/lib/repo-profile/save-policy';
+import {
+  decideSave,
+  isProfileEmpty,
+  EMPTY_REPLACE_MESSAGE,
+  SaveDecision,
+} from '@/lib/repo-profile/save-policy';
 import { describeScanOutcome, describeScanError } from '@/lib/repo-profile/describe';
 import { RepoProfile } from '@/lib/types/steering';
 import { indexedDbSteeringStore } from '@/lib/vault/steering-store';
@@ -29,11 +34,13 @@ export default function ReposSettingsPage() {
 
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [saveDecision, setSaveDecision] = useState<SaveDecision | null>(null);
+  const [operatorSaved, setOperatorSaved] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   const [savedProfiles, setSavedProfiles] = useState<RepoProfile[]>([]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const existingProfileRef = useRef<RepoProfile | null>(null);
 
   const loadProfiles = useCallback(async () => {
     if (!isUnlocked) return;
@@ -93,6 +100,8 @@ export default function ReposSettingsPage() {
     setScanning(true);
     setScanResult(null);
     setSaveDecision(null);
+    setOperatorSaved(false);
+    existingProfileRef.current = null;
 
     abortControllerRef.current = new AbortController();
 
@@ -115,27 +124,26 @@ export default function ReposSettingsPage() {
       const existing = existingProfiles.find(
         (p) => p.id.toLowerCase() === result.profile.id.toLowerCase()
       ) || null;
+      existingProfileRef.current = existing;
 
       const decision = decideSave(existing, result);
       setSaveDecision(decision);
 
-      if (decision.action === 'save') {
+      if (decision.action === 'save' && result.outcome === 'complete') {
         await store.saveRepoProfile(decision.profile);
         await loadProfiles();
-        if (result.outcome === 'complete') {
-          setStatusNotice('Scan completed and profile saved.');
-        } else {
-          setStatusNotice('Incomplete scan auto-saved.');
-        }
+        setStatusNotice('Scan completed and profile saved.');
+      } else if (decision.action === 'save') {
+        setStatusNotice('Incomplete scan. Review it below, then choose Save to keep it.');
+      } else if (existing && !existing.incomplete && result.outcome !== 'complete') {
+        const formattedDate = existing.updatedAt
+          ? new Date(existing.updatedAt).toLocaleDateString()
+          : 'earlier';
+        setStatusNotice(`Kept your saved profile from ${formattedDate}`);
+      } else if (result.outcome === 'cancelled' || result.outcome === 'timed_out') {
+        setStatusNotice('Cancelled before any data was collected. Nothing saved.');
       } else {
-        if (existing && !existing.incomplete && result.outcome !== 'complete') {
-          const formattedDate = existing.updatedAt
-            ? new Date(existing.updatedAt).toLocaleDateString()
-            : 'earlier';
-          setStatusNotice(`Kept your saved profile from ${formattedDate}`);
-        } else if (result.outcome === 'cancelled' || result.outcome === 'timed_out') {
-          setStatusNotice('Cancelled before any data was collected. Nothing saved.');
-        }
+        setStatusNotice('Nothing meaningful was collected. Nothing saved.');
       }
     } catch (err: unknown) {
       setError(describeScanError(err));
@@ -151,8 +159,13 @@ export default function ReposSettingsPage() {
     }
   };
 
-  const handleExplicitReplace = async () => {
+  const handleConfirmSave = async () => {
     if (!saveDecision || !isUnlocked) return;
+    if (isProfileEmpty(saveDecision.profile)) {
+      setError(EMPTY_REPLACE_MESSAGE);
+      return;
+    }
+    const wasReplace = existingProfileRef.current !== null;
     try {
       const store = indexedDbSteeringStore();
       store.unlock(passphrase);
@@ -161,7 +174,14 @@ export default function ReposSettingsPage() {
       await loadProfiles();
 
       setSaveDecision((prev) => (prev ? { ...prev, action: 'save' } : null));
-      setStatusNotice('Replaced saved profile with this partial scan.');
+      setOperatorSaved(true);
+      setStatusNotice(
+        saveDecision.profile.incomplete
+          ? wasReplace
+            ? 'Replaced saved profile with this partial scan.'
+            : 'Saved incomplete profile.'
+          : 'Scan completed and profile saved.'
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to save profile');
     }
@@ -180,6 +200,12 @@ export default function ReposSettingsPage() {
   };
 
   const activeProfile = saveDecision?.profile || scanResult?.profile || null;
+  const candidateProfile = saveDecision?.profile ?? null;
+  const isCandidateEmpty = candidateProfile ? isProfileEmpty(candidateProfile) : false;
+  const isAlreadySaved = saveDecision?.action === 'save';
+  const isSaved = isAlreadySaved && (!candidateProfile?.incomplete || operatorSaved);
+  const isPendingSave = isAlreadySaved && Boolean(candidateProfile?.incomplete) && !operatorSaved;
+  const canReplace = !isAlreadySaved && !isCandidateEmpty;
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
@@ -319,15 +345,25 @@ export default function ReposSettingsPage() {
                   )}
 
                   <div className="flex gap-2 pt-4">
-                    {saveDecision?.action === 'save' ? (
+                    {isSaved ? (
                       <Button disabled className="flex-1">
                         <Check className="w-4 h-4 mr-2" />
-                        {activeProfile.incomplete ? 'Saved (incomplete)' : 'Saved'}
+                        Saved
                       </Button>
-                    ) : (
-                      <Button onClick={handleExplicitReplace} className="flex-1">
+                    ) : isPendingSave ? (
+                      <Button onClick={handleConfirmSave} className="flex-1">
+                        <Save className="w-4 h-4 mr-2" />
+                        Save partial profile
+                      </Button>
+                    ) : canReplace ? (
+                      <Button onClick={handleConfirmSave} className="flex-1">
                         <Save className="w-4 h-4 mr-2" />
                         Replace saved profile with this partial
+                      </Button>
+                    ) : (
+                      <Button disabled className="flex-1">
+                        <Save className="w-4 h-4 mr-2" />
+                        Nothing to save from this scan
                       </Button>
                     )}
 
@@ -336,12 +372,21 @@ export default function ReposSettingsPage() {
                       onClick={() => {
                         setScanResult(null);
                         setSaveDecision(null);
+                        setOperatorSaved(false);
                         setStatusNotice(null);
+                        existingProfileRef.current = null;
                       }}
                     >
-                      {saveDecision?.action === 'save' ? 'Close' : 'Discard'}
+                      {isSaved ? 'Close' : 'Discard'}
                     </Button>
                   </div>
+
+                  {isCandidateEmpty && (
+                    <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                      This scan was cancelled or timed out before any data was collected. Your saved
+                      profile has not been changed.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
