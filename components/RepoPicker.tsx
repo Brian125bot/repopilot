@@ -7,6 +7,7 @@ import { Button } from './ui/button';
 import { Loader2, Search, AlertCircle, RefreshCw } from 'lucide-react';
 import { validateAndParseRef } from '@/lib/repo-profile/ref';
 import { parseOwnerRepo } from '@/lib/github';
+import { trustedNextPageUrl } from '@/lib/repo-profile/github-links';
 
 interface RepoPickerProps {
   githubPat: string | null;
@@ -19,20 +20,6 @@ interface GithubRepo {
   full_name: string;
   name: string;
   owner: { login: string };
-}
-
-function parseLinkHeader(header: string | null): Record<string, string> {
-  if (!header) return {};
-  const links: Record<string, string> = {};
-  const parts = header.split(',');
-  for (const part of parts) {
-    const section = part.split(';');
-    if (section.length !== 2) continue;
-    const url = section[0].replace(/<|>/g, '').trim();
-    const name = section[1].replace(/rel="(.*)"/, '$1').trim();
-    links[name] = url;
-  }
-  return links;
 }
 
 export function RepoPicker({ githubPat, onSelect, disabled }: RepoPickerProps) {
@@ -94,12 +81,13 @@ export function RepoPicker({ githubPat, onSelect, disabled }: RepoPickerProps) {
               allRepos.push(...data);
             }
 
-            const linkHeader = res.headers.get('link');
-            const links = parseLinkHeader(linkHeader);
-            if (links.next && pagesCount < 3) {
-              currentUrl = links.next;
+            // Only follow a next-page URL that points back at the canonical GitHub
+            // API origin; the Authorization header carries the operator's PAT.
+            const nextPage = trustedNextPageUrl(res.headers.get('link'));
+            if (nextPage && pagesCount < 3) {
+              currentUrl = nextPage;
             } else {
-              if (links.next && pagesCount >= 3) {
+              if (nextPage && pagesCount >= 3) {
                 hitCapWithNext = true;
               }
               currentUrl = null;
