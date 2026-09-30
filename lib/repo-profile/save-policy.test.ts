@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { decideSave, isProfileEmpty, EMPTY_REPLACE_MESSAGE } from "./save-policy";
+import { decideSave, isProfileEmpty } from "./save-policy";
 import { ScanResult } from "./types";
 import { RepoProfile } from "@/lib/types/steering";
 
@@ -153,13 +153,24 @@ describe("isProfileEmpty", () => {
     expect(isProfileEmpty(profile)).toBe(false);
   });
 
-  it("is non-empty for a complete scan result", () => {
-    const complete: ScanResult = {
-      profile: createMockProfile(),
-      outcome: "complete",
-      issues: [],
+  it("is non-empty for a complete profile the scanner actually produced", () => {
+    // Replaces a tautological check: this is the exact shape scanRepository returns
+    // after the Stage 1 gate resolves and all four stages have contributed.
+    const scanned: RepoProfile & { incomplete?: boolean } = {
+      id: "foo/bar",
+      repoRef: { owner: "foo", repo: "bar", defaultBranch: "main" },
+      stack: { languages: ["TypeScript"], packageManager: "npm", framework: "react", testRunner: "vitest" },
+      conventions: [
+        { id: "manifest", title: "Manifest", body: "Name: bar", source: "package.json" },
+        { id: "commits", title: "Commits", body: "Conventional Commits.", source: "git commits" },
+        { id: "lint-format", title: "Lint", body: "Uses ESLint.", source: "Root configs" },
+      ],
+      notes: "Test desc",
+      updatedAt: "2026-03-30T10:00:00Z",
+      version: 1,
     };
-    expect(isProfileEmpty(decideSave(null, complete).profile)).toBe(false);
+
+    expect(isProfileEmpty(scanned)).toBe(false);
   });
 });
 
@@ -214,10 +225,43 @@ describe("empty scan cannot overwrite a saved profile", () => {
     expect(isProfileEmpty(decision.profile)).toBe(false);
     expect(decision.action).toBe("skip");
   });
+});
 
-  it("exposes the exact operator-facing rejection message", () => {
-    expect(EMPTY_REPLACE_MESSAGE).toBe(
-      "Cannot replace existing profile with an empty scan result."
-    );
+describe("decideSave - what still needs an operator click", () => {
+  function completeExisting() {
+    const existing = createMockProfile({ customInstructions: "keep me" });
+    delete existing.incomplete;
+    return existing;
+  }
+
+  it("returns 'save' for a complete scan over an existing complete profile", () => {
+    // The policy proposes the write; the UI layer is what requires the click, via
+    // shouldAutoSave() returning false whenever `existing` is non-null.
+    const result: ScanResult = {
+      profile: createMockProfile(),
+      outcome: "complete",
+      issues: [],
+    };
+
+    const decision = decideSave(completeExisting(), result);
+    expect(decision.action).toBe("save");
+    expect(decision.profile.incomplete).toBeUndefined();
+    expect(decision.profile.customInstructions).toBe("keep me");
+  });
+
+  it("carries the existing custom instructions onto a near-empty partial", () => {
+    const result: ScanResult = {
+      profile: createEmptyProfile(),
+      outcome: "cancelled",
+      issues: [],
+    };
+    result.profile.repoRef.defaultBranch = "main";
+
+    const decision = decideSave(completeExisting(), result);
+    // Non-empty (a branch was captured) so the empty guard does not fire, and the
+    // never-downgrade rule still holds it back for explicit confirmation.
+    expect(isProfileEmpty(decision.profile)).toBe(false);
+    expect(decision.action).toBe("skip");
+    expect(decision.profile.customInstructions).toBe("keep me");
   });
 });
