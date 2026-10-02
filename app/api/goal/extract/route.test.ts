@@ -175,9 +175,7 @@ describe('POST /api/goal/extract', () => {
     expect(mockedExtract).not.toHaveBeenCalled();
   });
 
-  it('returns UNAUTHORIZED when no Gemini key is available anywhere', async () => {
-    vi.stubEnv('GEMINI_API_KEY', '');
-
+  it('returns UNAUTHORIZED when the x-gemini-api-key header is missing', async () => {
     const res = await POST(
       new NextRequest(ROUTE, {
         method: 'POST',
@@ -190,6 +188,29 @@ describe('POST /api/goal/extract', () => {
     const json = await res.json();
     expect(json.code).toBe('UNAUTHORIZED');
     expect(mockedExtract).not.toHaveBeenCalled();
+  });
+
+  it('never falls back to a server GEMINI_API_KEY when the header is missing', async () => {
+    const original = process.env.GEMINI_API_KEY;
+    vi.stubEnv('GEMINI_API_KEY', 'server-held-gemini-key');
+    try {
+      const res = await POST(
+        new NextRequest(ROUTE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawText: 'Add a /healthz endpoint' }),
+        })
+      );
+
+      expect(res.status).toBe(401);
+      const body = await res.text();
+      expect(JSON.parse(body).code).toBe('UNAUTHORIZED');
+      expect(body).not.toContain('server-held-gemini-key');
+      expect(mockedExtract).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(process.env.GEMINI_API_KEY).toBe(original);
   });
 
   it('maps a Gemini failure to UPSTREAM_ERROR without leaking upstream text', async () => {

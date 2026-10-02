@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     const { rawText, repoProfile } = bodyValidation.data;
 
     const headerKey = req.headers.get('x-gemini-api-key')?.trim() || '';
-    const customApiKey = headerKey || process.env.GEMINI_API_KEY?.trim() || undefined;
+    const customApiKey = headerKey || undefined;
     if (!customApiKey) {
       return apiError(ROUTE, requestId, {
         status: 401,
