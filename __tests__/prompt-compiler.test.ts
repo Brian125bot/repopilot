@@ -162,3 +162,76 @@ Footer note for reviewers.
     expect(compiled).toContain('strictly adhering to anti-drift rules');
   });
 });
+
+describe('compileJulesPrompt COR-56 goal ingestion section', () => {
+  const baseInput = {
+    repo: 'acme/api-gateway',
+    baseBranch: 'main',
+    branchName: 'jules/goal-ingestion',
+    fileBoundaries: ['lib/goals/**'],
+    objective: 'Add an empty-scan save guard',
+    criteria: [
+      { id: 'crit-1', text: 'npm test lib/repo-profile/save-policy.test.ts covers the refusal', category: 'testing' as const },
+    ],
+  };
+
+  const goal = {
+    title: 'Add empty-scan save guard',
+    scope: ['lib/repo-profile/save-policy.ts'],
+    acceptanceCriteria: ['npm test lib/repo-profile/save-policy.test.ts covers the refusal'],
+    assumptions: ['The scanner keeps its four-stage shape'],
+    ambiguityFlags: ['operator did not name the test command'],
+  };
+
+  // The embedded AUDIT_BLUEPRINT carries a wall-clock createdAt, so normalize it
+// before asserting two compiles are byte-identical.
+const withoutTimestamp = (prompt: string): string =>
+  prompt.replace(/"createdAt":"[^"]*"/g, '"createdAt":"<ts>"');
+
+it('leaves the contract byte-identical when no goal was captured', () => {
+    // Same blueprintId across all three: the only variable under test is `goal`.
+    const withoutGoal = compileJulesPrompt(baseInput, 'bp_goal_absent');
+    const explicitNull = compileJulesPrompt({ ...baseInput, goal: null }, 'bp_goal_absent');
+    const explicitUndefined = compileJulesPrompt({ ...baseInput, goal: undefined }, 'bp_goal_absent');
+
+    expect(withoutGoal).not.toContain('Goal Ingestion');
+    expect(withoutTimestamp(explicitNull)).toBe(withoutTimestamp(withoutGoal));
+    expect(withoutTimestamp(explicitUndefined)).toBe(withoutTimestamp(withoutGoal));
+  });
+
+  it('adds a §1.1 block carrying title, scope, assumptions, and reviewed flags', () => {
+    const compiled = compileJulesPrompt({ ...baseInput, goal }, 'bp_goal_present');
+
+    expect(compiled).toContain('## 1.1 Goal Ingestion (operator-confirmed)');
+    expect(compiled).toContain('Add empty-scan save guard');
+    expect(compiled).toContain('lib/repo-profile/save-policy.ts');
+    expect(compiled).toContain('The scanner keeps its four-stage shape');
+    expect(compiled).toContain('operator did not name the test command');
+  });
+
+  it('keeps §2 onward unchanged so the blast radius cannot be widened by a goal', () => {
+    const compiled = compileJulesPrompt({ ...baseInput, goal }, 'bp_goal_scope');
+    const baseline = compileJulesPrompt(baseInput, 'bp_goal_scope');
+
+    expect(withoutTimestamp(compiled.slice(compiled.indexOf('## 2. Strict Scope')))).toBe(
+      withoutTimestamp(baseline.slice(baseline.indexOf('## 2. Strict Scope')))
+    );
+  });
+
+  it('states §3 stays authoritative rather than adding requirements', () => {
+    const compiled = compileJulesPrompt({ ...baseInput, goal }, 'bp_goal_authoritative');
+    expect(compiled).toContain('§3 is the authoritative criteria matrix');
+  });
+
+  it('handles an empty scope and no assumptions without printing placeholders', () => {
+    const compiled = compileJulesPrompt(
+      { ...baseInput, goal: { ...goal, scope: [], assumptions: [], ambiguityFlags: [] } },
+      'bp_goal_empty'
+    );
+
+    expect(compiled).toContain('Not narrowed beyond §2 boundaries.');
+    expect(compiled).toContain('None recorded.');
+    expect(compiled).not.toContain('Ambiguity flags');
+    expect(compiled).not.toContain('undefined');
+  });
+});

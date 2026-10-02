@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { apiError, createRequestId } from '@/lib/api-error';
 import { z } from 'zod';
+import { GOAL_RAW_TEXT_MAX, GoalExtractedSchema } from '@/lib/goals/types';
+import { RepoProfileSchema } from '@/lib/types/steering';
 
 export interface ValidationErrorDetail {
   field: string;
@@ -230,6 +232,10 @@ export const JulesDispatchBodySchema = z
     explicitStartingBranch: z.string().optional(),
     fileBoundaries: z.union([z.array(z.string()), z.string()]).optional(),
     criteria: z.array(AcceptanceCriterionSchema).optional(),
+    // COR-56: the operator-confirmed goal captured by StartSessionModal. The
+    // schema is strict, so this field must be declared here or dispatch rejects
+    // the payload outright. `extracted: null` is the "Skip extraction" path.
+    goal: GoalExtractedSchema.nullable().optional(),
     isRemediation: z.boolean().optional(),
     dryRun: z.boolean().optional(),
     customPrompt: z.string().optional(),
@@ -350,6 +356,19 @@ export const RepoInspectBodySchema = z.object({
     }),
 });
 
+// 11. app/api/goal/extract
+// Strict: an unknown field here would silently change extraction grounding.
+export const GoalExtractBodySchema = z
+  .object({
+    rawText: z
+      .string({ message: 'rawText is required.' })
+      .trim()
+      .min(1, 'rawText cannot be empty.')
+      .max(GOAL_RAW_TEXT_MAX, `rawText must be ${GOAL_RAW_TEXT_MAX} characters or fewer.`),
+    repoProfile: RepoProfileSchema.optional(),
+  })
+  .strict();
+
 // 10. app/api/vault (SECURITY SENSITIVE -> .strict())
 export const VaultGetQuerySchema = z.object({
   id: z.string().optional(),
@@ -402,6 +421,7 @@ export type JulesDispatchBody = z.infer<typeof JulesDispatchBodySchema>;
 export type JulesMessageBody = z.infer<typeof JulesMessageBodySchema>;
 export type JulesSessionQuery = z.infer<typeof JulesSessionQuerySchema>;
 export type RepoInspectBody = z.infer<typeof RepoInspectBodySchema>;
+export type GoalExtractBody = z.infer<typeof GoalExtractBodySchema>;
 export type VaultGetQuery = z.infer<typeof VaultGetQuerySchema>;
 export type VaultDeleteQuery = z.infer<typeof VaultDeleteQuerySchema>;
 export type VaultPostBody = z.infer<typeof VaultPostBodySchema>;

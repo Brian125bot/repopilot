@@ -34,6 +34,7 @@ describe('RepoPilot 1.0 release artifacts', () => {
       'app/api/jules/session/route.ts',
       'app/api/jules/message/route.ts',
       'app/api/audit/fetch-diff/route.ts',
+      'app/api/goal/extract/route.ts',
     ];
     for (const file of routes) {
       const src = readFileSync(file, 'utf8');

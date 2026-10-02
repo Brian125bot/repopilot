@@ -6,6 +6,7 @@ import {
 } from '@/lib/scoring';
 import { deriveDoNotTouchList, pickFilesToReadFirst } from '@/lib/contract-lint';
 import { matchesFileBoundary } from '@/lib/diff-sanitizer';
+import type { GoalExtracted } from '@/lib/goals/types';
 
 export interface BoundaryValidation {
   validGlobs: string[];
@@ -72,12 +73,48 @@ export interface PromptCompilerInput {
   repoContext?: Partial<RepoInspectionResult> | null;
   /** Explicit test command (defaults to repoContext.keyFiles.testCommand). */
   testCommand?: string;
+  /**
+   * COR-56: the goal the operator captured and reviewed before dispatch. Omitted
+   * (or null) when extraction was skipped or no goal was captured, in which case
+   * the compiled contract is byte-identical to the pre-COR-56 output.
+   */
+  goal?: GoalExtracted | null;
 }
 
 function formatCategoryLabel(category?: string): string {
   const c = (category || 'functional').toLowerCase();
   if (c === 'security' || c === 'testing' || c === 'constraint' || c === 'functional') return c;
   return 'functional';
+}
+
+/**
+ * COR-56: renders the operator-confirmed goal as an additive §1.1 block. §3
+ * stays the authoritative criteria matrix — this carries intent and scope notes
+ * only, so it can never contradict what the audit engine scores.
+ */
+function renderGoalSection(goal?: GoalExtracted | null): string {
+  if (!goal) return '';
+  const scope = goal.scope.length
+    ? goal.scope.map((s) => `  - \`${s.trim()}\``).join('\n')
+    : '  - Not narrowed beyond §2 boundaries.';
+  const assumptions = goal.assumptions.length
+    ? goal.assumptions.map((a) => `  - ${a.trim()}`).join('\n')
+    : '  - None recorded.';
+  const flags = goal.ambiguityFlags.length
+    ? `\n- **Ambiguity flags the operator reviewed and resolved:**\n${goal.ambiguityFlags
+        .map((f) => `  - ${f.trim()}`)
+        .join('\n')}`
+    : '';
+
+  return `
+## 1.1 Goal Ingestion (operator-confirmed)
+The operator captured and reviewed this goal before dispatch. §3 is the authoritative criteria matrix; treat the notes below as intent and context, never as extra requirements.
+
+- **Title:** ${goal.title.trim()}
+- **Scope:**
+${scope}
+- **Assumptions:**
+${assumptions}${flags}`;
 }
 
 export function compileJulesPrompt(input: PromptCompilerInput, blueprintId: string): string {
@@ -161,7 +198,7 @@ ${groundingSection}
 
 ## 1. Primary Objective
 ${input.objective}
-
+${renderGoalSection(input.goal)}
 ---
 
 ## 2. Strict Scope & File Boundaries

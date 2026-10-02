@@ -23,6 +23,7 @@ import {
   ChevronDown,
   ChevronUp,
   Wrench,
+  Target,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './ui/card';
 import { Button } from './ui/button';
@@ -32,6 +33,9 @@ import { Badge } from './ui/badge';
 import { Alert, AlertTitle, AlertDescription } from './ui/alert';
 import { ContractPreviewModal } from './ContractPreviewModal';
 import { JulesTroubleshootModal, JulesSourceSummary } from './JulesTroubleshootModal';
+import { StartSessionModal, type StartSessionIntent } from './JulesSession/StartSessionModal';
+import { criteriaFromGoalExtracted } from '@/lib/goals/contract';
+import type { Goal } from '@/lib/goals/types';
 import { compileJulesPrompt } from '@/lib/prompt-compiler';
 import { findJulesSource } from '@/lib/jules';
 import {
@@ -127,6 +131,12 @@ export function IntakeDispatchStage({
   const [julesSources, setJulesSources] = React.useState<JulesSourceSummary[]>([]);
   const [julesSourcesLoading, setJulesSourcesLoading] = React.useState(true);
   const [troubleshootOpen, setTroubleshootOpen] = React.useState(false);
+
+  // COR-56 goal ingestion. The modal always runs ahead of dispatch so a goal can
+  // never be created without explicit operator review.
+  const [goalModalOpen, setGoalModalOpen] = React.useState(false);
+  const [goalIntent, setGoalIntent] = React.useState<StartSessionIntent>('goal-only');
+  const [pendingGoal, setPendingGoal] = React.useState<Goal | null>(null);
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -347,7 +357,20 @@ export function IntakeDispatchStage({
     setPreviewOpen(true);
   };
 
-  const handleDispatch = async () => {
+  /**
+   * `goalOverride` / `criteriaOverride` exist because a goal confirmed in the
+   * modal is applied with `setState` and dispatched in the same tick, so this
+   * closure would otherwise read the pre-update values and silently dispatch the
+   * old contract.
+   */
+  const handleDispatch = async (
+    goalOverride?: Goal | null,
+    criteriaOverride?: AcceptanceCriterion[]
+  ) => {
+    const dispatchGoal = goalOverride !== undefined ? goalOverride : pendingGoal;
+    const dispatchCriteria = criteriaOverride ?? criteria;
+    const dispatchGoalExtracted = dispatchGoal?.extracted ?? null;
+
     setDispatchError(null);
     setDispatchDiagnostics(null);
     if (
@@ -371,7 +394,7 @@ export function IntakeDispatchStage({
       setDispatchError('Please provide an objective and task description.');
       return;
     }
-    if (criteria.length === 0) {
+    if (dispatchCriteria.length === 0) {
       setDispatchError('Please establish at least one acceptance criterion before dispatching.');
       return;
     }
@@ -390,7 +413,7 @@ export function IntakeDispatchStage({
     const clientGate = preDispatchGate({
       repo: repo.trim(),
       objective: objective.trim(),
-      criteria,
+      criteria: dispatchCriteria,
       boundaries: parsedBoundaries,
       treePaths,
     });
@@ -420,7 +443,10 @@ export function IntakeDispatchStage({
           branchName: branchName.trim(),
           fileBoundaries: parsedBoundaries,
           objective: objective.trim(),
-          criteria,
+          criteria: dispatchCriteria,
+          // COR-56: the operator-confirmed goal. `null` on the skip-extraction
+          // path, which keeps the compiled contract byte-identical to pre-COR-56.
+          goal: dispatchGoalExtracted,
           dryRun,
           repoContext: repoInspection,
           testCommand,
@@ -462,6 +488,9 @@ export function IntakeDispatchStage({
       );
       setRefreshError(null);
 
+      // The captured goal is consumed by this dispatch. A failed dispatch keeps it,
+      // so a retry never silently drops the operator's confirmed criteria.
+      setPendingGoal(null);
       // Save to client localStorage vault
       onDispatchSuccess(blueprint);
       // Outcome log + P2 learning loop: live creates open an initial turn (no verdict yet)
@@ -488,6 +517,48 @@ export function IntakeDispatchStage({
     }
   };
 
+  const openGoalModal = (intent: StartSessionIntent) => {
+    setGoalIntent(intent);
+    setGoalModalOpen(true);
+  };
+
+  const handleGoalCancel = () => {
+    // Closing the modal cancels the whole action: a pending dispatch is aborted
+    // rather than proceeding without a reviewed goal.
+    setGoalModalOpen(false);
+    setPendingGoal(null);
+  };
+
+  const handleGoalConfirm = (goal: Goal) => {
+    const goalCriteria = criteriaFromGoalExtracted(goal.extracted);
+
+    setPendingGoal(goal);
+    setGoalModalOpen(false);
+
+    if (goalCriteria.length > 0) {
+      setCriteria(goalCriteria);
+    }
+
+    if (goalIntent === 'dispatch') {
+      // Overrides are required: these setState calls have not been applied to
+      // this closure's values yet, so handleDispatch would otherwise send the
+      // pre-goal contract.
+      void handleDispatch(goal, goalCriteria.length > 0 ? goalCriteria : criteria);
+    }
+  };
+
+  /**
+   * Dispatch always requires a reviewed goal: with none captured it opens the
+   * ingestion modal first, and closing that modal aborts the dispatch.
+   */
+  const handleDispatchClick = () => {
+    if (pendingGoal) {
+      void handleDispatch();
+      return;
+    }
+    openGoalModal('dispatch');
+  };
+
   const handleCopyBlueprintJson = () => {
     if (!confirmedBlueprint) return;
     navigator.clipboard.writeText(JSON.stringify(confirmedBlueprint, null, 2));
@@ -497,6 +568,8 @@ export function IntakeDispatchStage({
 
   const handleResetForm = () => {
     setConfirmedBlueprint(null);
+    setPendingGoal(null);
+    setGoalModalOpen(false);
     setConfirmedSessionId(null);
     setConfirmedSessionUrl(null);
     setConfirmedSessionState(null);
@@ -612,6 +685,18 @@ export function IntakeDispatchStage({
         julesKey={julesKey}
         baseBranch={baseBranch}
         onOpenSettings={onOpenSettings}
+      />
+
+      {/* COR-56 Goal Ingestion Modal */}
+      <StartSessionModal
+        open={goalModalOpen}
+        onOpenChange={setGoalModalOpen}
+        repo={cleanCurrentRepo}
+        geminiApiKey={geminiKey}
+        initialRawText={objective}
+        intent={goalIntent}
+        onConfirm={handleGoalConfirm}
+        onCancel={handleGoalCancel}
       />
 
       {/* Confirmation Screen if dispatched */}
@@ -867,6 +952,26 @@ export function IntakeDispatchStage({
           </CardHeader>
 
           <CardContent className="space-y-6 pt-6">
+            {pendingGoal && (
+              <Alert variant="info" className="bg-indigo-50 border-indigo-200">
+                <Target className="h-4 w-4 text-indigo-600" />
+                <AlertDescription className="text-xs text-indigo-900 leading-relaxed">
+                  <span className="font-semibold">Goal captured: </span>
+                  <span className="font-mono">{pendingGoal.extracted?.title ?? 'skipped extraction (raw text only)'}</span>
+                  {pendingGoal.extracted?.acceptanceCriteria.length ? (
+                    <span>
+                      {' '}
+                      — {pendingGoal.extracted.acceptanceCriteria.length} acceptance criteria from the
+                      confirmed goal are now the contract criteria. Edit them below if Jules needs
+                      something different.
+                    </span>
+                  ) : (
+                    <span> — extraction was skipped, so the objective above is unchanged.</span>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {dispatchError && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
@@ -1530,29 +1635,50 @@ export function IntakeDispatchStage({
               </label>
             </div>
 
-            <Button
-              size="sm"
-              onClick={handleDispatch}
-              disabled={isDispatching}
-              className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-5 gap-2 shadow-sm"
-            >
-              {isDispatching ? (
-                <>
-                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  <span>Compiling & Dispatching...</span>
-                </>
-              ) : dryRun ? (
-                <>
-                  <Send className="h-3.5 w-3.5" />
-                  <span>Simulate dispatch (dry-run)</span>
-                </>
-              ) : (
-                <>
-                  <Send className="h-3.5 w-3.5" />
-                  <span>Dispatch to Google Jules</span>
-                </>
-              )}
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => openGoalModal('goal-only')}
+                disabled={isDispatching}
+                className="w-full text-xs sm:w-auto"
+              >
+                <Target className="h-3.5 w-3.5 text-indigo-600" />
+                Capture Goal
+              </Button>
+
+              <Button
+                size="sm"
+                onClick={handleDispatchClick}
+                disabled={isDispatching}
+                className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-5 gap-2 shadow-sm"
+              >
+                {isDispatching ? (
+                  <>
+                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>Compiling & Dispatching...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-3.5 w-3.5" />
+                    <span>
+                      {dryRun
+                        ? 'Simulate dispatch (dry-run)'
+                        : pendingGoal
+                          ? 'Dispatch to Google Jules'
+                          : 'Capture goal & dispatch'}
+                    </span>
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <p className="text-[11px] text-slate-500 sm:text-right">
+              {pendingGoal
+                ? 'A confirmed goal is attached to this dispatch.'
+                : 'Dispatching opens the goal modal first — closing it cancels the dispatch.'}
+            </p>
           </CardFooter>
         </Card>
       )}
