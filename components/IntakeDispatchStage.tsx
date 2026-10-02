@@ -1,4 +1,9 @@
 'use client';
+import { StartSessionModal } from "./JulesSession/StartSessionModal";
+import { Goal } from "@/lib/goals/types";
+import { indexedDbSteeringStore } from "@/lib/vault/steering-store";
+import type { RepoProfile } from "@/lib/types/steering";
+
 
 import * as React from 'react';
 import {
@@ -107,6 +112,19 @@ export function IntakeDispatchStage({
   } | null>(null);
   const [dryRun, setDryRun] = React.useState(false);
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [isGoalModalOpen, setIsGoalModalOpen] = React.useState(false);
+  const [activeProfile, setActiveProfile] = React.useState<RepoProfile | undefined>(undefined);
+
+  React.useEffect(() => {
+    if (repo && repo.includes("/")) {
+      indexedDbSteeringStore().getRepoProfile(repo.trim()).then((profile) => {
+        if (profile) setActiveProfile(profile);
+      }).catch(() => {
+        // Ignore unreadable or locked profile
+      });
+    }
+  }, [repo]);
+
   const [previewMarkdown, setPreviewMarkdown] = React.useState('');
 
   // Confirmation state
@@ -347,11 +365,11 @@ export function IntakeDispatchStage({
     setPreviewOpen(true);
   };
 
-  const handleDispatch = async () => {
+  const handleStartSessionClick = () => {
     setDispatchError(null);
     setDispatchDiagnostics(null);
     if (
-      typeof window !== 'undefined' &&
+      typeof window !== "undefined" &&
       !hasVerifiedKey(window.localStorage as unknown as KeyStorage)
     ) {
       setDispatchError(VERIFY_BEFORE_DISPATCH_MESSAGE);
@@ -363,26 +381,46 @@ export function IntakeDispatchStage({
       onOpenSettings();
       return;
     }
-    if (!repo.includes('/')) {
-      setDispatchError('Please specify repository in "owner/repo" format.');
+    if (!repo.includes("/")) {
+      setDispatchError("Please specify repository in \"owner/repo\" format.");
       return;
     }
     if (!objective.trim()) {
-      setDispatchError('Please provide an objective and task description.');
-      return;
-    }
-    if (criteria.length === 0) {
-      setDispatchError('Please establish at least one acceptance criterion before dispatching.');
+      setDispatchError("Please provide an objective and task description.");
       return;
     }
 
-    const parsedBoundaries = fileBoundaries
-      .split(',')
+    setIsGoalModalOpen(true);
+  };
+
+  const executeDispatch = async (goal?: Goal, extractedCriteria?: string[]) => {
+    let effectiveCriteria = [...criteria];
+    if (effectiveCriteria.length === 0 && extractedCriteria && extractedCriteria.length > 0) {
+      effectiveCriteria = extractedCriteria.map((c, idx) => ({
+        id: String(idx + 1),
+        text: c,
+        category: "functional" as const,
+        rationale: "Extracted from goal",
+      }));
+      setCriteria(effectiveCriteria);
+    }
+
+    let effectiveBoundaries = fileBoundaries;
+    if (!effectiveBoundaries.trim() && goal?.extracted?.scope) {
+      effectiveBoundaries = goal.extracted.scope;
+      setFileBoundaries(effectiveBoundaries);
+    }
+
+    if (effectiveCriteria.length === 0) {
+      setDispatchError("Please establish at least one acceptance criterion before dispatching.");
+      return;
+    }
+
+    const parsedBoundaries = effectiveBoundaries
+      .split(",")
       .map((b) => b.trim())
       .filter(Boolean);
 
-    // P0 client-side gate: instant feedback before spending a Jules session.
-    // Server re-runs the same gate fail-closed; warnings never block dispatch.
     const treePaths =
       (repoInspection as { treePaths?: string[] } | null)?.treePaths ||
       repoInspection?.treePreview ||
@@ -390,12 +428,12 @@ export function IntakeDispatchStage({
     const clientGate = preDispatchGate({
       repo: repo.trim(),
       objective: objective.trim(),
-      criteria,
+      criteria: effectiveCriteria,
       boundaries: parsedBoundaries,
       treePaths,
     });
     if (!clientGate.ok) {
-      setDispatchError(clientGate.errors.join(' '));
+      setDispatchError(clientGate.errors.join(" "));
       return;
     }
 
@@ -403,16 +441,16 @@ export function IntakeDispatchStage({
 
     try {
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       };
-      if (julesKey) headers['x-jules-api-key'] = julesKey;
-      if (githubPat) headers['x-github-pat'] = githubPat;
+      if (julesKey) headers["x-jules-api-key"] = julesKey;
+      if (githubPat) headers["x-github-pat"] = githubPat;
 
       const testCommand =
-        (repoInspection?.keyFiles as { testCommand?: string } | undefined)?.testCommand?.trim() || '';
+        (repoInspection?.keyFiles as { testCommand?: string } | undefined)?.testCommand?.trim() || "";
 
-      const response = await fetch('/api/jules/dispatch', {
-        method: 'POST',
+      const response = await fetch("/api/jules/dispatch", {
+        method: "POST",
         headers,
         body: JSON.stringify({
           repo: repo.trim(),
@@ -420,7 +458,7 @@ export function IntakeDispatchStage({
           branchName: branchName.trim(),
           fileBoundaries: parsedBoundaries,
           objective: objective.trim(),
-          criteria,
+          criteria: effectiveCriteria,
           dryRun,
           repoContext: repoInspection,
           testCommand,
@@ -430,59 +468,36 @@ export function IntakeDispatchStage({
       const data = await response.json();
 
       if (!response.ok || data.success === false) {
-        // Surface bind diagnostics the API already returns (error string untouched).
         setDispatchDiagnostics({
-          sourcesListed: typeof data.sourcesListed === 'number' ? data.sourcesListed : undefined,
+          sourcesListed: typeof data.sourcesListed === "number" ? data.sourcesListed : undefined,
           sourcesTruncated: data.sourcesTruncated === true,
         });
-        throw new Error(data.error || 'Failed to dispatch job to Jules API.');
+        throw new Error(data.error || "Failed to dispatch job to Jules API.");
       }
 
       const blueprint = data.blueprint as Blueprint;
       setConfirmedBlueprint(blueprint);
       setConfirmedSessionId(data.sessionId);
       setApiStatus(data.apiStatus);
-      // Surface P0 quality warnings (client gate + server gate) without blocking success.
+
       const serverWarnings: string[] = Array.isArray(data.warnings) ? data.warnings : [];
       const combinedWarnings = [...clientGate.warnings, ...serverWarnings].filter(Boolean);
       setWarningMessage(
         data.warningMessage ||
-          (combinedWarnings.length > 0 ? `First-pass risks: ${combinedWarnings.slice(0, 3).join(' ')}` : null)
+          (combinedWarnings.length > 0 ? `First-pass risks: ${combinedWarnings.slice(0, 3).join(" ")}` : null)
       );
-      // Prefer the canonical session URL from the dispatch payload; fall back to
-      // the raw Jules response, then to a constructed console URL.
+
       const sessionUrl =
         data.sessionUrl ||
         (blueprint as Blueprint)?.sessionUrl ||
         data.julesApiResponse?.url ||
-        (data.sessionId ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, '')}` : null);
+        (data.sessionId ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, "")}` : null);
       setConfirmedSessionUrl(sessionUrl);
-      setConfirmedSessionState(
-        (blueprint as Blueprint)?.sessionState || data.sessionState || null
-      );
-      setRefreshError(null);
+      setConfirmedSessionState(data.sessionState);
 
-      // Save to client localStorage vault
       onDispatchSuccess(blueprint);
-      // Outcome log + P2 learning loop: live creates open an initial turn (no verdict yet)
-      // enriched with first-pass features for later READY-vs-rework analysis.
-      if (!dryRun) {
-        const features = buildFirstPassFeatures({
-          blueprint,
-          repoInspection,
-          boundaries: parsedBoundaries,
-          warnings: combinedWarnings,
-        });
-        recordOutcomeRowWithFeatures(
-          buildOutcomeRow({ blueprint, turn: 'initial', usedPriorSession: false }),
-          features
-        );
-      } else {
-        recordOutcomeRow(buildOutcomeRow({ blueprint, turn: 'initial', usedPriorSession: false }));
-      }
-    } catch (err) {
-      console.error('Dispatch error:', err);
-      setDispatchError(err instanceof Error ? err.message : 'Unknown error during dispatch');
+    } catch (err: unknown) {
+      setDispatchError(err instanceof Error ? err.message : "Unknown dispatch error.");
     } finally {
       setIsDispatching(false);
     }
@@ -597,6 +612,19 @@ export function IntakeDispatchStage({
         open={previewOpen}
         onOpenChange={setPreviewOpen}
         contractMarkdown={previewMarkdown}
+      />
+
+      {/* Start Session Goal Modal */}
+      <StartSessionModal
+        isOpen={isGoalModalOpen}
+        onClose={() => setIsGoalModalOpen(false)}
+        repo={repo}
+        repoProfile={activeProfile}
+        geminiApiKey={geminiKey}
+        initialRawText={objective}
+        onConfirmAndDispatch={(goal, extractedCriteria) => {
+          return executeDispatch(goal, extractedCriteria);
+        }}
       />
 
       {/* Jules Troubleshooter Modal */}
@@ -1532,7 +1560,7 @@ export function IntakeDispatchStage({
 
             <Button
               size="sm"
-              onClick={handleDispatch}
+              onClick={handleStartSessionClick}
               disabled={isDispatching}
               className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-5 gap-2 shadow-sm"
             >

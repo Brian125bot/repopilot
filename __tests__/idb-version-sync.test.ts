@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   indexedDbVaultStore,
   VAULT_IDB_DB,
-  VAULT_IDB_KEY,
   wrapVault,
   unwrapVault,
 } from '@/lib/credential-vault';
@@ -44,10 +43,13 @@ class FakeIDBDatabase {
     };
   }
 
-  createObjectStore(name: string) {
+  createObjectStore(name: string, _options?: unknown) {
     if (!this.stores.has(name)) {
       this.stores.set(name, new Map());
     }
+    return {
+      createIndex() {},
+    };
   }
 
   getStore(name: string) {
@@ -59,7 +61,7 @@ class FakeIDBDatabase {
     return s;
   }
 
-  transaction(storeName: string, mode: 'readonly' | 'readwrite') {
+  transaction(storeName: string, _mode: 'readonly' | 'readwrite') {
     const storeMap = this.getStore(storeName);
     return {
       objectStore() {
@@ -69,9 +71,10 @@ class FakeIDBDatabase {
             queueMicrotask(() => req.onsuccess && req.onsuccess({ target: req }));
             return req;
           },
-          put(val: unknown, key: string) {
-            storeMap.set(key, val);
-            const req: any = { result: key, error: null, onsuccess: null, onerror: null };
+          put(val: unknown, key?: string) {
+            const k = key ?? (val && typeof val === 'object' && 'sessionId' in val ? (val as any).sessionId : undefined);
+            storeMap.set(k, val);
+            const req: any = { result: k, error: null, onsuccess: null, onerror: null };
             queueMicrotask(() => req.onsuccess && req.onsuccess({ target: req }));
             return req;
           },
@@ -198,7 +201,7 @@ describe('IndexedDB Version Synchronization & Upgrade Path', () => {
     expect(await credStore.read()).toEqual(env);
   });
 
-  it('upgrades legacy v1 DB (vault store only) to v2 cleanly while retaining vault data', async () => {
+  it('upgrades legacy v1 DB (vault store only) to v3 cleanly while retaining vault data', async () => {
     const envelope = await wrapVault(CREDS, PASS);
 
     // 1. Manually open DB at version 1 and populate 'vault' store as in old COR-35
@@ -213,12 +216,13 @@ describe('IndexedDB Version Synchronization & Upgrade Path', () => {
     const credStoreV1 = indexedDbVaultStore();
     await credStoreV1.write(envelope);
 
-    // 2. Open via the unified v2 openVaultDb
+    // 2. Open via the unified v3 openVaultDb
     const db = await openVaultDb();
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(3);
     expect(db.objectStoreNames.contains('vault')).toBe(true);
     expect(db.objectStoreNames.contains('profiles-v1')).toBe(true);
     expect(db.objectStoreNames.contains('snippets-v1')).toBe(true);
+    expect(db.objectStoreNames.contains('goals-v1')).toBe(true);
 
     // 3. Verify credential vault still reads and unwraps existing ciphertext envelope
     const credStore = indexedDbVaultStore();

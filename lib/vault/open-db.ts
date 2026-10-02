@@ -1,9 +1,10 @@
 export const VAULT_IDB_DB = 'repopilot-credential-vault';
-export const VAULT_IDB_VERSION = 2;
+export const VAULT_IDB_VERSION = 3;
 
 export const VAULT_STORE_NAME = 'vault';
 export const STEERING_PROFILES_STORE = 'profiles-v1';
 export const STEERING_SNIPPETS_STORE = 'snippets-v1';
+export const GOALS_STORE = 'goals-v1';
 
 export function isIndexedDbAvailable(): boolean {
   return typeof indexedDB !== 'undefined';
@@ -26,6 +27,10 @@ export function openVaultDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STEERING_SNIPPETS_STORE)) {
         db.createObjectStore(STEERING_SNIPPETS_STORE);
+      }
+      if (!db.objectStoreNames.contains(GOALS_STORE)) {
+        const goalStore = db.createObjectStore(GOALS_STORE, { keyPath: 'sessionId' });
+        goalStore.createIndex('by_updatedAt', 'updatedAt', { unique: false });
       }
     };
     request.onsuccess = () => resolve(request.result);
