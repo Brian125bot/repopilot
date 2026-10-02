@@ -123,9 +123,15 @@ export function describeReplacementLoss(
 
 /**
  * The notice shown once a scan settles. Replaces the previous version's
- * unreachable "Nothing meaningful was collected" branch: a `partial` outcome
- * implies Stage 1 resolved, so a branch was always captured, and the skip path is
- * already covered by the "kept your saved profile" case.
+ * unreachable "Nothing meaningful was collected" branch: the skip path over a
+ * complete saved profile is covered by the "kept your saved profile" case.
+ *
+ * A `cancelled` or `timed_out` outcome does not imply an empty profile: a scan
+ * stopped in Stage 2 or later has already captured Stage 1 data (and possibly
+ * more). Only claim nothing was collected when the profile is actually empty
+ * (`isProfileEmpty`); otherwise say the scan stopped with partial data that has
+ * not been saved yet. A stopped scan is never auto-saved, so "not saved yet" is
+ * accurate whether or not an incomplete profile already exists.
  */
 export function describeOutcomeNotice({
   outcome,
@@ -145,7 +151,11 @@ export function describeOutcomeNotice({
     return `Kept your saved profile from ${date}`;
   }
   if (outcome === "cancelled" || outcome === "timed_out") {
-    return "Cancelled before any data was collected. Nothing saved.";
+    if (isProfileEmpty(decision.profile)) {
+      return "Cancelled before any data was collected. Nothing saved.";
+    }
+    const stopped = outcome === "cancelled" ? "cancelled" : "timed out";
+    return `Scan ${stopped} with partial data collected. Nothing has been saved yet; review it below, then choose Save to keep it.`;
   }
   if (autoSave) {
     return "Saving scan result...";
