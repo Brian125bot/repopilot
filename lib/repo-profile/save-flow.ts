@@ -152,7 +152,9 @@ export function describeOutcomeNotice({
   }
   if (outcome === "cancelled" || outcome === "timed_out") {
     if (isProfileEmpty(decision.profile)) {
-      return "Cancelled before any data was collected. Nothing saved.";
+      return outcome === "cancelled"
+        ? "Cancelled before any data was collected. Nothing saved."
+        : "Timed out before any data was collected. Nothing saved.";
     }
     const stopped = outcome === "cancelled" ? "cancelled" : "timed out";
     return `Scan ${stopped} with partial data collected. Nothing has been saved yet; review it below, then choose Save to keep it.`;

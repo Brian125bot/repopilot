@@ -436,14 +436,25 @@ describe("describeOutcomeNotice", () => {
     expect(notice).toBe("Cancelled before any data was collected. Nothing saved.");
   });
 
-  it("keeps the nothing-collected copy for an empty Stage-1 timeout", () => {
+  it("says it timed out before any data was collected for an empty Stage-1 timeout", () => {
     const notice = describeOutcomeNotice({
       outcome: "timed_out",
       decision: decideSave(null, { ...emptyCancelledResult(), outcome: "timed_out" }),
       existing: null,
       autoSave: false,
     });
-    expect(notice).toBe("Cancelled before any data was collected. Nothing saved.");
+    expect(notice).toBe("Timed out before any data was collected. Nothing saved.");
+  });
+
+  it("says it timed out before any data was collected for an empty timeout over an incomplete saved profile", () => {
+    const existing = completeProfile({ incomplete: true });
+    const notice = describeOutcomeNotice({
+      outcome: "timed_out",
+      decision: decideSave(existing, { ...emptyCancelledResult(), outcome: "timed_out" }),
+      existing,
+      autoSave: false,
+    });
+    expect(notice).toBe("Timed out before any data was collected. Nothing saved.");
   });
 
   it("keeps the nothing-collected copy for an empty cancel over an incomplete saved profile", () => {
@@ -517,6 +528,59 @@ describe("describeOutcomeNotice", () => {
     expect(state.phase).toBe("ready");
     expect(state.notice).toMatch(/^Scan cancelled with partial data collected\./);
     expect(resolveSaveAction(state).kind).toBe("save-partial");
+  });
+
+  describe("with a complete profile already saved", () => {
+    const existing = completeProfile();
+    const keptNotice = `Kept your saved profile from ${new Date(
+      "2026-03-30T10:00:00Z"
+    ).toLocaleDateString()}`;
+
+    function settledOver(result: ScanResult): SaveFlowState {
+      return settled({
+        decision: decideSave(existing, result),
+        existing,
+        outcome: result.outcome,
+      });
+    }
+
+    it("keeps the saved profile and disables the control for an empty cancel", () => {
+      const state = settledOver(emptyCancelledResult());
+      expect(state.notice).toBe(keptNotice);
+      const action = resolveSaveAction(state);
+      expect(action.kind).toBe("empty");
+      expect(action.label).toBe("Nothing to save from this scan");
+      expect(action.disabled).toBe(true);
+    });
+
+    it("keeps the saved profile and disables the control for an empty timeout", () => {
+      const state = settledOver({ ...emptyCancelledResult(), outcome: "timed_out" });
+      expect(state.notice).toBe(keptNotice);
+      const action = resolveSaveAction(state);
+      expect(action.kind).toBe("empty");
+      expect(action.label).toBe("Nothing to save from this scan");
+      expect(action.disabled).toBe(true);
+    });
+
+    it("keeps the saved profile and offers a confirmed replace for a partial cancel", () => {
+      const state = settledOver(stageTwoPartialResult("cancelled"));
+      expect(state.notice).toBe(keptNotice);
+      const action = resolveSaveAction(state);
+      expect(action.kind).toBe("replace-partial");
+      expect(action.label).toBe("Replace saved profile with this partial");
+      expect(action.disabled).toBe(false);
+      expect(action.requiresConfirm).toBe(true);
+    });
+
+    it("keeps the saved profile and offers a confirmed replace for a partial timeout", () => {
+      const state = settledOver(stageTwoPartialResult("timed_out"));
+      expect(state.notice).toBe(keptNotice);
+      const action = resolveSaveAction(state);
+      expect(action.kind).toBe("replace-partial");
+      expect(action.label).toBe("Replace saved profile with this partial");
+      expect(action.disabled).toBe(false);
+      expect(action.requiresConfirm).toBe(true);
+    });
   });
 
   it("never emits the removed 'Nothing meaningful was collected' copy", () => {
