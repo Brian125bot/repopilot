@@ -150,9 +150,9 @@ To guarantee agent adherence to file boundaries, path matching must satisfy stri
 
 ---
 
-## 6. After 1.0.1
+## 6. After 1.0.3
 
-1.0.1 freezes the current loop: dispatch → wait for PR → audit → same-branch fix. Later, not in this release:
+The loop frozen in 1.0.1 is unchanged through 1.0.3: dispatch → wait for PR → audit → same-branch fix. 1.0.2 added the encrypted steering store and repository scan pipeline alongside it, and 1.0.3 hardened that pipeline; neither changed the loop. Later, not yet shipped:
 
 1. **GitHub Action Integration:** Package the audit engine into a standalone reusable GitHub Action (`repopilot-audit-action`) for automated CI/CD gating.
 2. **Multi-Agent Comparative Audit:** Dispatch parallel sessions to multiple models (e.g. Jules, Claude Code, GitHub Copilot Workspace) and perform automated multi-way diff arbitration.
