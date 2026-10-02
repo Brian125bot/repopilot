@@ -1,9 +1,13 @@
 export const VAULT_IDB_DB = 'repopilot-credential-vault';
-export const VAULT_IDB_VERSION = 2;
+// COR-56 bumped this from 2 to 3 to provision the goals-v1 store. An IndexedDB
+// upgrade handler only runs when the version number increases, so adding a
+// store to the v2 handler would leave every operator already on v2 without it.
+export const VAULT_IDB_VERSION = 3;
 
 export const VAULT_STORE_NAME = 'vault';
 export const STEERING_PROFILES_STORE = 'profiles-v1';
 export const STEERING_SNIPPETS_STORE = 'snippets-v1';
+export const GOALS_STORE_NAME = 'goals-v1';
 
 export function isIndexedDbAvailable(): boolean {
   return typeof indexedDB !== 'undefined';
@@ -26,6 +30,9 @@ export function openVaultDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STEERING_SNIPPETS_STORE)) {
         db.createObjectStore(STEERING_SNIPPETS_STORE);
+      }
+      if (!db.objectStoreNames.contains(GOALS_STORE_NAME)) {
+        db.createObjectStore(GOALS_STORE_NAME);
       }
     };
     request.onsuccess = () => resolve(request.result);

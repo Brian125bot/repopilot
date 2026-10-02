@@ -129,6 +129,48 @@ describe('Shared Validation Module (lib/validation.ts)', () => {
       });
       expect(res.success).toBe(false);
     });
+
+    // COR-56: the dispatch schema is strict, so `goal` must be declared or the
+    // operator's confirmed goal is rejected outright on the way to Jules.
+    describe('COR-56 goal field on the dispatch schema', () => {
+      const goal = {
+        title: 'Add empty-scan save guard',
+        scope: ['lib/repo-profile/save-policy.ts'],
+        acceptanceCriteria: ['npm test lib/repo-profile/save-policy.test.ts covers the refusal'],
+        assumptions: [],
+        ambiguityFlags: [],
+      };
+      const dispatchBase = {
+        repo: 'owner/repo',
+        objective: 'Objective text for dispatch',
+        criteria: [{ id: '1', text: 'Criterion 1' }],
+      };
+
+      it('accepts a confirmed goal', () => {
+        expect(JulesDispatchBodySchema.safeParse({ ...dispatchBase, goal }).success).toBe(true);
+      });
+
+      it('accepts a skipped-extraction goal as null', () => {
+        expect(JulesDispatchBodySchema.safeParse({ ...dispatchBase, goal: null }).success).toBe(true);
+      });
+
+      it('accepts no goal at all (goal ingestion is opt-in)', () => {
+        expect(JulesDispatchBodySchema.safeParse(dispatchBase).success).toBe(true);
+      });
+
+      it('rejects a goal that does not match GoalExtractedSchema', () => {
+        const res = JulesDispatchBodySchema.safeParse({ ...dispatchBase, goal: { title: 'partial' } });
+        expect(res.success).toBe(false);
+      });
+
+      it('rejects an UNCLEAR goal with no ambiguity flags', () => {
+        const res = JulesDispatchBodySchema.safeParse({
+          ...dispatchBase,
+          goal: { ...goal, title: 'UNCLEAR', ambiguityFlags: [] },
+        });
+        expect(res.success).toBe(false);
+      });
+    });
   });
 });
 

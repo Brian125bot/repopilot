@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       explicitStartingBranch: explicitStartingBranchArg,
       fileBoundaries,
       criteria: rawCriteria,
+      goal,
       isRemediation = false,
       dryRun = false,
       customPrompt,
@@ -143,6 +144,9 @@ export async function POST(req: NextRequest) {
               criteria,
               repoContext: isRemediation ? null : (repoContext as any),
               testCommand: isRemediation ? '' : testCommand,
+              // COR-56: additive §1.1 block. The criteria matrix below stays
+              // authoritative, so the goal can never widen the blast radius.
+              goal: isRemediation ? null : goal,
             },
             blueprintId
           );

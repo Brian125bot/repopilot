@@ -35,10 +35,20 @@ function errorResponse(status: number, body: unknown, headers: Record<string, st
 }
 
 function assertNoKeyMaterial(payload: string, key: string) {
+  // Collision-free needles are checked against the whole payload, including the
+  // server-generated requestId: the key itself and its distinctive edges could
+  // only appear there if the route leaked the credential.
   expect(payload).not.toContain(key);
   expect(payload).not.toContain(key.slice(0, 4));
   expect(payload).not.toContain(key.slice(-4));
-  expect(payload).not.toContain(String(key.length));
+
+  // The length needle is 2 digits, so it is only sound against the envelope
+  // body. Error payloads carry a random `requestId` UUID (createRequestId ->
+  // crypto.randomUUID), which is not derived from the key and hits "30" in a
+  // few percent of runs — enough to make this assert intermittently red for
+  // reasons unrelated to key handling.
+  const body = payload.replace(/"requestId":"[^"]*"/g, '"requestId":"<redacted>"');
+  expect(body).not.toContain(String(key.length));
 }
 
 describe('verify-github', () => {

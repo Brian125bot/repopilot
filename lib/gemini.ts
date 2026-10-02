@@ -2,6 +2,9 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { AcceptanceCriterion, AuditDiffFacts, GeminiAuditReport, GeneratedCriteriaResponse, RepoInspectionResult } from '@/types';
 import { attachAuditGrade, reconcileAuditReport } from '@/lib/scoring';
 import { MAX_DIFF_CHAR_BUDGET } from '@/lib/diff-sanitizer';
+import { buildGoalExtractPrompt } from '@/lib/goals/extract-prompt';
+import type { GoalExtracted } from '@/lib/goals/types';
+import type { RepoProfile } from '@/lib/types/steering';
 
 /**
  * Shared diff context budget (chars). The sanitizer enforces it with reserved
@@ -439,5 +442,73 @@ Generate the complete criteria matrix now.`;
   }
 
   return parsed;
+}
+
+const goalExtractionSchema = {
+  type: Type.OBJECT,
+  properties: {
+    title: {
+      type: Type.STRING,
+      description: 'Short imperative summary of the goal, or "UNCLEAR" when the input is too vague to act on.',
+    },
+    scope: {
+      type: Type.ARRAY,
+      description: 'Files, modules, endpoints, or components expected to change.',
+      items: { type: Type.STRING },
+    },
+    acceptanceCriteria: {
+      type: Type.ARRAY,
+      description: 'Verifiable bullets stating what must be true and how it is checked.',
+      items: { type: Type.STRING },
+    },
+    assumptions: {
+      type: Type.ARRAY,
+      description: 'Defaults or constraints inferred because the input did not state them. Never leave an invented fact out of this list.',
+      items: { type: Type.STRING },
+    },
+    ambiguityFlags: {
+      type: Type.ARRAY,
+      description: 'Specific missing details. Non-empty whenever the title is "UNCLEAR".',
+      items: { type: Type.STRING },
+    },
+  },
+  required: ['title', 'scope', 'acceptanceCriteria', 'assumptions', 'ambiguityFlags'],
+};
+
+/**
+ * COR-56 goal ingestion. Turns freeform operator text into a structured goal,
+ * optionally grounded in a saved COR-54 repo profile. Validation against
+ * `GoalExtractedSchema` happens at the route boundary, which owns the untrusted
+ * model output.
+ */
+export async function extractGoalFromText({
+  rawText,
+  repoProfile,
+  customApiKey,
+}: {
+  rawText: string;
+  repoProfile?: RepoProfile;
+  customApiKey?: string;
+}): Promise<GoalExtracted> {
+  const ai = getGeminiClient(customApiKey);
+  const { systemPrompt, userPrompt } = buildGoalExtractPrompt(rawText, repoProfile);
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-3.8-flash',
+    contents: userPrompt,
+    config: {
+      systemInstruction: systemPrompt,
+      responseMimeType: 'application/json',
+      responseSchema: goalExtractionSchema,
+      temperature: 0.1,
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    throw new Error('Gemini API returned an empty goal extraction response.');
+  }
+
+  return JSON.parse(text) as GoalExtracted;
 }
 

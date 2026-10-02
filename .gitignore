@@ -8,3 +8,6 @@ coverage/
 !.env.example
 tsconfig.tsbuildinfo
 tmp/
+# Local agent scratch: plans and drafts are session state, not project content.
+.kilo/plans/
+.kilo/*.md

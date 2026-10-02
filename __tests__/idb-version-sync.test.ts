@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   indexedDbVaultStore,
-  VAULT_IDB_DB,
   VAULT_IDB_KEY,
   wrapVault,
   unwrapVault,
@@ -10,7 +9,9 @@ import {
   indexedDbSteeringRecordStore,
   createSteeringStore,
 } from '@/lib/vault/steering-store';
-import { openVaultDb } from '@/lib/vault/open-db';
+import { openVaultDb, VAULT_IDB_DB, VAULT_IDB_VERSION } from '@/lib/vault/open-db';
+import { getGoal, indexedDbGoalRecordStore, saveGoal } from '@/lib/goals/storage';
+import { buildGoal } from '@/lib/goals/types';
 import type { RepoProfile } from '@/lib/types/steering';
 
 const PASS = 'upgrade test passphrase';
@@ -198,7 +199,7 @@ describe('IndexedDB Version Synchronization & Upgrade Path', () => {
     expect(await credStore.read()).toEqual(env);
   });
 
-  it('upgrades legacy v1 DB (vault store only) to v2 cleanly while retaining vault data', async () => {
+  it('upgrades legacy v1 DB (vault store only) to the current version cleanly while retaining vault data', async () => {
     const envelope = await wrapVault(CREDS, PASS);
 
     // 1. Manually open DB at version 1 and populate 'vault' store as in old COR-35
@@ -213,12 +214,15 @@ describe('IndexedDB Version Synchronization & Upgrade Path', () => {
     const credStoreV1 = indexedDbVaultStore();
     await credStoreV1.write(envelope);
 
-    // 2. Open via the unified v2 openVaultDb
+    // 2. Open via the unified openVaultDb
     const db = await openVaultDb();
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(VAULT_IDB_VERSION);
+    expect(db.version).toBe(3);
     expect(db.objectStoreNames.contains('vault')).toBe(true);
     expect(db.objectStoreNames.contains('profiles-v1')).toBe(true);
     expect(db.objectStoreNames.contains('snippets-v1')).toBe(true);
+    // COR-56: goals live in the same database, provisioned by the same upgrade.
+    expect(db.objectStoreNames.contains('goals-v1')).toBe(true);
 
     // 3. Verify credential vault still reads and unwraps existing ciphertext envelope
     const credStore = indexedDbVaultStore();
@@ -233,5 +237,53 @@ describe('IndexedDB Version Synchronization & Upgrade Path', () => {
     steeringStore.unlock(PASS);
     await steeringStore.saveRepoProfile(sampleProfile());
     expect(await steeringStore.getRepoProfile('org/repo')).toEqual(sampleProfile());
+  });
+
+  it('provisions goals-v1 when upgrading an operator already on vault version 2', async () => {
+    // A v2 database already exists for anyone who ran the pre-COR-56 build. Its
+    // upgrade handler must not re-run, so the bump to 3 is the only thing that
+    // can add the goals store — that is the regression this pins.
+    const req2 = indexedDB.open(VAULT_IDB_DB, 2);
+    await new Promise<void>((resolve) => {
+      req2.onupgradeneeded = () => {
+        req2.result.createObjectStore('vault');
+        req2.result.createObjectStore('profiles-v1');
+        req2.result.createObjectStore('snippets-v1');
+      };
+      req2.onsuccess = () => resolve();
+    });
+    expect(fakeIDB.getDb()!.objectStoreNames.contains('goals-v1')).toBe(false);
+
+    const db = await openVaultDb();
+    expect(db.version).toBe(3);
+    expect(db.objectStoreNames.contains('goals-v1')).toBe(true);
+    // Idempotent: re-opening at the same version must not throw a store error.
+    const reopened = await openVaultDb();
+    expect(reopened.objectStoreNames.contains('goals-v1')).toBe(true);
+  });
+
+  it('round-trips a goal through the goals-v1 store sharing the credential passphrase', async () => {
+    const goal = buildGoal({
+      sessionId: 'draft-1234',
+      repo: 'org/repo',
+      rawText: 'Add an empty-scan save guard',
+      extracted: {
+        title: 'Add empty-scan save guard',
+        scope: ['lib/repo-profile/save-policy.ts'],
+        acceptanceCriteria: ['npm test lib/repo-profile/save-policy.test.ts covers the empty scan'],
+        assumptions: ['No new dependencies'],
+        ambiguityFlags: [],
+      },
+    });
+
+    const goalStore = indexedDbGoalRecordStore();
+    await saveGoal(goal, PASS, goalStore);
+    expect(await getGoal(goal.sessionId, PASS, goalStore)).toEqual(goal);
+
+    // The credential vault written before the goal is untouched by the goal write.
+    const credStore = indexedDbVaultStore();
+    const env = await wrapVault(CREDS, PASS);
+    await credStore.write(env);
+    expect(await getGoal(goal.sessionId, PASS, goalStore)).toEqual(goal);
   });
 });
