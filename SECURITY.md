@@ -1,6 +1,6 @@
 # Security & Credential Vault Specification
 
-RepoPilot 1.0.2 operates as a **zero-auth, zero-server-state control plane**. The Next.js server infrastructure on Vercel persists nothing: no user API keys, credentials, blueprint databases, or audit reports are stored on the server.
+RepoPilot 1.0.3 operates as a **zero-auth, zero-server-state control plane**. The Next.js server infrastructure on Vercel persists nothing: no user API keys, credentials, blueprint databases, or audit reports are stored on the server.
 
 ---
 

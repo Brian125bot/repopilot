@@ -16,7 +16,7 @@
 
 ## 📚 Documentation Hub
 
-RepoPilot **1.0.2** documentation:
+RepoPilot **1.0.3** documentation:
 
 - 🚀 **[Golden path (6 steps)](./docs/GOLDEN_PATH.md)**: WebCrypto vault setup → connected repo → dispatch → wait/audit PR → evaluate → same-branch fix.
 - 📖 **[Google Jules User Guide & Automation Playbook](./docs/USER_GUIDE_JULES_AUTOMATION.md)**: How RepoPilot organizes task contracts and the review loop with Jules.
@@ -24,7 +24,7 @@ RepoPilot **1.0.2** documentation:
 - 🧪 **[Testing Strategy Guide](./docs/TESTING_STRATEGY.md)**: Vitest conventions. Verify locally with `npm ci && npm test && npm run lint && npm run build && npx tsc --noEmit`.
 - 📐 **[System Architecture](./ARCHITECTURE.md)**: Sequence flows and anti-drift rules.
 - 🔐 **[SECURITY.md](./SECURITY.md)**: WebCrypto vault specification, PBKDF2/AES-GCM isolation, session locking, and zero-server secret policy.
-- 📝 **[CHANGELOG](./CHANGELOG.md)**: Release history including 1.0.2 and 1.0.1 tag references.
+- 📝 **[CHANGELOG](./CHANGELOG.md)**: Release history including 1.0.3, plus 1.0.2 and 1.0.1 tag references.
 - 📄 **[LICENSE](./LICENSE)**: MIT.
 
 ---

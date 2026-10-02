@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 1.0.3 — 2026-10-02
+
 Hardening pass over the COR-54 scan pipeline. The 1.0.2 pipeline scanned a repository in four stages with a cooperative deadline, and auto-saved an early-terminated scan as an `incomplete` profile; this work makes the failure modes typed and the save path operator-gated. No architectural contract changes: profiles still live only in the encrypted IndexedDB steering store, and no server-held token or environment variable is introduced.
 
 ### Hardening & Fixes
@@ -21,17 +23,22 @@ Hardening pass over the COR-54 scan pipeline. The 1.0.2 pipeline scanned a repos
   - `ScanProgress` labels the active stage as "Step N of 4" and always offers an explicit cancel.
   - `RepoPicker` is debounced, paginates via `Link` headers, filters client-side, retries on failure, and validates manual `owner/repo` input with the same rules the scanner enforces. Pagination follows a `rel="next"` URL only when it resolves to `https://api.github.com`, so the operator's PAT is never sent to a host named by a response header.
 - **Never-downgrade save policy, gated on an operator click**:
-  - `decideSave` formalises the policy. A **complete** scan may replace a saved profile, but only after an explicit click — the UI offers "Save and replace saved profile" instead of writing silently. A **non-empty partial** scan may also replace a complete saved profile, but only behind a second confirmation that names the conventions being overwritten. An **empty** scan — a cancel or timeout that collected nothing — can never be saved by any route: the control renders disabled as "Nothing to save from this scan" and the save handler refuses with *"Cannot replace existing profile with an empty scan result."*
+  - `decideSave` formalises the policy. A **complete** scan may replace a saved profile, but only after an explicit click — the UI offers "Save and replace saved profile" instead of writing silently. A **non-empty partial** scan may also replace a complete saved profile, but only behind a second confirmation that states how many saved conventions are overwritten, how many the partial scan detected, and the date the saved profile was saved. An **empty** scan — a cancel or timeout that collected nothing — can never be saved by any route: the control renders disabled as "Nothing to save from this scan" and the save handler refuses with *"Cannot replace existing profile with an empty scan result."*
   - The only automatic write is a complete scan of a repository with no saved profile, where there is nothing to overwrite.
   - The save/replace control is disabled whenever no decision is available, and "Saved" is shown only after the vault write actually resolves — a failed write leaves the control enabled and reports the error.
+  - The settle notice for a cancelled or timed-out scan now says nothing was collected only when the scan profile is actually empty: "Cancelled before any data was collected. Nothing saved." for a cancel, and "Timed out before any data was collected. Nothing saved." for a timeout. A scan stopped in Stage 2 or later with no saved profile, or only an incomplete one, now reports that it was cancelled or timed out with partial data that has not been saved yet, instead of wrongly claiming nothing was collected. The save/replace controls and the empty-scan guard are unchanged.
 - **Commit and ref parsing accuracy**:
-  - Ticket keys are only recognised in an anchored position (start of subject, leading bracket, conventional-commit scope, or trailing parenthetical) and never match standards names such as `SHA-256`, `UTF-8`, or `ISO-8601`.
+  - Ticket keys are only recognised in an anchored position (start of subject, leading bracket, conventional-commit scope, or trailing parenthetical) which reduces false matches on standards names such as `SHA-256`, `UTF-8`, or `ISO-8601`. It does not eliminate them: the conventional-commit scope pattern is case-insensitive, so a scope like `feat(sha-256)` is still read as ticket `sha`.
   - Skipped merge commits are excluded from the 30% convention threshold, so a merge-heavy repository is no longer penalised for history it did not author.
   - Branch names containing `/` keep their slashes in the git-trees request, which the GitHub endpoint requires to resolve the ref.
 
+### Documentation
+
+- Corrected three 1.0.2 entries below for accuracy against what shipped at `5229949`: provider key verification is click-triggered, the 15s scan deadline did not abort in-flight requests, and any scan error (not only a cancel or timeout) auto-saved an `incomplete` profile. The COR-34 heading and the 1.0.2 summary were also corrected to drop the "verify on first paint" claim.
+
 ## 1.0.2 — 2026-09-21
 
-Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, encrypted IndexedDB steering storage, an initial GitHub repository scan pipeline, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.
+Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, encrypted IndexedDB steering storage, an initial GitHub repository scan pipeline, audited PR head SHA drift rejection, click-to-verify provider keys with a verify-before-dispatch gate, security headers & empty-env contract, and documentation honesty.
 
 ### Landed Tickets & Architectural Changes
 
@@ -41,8 +48,8 @@ Zero-auth, zero-server release featuring client-side WebCrypto credential isolat
 - **COR-40: Persisted audited PR head SHA & drift rejection**:
   - Locked remediation dispatch and continuation prompt compilation to the exact `auditedHeadSha` captured during Stage 2 evaluation.
   - Fail-closed gate (`400 INVALID_INPUT`) blocks remediation if the current PR head branch diverges from the audited SHA, preventing Jules from executing fixes on un-audited commits or falling back to `main`.
-- **COR-34: Settings provider key verify-on-connect at first paint**:
-  - Automatic verify-on-connect check for provider credentials (Google Jules, Google Gemini, GitHub PAT) when opening or interacting with the Settings modal.
+- **COR-34: Settings provider key Verify checks & verify-before-dispatch gate**:
+  - Click-triggered **Verify** checks for provider credentials (Google Jules, Google Gemini, GitHub PAT) in the Settings modal. Verification is not automatic; it runs only when the operator clicks **Verify**.
   - Validates key authorizations, scopes, and target repository connections without exposing secret key material in error payloads or logs.
 - **COR-35: Encrypted WebCrypto browser vault & plaintext wipe**:
   - Implemented WebCrypto AES-GCM 256-bit client-side credential vault backed by PBKDF2-SHA256 key derivation (210,000 iterations).
@@ -58,9 +65,9 @@ Zero-auth, zero-server release featuring client-side WebCrypto credential isolat
   - Unified the IndexedDB database opener (`lib/vault/open-db.ts`) at schema version 2 so the credential vault and the steering store share a single upgrade path and cannot race on `onupgradeneeded`.
 - **COR-54: GitHub scan pipeline & scan UI**:
   - Added a four-stage repository scan (`metadata`, `manifest`, `commits`, `config`) that reads public GitHub data with the operator's browser-held PAT, extracting the default branch, detected languages, package manager / framework / test runner, and lint & format conventions into a `RepoProfile`.
-  - Added a cooperative 15s scan deadline, so a hung GitHub request ends the run instead of blocking the page.
+  - Added a cooperative 15s scan deadline, checked only between GitHub requests. It did not abort a request already in flight, so a hung GitHub request could keep the run going past the deadline.
   - Added an explicit cancel control to the scan progress panel, and a repository picker with a plain `owner/repo` manual entry field alongside the operator's repository list.
-  - A complete scan result is held for an explicit **Save Profile** click. A scan that ended early (cancelled or timed out) was written straight to the encrypted IndexedDB steering store as an `incomplete` profile, overwriting any existing entry for that repository.
+  - A complete scan result is held for an explicit **Save Profile** click. Any scan that did not complete — cancelled, timed out, or stopped by any error thrown during the scan (for example a network failure) — returned an `incomplete` profile that was written straight to the encrypted IndexedDB steering store, overwriting any existing entry for that repository.
 
 ## 1.0.1 — 2026-09-14 (@ 1f4f4e7)
 
