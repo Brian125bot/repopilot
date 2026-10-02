@@ -95,6 +95,11 @@ export const SnippetSchema = z
     isBuiltin: z.boolean(),
     isPinned: z.boolean().default(false),
     usageCount: z.number().int().min(0).default(0),
+    // Set when this record is a fork of a built-in. Optional on purpose: records
+    // already in operator vaults were written under STEERING_SCHEMA_VERSION = 1
+    // without it, and unwrapRecord validates every decrypted record — a required
+    // field would make them unreadable and listSnippets would silently drop them.
+    forkedFromId: z.string().trim().min(1, 'Snippet forkedFromId must be non-empty.').optional(),
     createdAt: isoTimestamp('createdAt'),
     updatedAt: isoTimestamp('updatedAt'),
   })
