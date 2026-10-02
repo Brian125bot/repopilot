@@ -1,4 +1,4 @@
-# RepoPilot 1.0.2 Golden Path
+# RepoPilot 1.0.3 Golden Path
 
 Two stages stay strictly separate. Complete this loop on a hosted deploy or local development server.
 

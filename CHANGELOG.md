@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 1.0.3 — 2026-10-02
+
 Hardening pass over the COR-54 scan pipeline. The 1.0.2 pipeline scanned a repository in four stages with a cooperative deadline, and auto-saved an early-terminated scan as an `incomplete` profile; this work makes the failure modes typed and the save path operator-gated. No architectural contract changes: profiles still live only in the encrypted IndexedDB steering store, and no server-held token or environment variable is introduced.
 
 ### Hardening & Fixes

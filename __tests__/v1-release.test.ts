@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 
 describe('RepoPilot 1.0 release artifacts', () => {
-  it('declares version 1.0.2 and keeps Gemini User-Agent RepoPilot/1.0', () => {
+  it('declares version 1.0.3 and keeps Gemini User-Agent RepoPilot/1.0', () => {
     const pkg = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string };
-    expect(pkg.version).toBe('1.0.2');
+    expect(pkg.version).toBe('1.0.3');
     const gemini = readFileSync('lib/gemini.ts', 'utf8');
     expect(gemini).toContain("'User-Agent': 'RepoPilot/1.0'");
     expect(gemini).not.toContain('aistudio-build');
