@@ -34,11 +34,11 @@ Hardening pass over the COR-54 scan pipeline. The 1.0.2 pipeline scanned a repos
 
 ### Documentation
 
-- Corrected three 1.0.2 entries below for accuracy against what shipped at `5229949`: provider key verification is click-triggered, the 15s scan deadline did not abort in-flight requests, and any scan error (not only a cancel or timeout) auto-saved an `incomplete` profile.
+- Corrected three 1.0.2 entries below for accuracy against what shipped at `5229949`: provider key verification is click-triggered, the 15s scan deadline did not abort in-flight requests, and any scan error (not only a cancel or timeout) auto-saved an `incomplete` profile. The COR-34 heading and the 1.0.2 summary were also corrected to drop the "verify on first paint" claim.
 
 ## 1.0.2 — 2026-09-21
 
-Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, encrypted IndexedDB steering storage, an initial GitHub repository scan pipeline, audited PR head SHA drift rejection, provider key verification on first paint, security headers & empty-env contract, and documentation honesty.
+Zero-auth, zero-server release featuring client-side WebCrypto credential isolation, encrypted IndexedDB steering storage, an initial GitHub repository scan pipeline, audited PR head SHA drift rejection, click-to-verify provider keys with a verify-before-dispatch gate, security headers & empty-env contract, and documentation honesty.
 
 ### Landed Tickets & Architectural Changes
 
@@ -48,7 +48,7 @@ Zero-auth, zero-server release featuring client-side WebCrypto credential isolat
 - **COR-40: Persisted audited PR head SHA & drift rejection**:
   - Locked remediation dispatch and continuation prompt compilation to the exact `auditedHeadSha` captured during Stage 2 evaluation.
   - Fail-closed gate (`400 INVALID_INPUT`) blocks remediation if the current PR head branch diverges from the audited SHA, preventing Jules from executing fixes on un-audited commits or falling back to `main`.
-- **COR-34: Settings provider key verify-on-connect at first paint**:
+- **COR-34: Settings provider key Verify checks & verify-before-dispatch gate**:
   - Click-triggered **Verify** checks for provider credentials (Google Jules, Google Gemini, GitHub PAT) in the Settings modal. Verification is not automatic; it runs only when the operator clicks **Verify**.
   - Validates key authorizations, scopes, and target repository connections without exposing secret key material in error payloads or logs.
 - **COR-35: Encrypted WebCrypto browser vault & plaintext wipe**:
