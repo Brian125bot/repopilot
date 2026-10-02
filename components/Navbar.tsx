@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Compass, Key, FolderArchive, BookOpen, GitFork } from 'lucide-react';
+import { Compass, Key, FolderArchive, BookOpen, GitFork, MessageSquareQuote } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -158,6 +158,20 @@ export function Navbar({
               <a>
                 <GitFork className="h-3.5 w-3.5 text-slate-500" />
                 <span className="hidden sm:inline">Repos</span>
+              </a>
+            </Button>
+          </Link>
+
+          <Link href="/settings/snippets" passHref legacyBehavior>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="hidden md:flex items-center gap-1.5 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
+            >
+              <a>
+                <MessageSquareQuote className="h-3.5 w-3.5 text-slate-500" />
+                <span className="hidden sm:inline">Snippets</span>
               </a>
             </Button>
           </Link>
