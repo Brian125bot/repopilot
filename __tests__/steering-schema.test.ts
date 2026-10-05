@@ -8,8 +8,15 @@ import {
   type RepoProfile,
   type Snippet,
 } from '@/lib/types/steering';
+import { BUILTIN_SNIPPET_IDS } from '@/lib/snippets/builtin-loader';
+import {
+  createMemorySteeringRecordStore,
+  createSteeringStore,
+  wrapRecord,
+} from '@/lib/vault/steering-store';
 
 const STAMP = '2026-09-01T12:00:00.000Z';
+const PASS = 'correct horse battery staple';
 
 function profile(overrides: Partial<RepoProfile> = {}): RepoProfile {
   return {
@@ -139,5 +146,45 @@ describe('Snippet schema', () => {
 
   it('rejects unknown keys', () => {
     expect(SnippetSchema.safeParse({ ...snippet(), extra: 'nope' }).success).toBe(false);
+  });
+
+  it('accepts a snippet with no forkedFromId, as written before COR-58', () => {
+    // Records already in operator vaults predate forkedFromId. If this ever fails,
+    // every pre-existing snippet becomes unreadable and listSnippets drops it silently.
+    const legacy = snippet();
+    delete (legacy as Partial<Snippet>).forkedFromId;
+    expect(Object.prototype.hasOwnProperty.call(legacy, 'forkedFromId')).toBe(false);
+    expect(SnippetSchema.safeParse(legacy).success).toBe(true);
+    expect(parseSnippet(legacy).forkedFromId).toBeUndefined();
+  });
+
+  it('accepts forkedFromId and still rejects unknown keys alongside it', () => {
+    expect(SnippetSchema.safeParse(snippet({ forkedFromId: 'builtin-run-tests' })).success).toBe(true);
+    expect(
+      SnippetSchema.safeParse({ ...snippet({ forkedFromId: 'builtin-run-tests' }), extra: 'nope' }).success
+    ).toBe(false);
+    expect(SnippetSchema.safeParse(snippet({ forkedFromId: '   ' })).success).toBe(false);
+  });
+});
+
+describe('COR-58 upgrade regression', () => {
+  it('still lists an old-shape record encrypted under the pre-forkedFromId schema', async () => {
+    const records = createMemorySteeringRecordStore();
+    const store = createSteeringStore(records);
+    store.unlock(PASS);
+
+    // Exactly what a vault written before COR-58 holds: no forkedFromId key.
+    const legacy = snippet({ id: 'custom-legacy-record' });
+    delete (legacy as Partial<Snippet>).forkedFromId;
+    expect(legacy).not.toHaveProperty('forkedFromId');
+    await records.write('snippets', legacy.id, await wrapRecord(legacy, PASS));
+
+    const listed = await store.listSnippets();
+    const found = listed.find((entry) => entry.id === 'custom-legacy-record');
+    expect(found).toEqual(legacy);
+    expect(found?.forkedFromId).toBeUndefined();
+    for (const builtinId of BUILTIN_SNIPPET_IDS) {
+      expect(listed.map((entry) => entry.id)).toContain(builtinId);
+    }
   });
 });
