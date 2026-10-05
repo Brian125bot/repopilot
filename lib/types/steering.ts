@@ -80,7 +80,11 @@ export type SnippetCategory = z.infer<typeof SnippetCategorySchema>;
 
 export const SnippetSchema = z
   .object({
-    id: z.string({ message: 'Snippet id is required.' }).trim().min(1, 'Snippet id is required.'),
+    id: z
+      .string({ message: 'Snippet id is required.' })
+      .trim()
+      .min(1, 'Snippet id is required.')
+      .max(200, 'Snippet id must be 200 characters or fewer.'),
     title: z
       .string({ message: 'Snippet title is required.' })
       .trim()
@@ -99,7 +103,12 @@ export const SnippetSchema = z
     // already in operator vaults were written under STEERING_SCHEMA_VERSION = 1
     // without it, and unwrapRecord validates every decrypted record — a required
     // field would make them unreadable and listSnippets would silently drop them.
-    forkedFromId: z.string().trim().min(1, 'Snippet forkedFromId must be non-empty.').optional(),
+    forkedFromId: z
+      .string()
+      .trim()
+      .min(1, 'Snippet forkedFromId must be non-empty.')
+      .max(200, 'Snippet forkedFromId must be 200 characters or fewer.')
+      .optional(),
     createdAt: isoTimestamp('createdAt'),
     updatedAt: isoTimestamp('updatedAt'),
   })

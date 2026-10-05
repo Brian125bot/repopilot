@@ -16,9 +16,15 @@ const SNIPPET_CATEGORIES = SnippetCategorySchema.options;
 export const BUILTIN_FORK_NOTICE = `${STEERING_BUILTIN_DELETE_MESSAGE} Edit to fork this snippet.`;
 
 export interface SnippetLibraryProps {
-  store: SteeringStore;
+  /**
+   * Required unless `readOnly` is set. The locked settings view renders the
+   * built-in catalogue read-only, without a store or a passphrase.
+   */
+  store?: SteeringStore;
   snippets: Snippet[];
   onChanged: () => void | Promise<void>;
+  /** Hides every write control: New snippet, Edit/Fork, delete, import/export. */
+  readOnly?: boolean;
 }
 
 interface EditorState {
@@ -40,10 +46,11 @@ function formatDate(value: string): string {
   return new Date(parsed).toISOString().slice(0, 10);
 }
 
-export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryProps) {
+export function SnippetLibrary({ store, snippets, onChanged, readOnly = false }: SnippetLibraryProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<SnippetCategory | 'all'>('all');
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,7 +76,8 @@ export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryPro
     }
     setNotice(null);
     try {
-      await store.deleteSnippet(snippet.id);
+      await store?.deleteSnippet(snippet.id);
+      setConfirmDeleteId(null);
       await onChanged();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not delete the snippet.');
@@ -101,17 +109,19 @@ export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryPro
         <span className="text-xs text-slate-500">
           {visible.length} of {snippets.length} snippet{snippets.length === 1 ? '' : 's'}
         </span>
-        <Button
-          size="sm"
-          className="ml-auto"
-          onClick={() => {
-            setNotice(null);
-            setEditor({ mode: 'create', source: null });
-          }}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          New snippet
-        </Button>
+        {!readOnly && (
+          <Button
+            size="sm"
+            className="ml-auto"
+            onClick={() => {
+              setNotice(null);
+              setEditor({ mode: 'create', source: null });
+            }}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New snippet
+          </Button>
+        )}
       </div>
 
       {notice && (
@@ -119,7 +129,7 @@ export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryPro
       )}
       {error && <p className="p-3 rounded border border-red-200 bg-red-50 text-sm text-red-800">{error}</p>}
 
-      {editor && (
+      {editor && store && !readOnly && (
         <SnippetEditor
           store={store}
           mode={editor.mode}
@@ -139,6 +149,7 @@ export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryPro
         <ul className="space-y-3">
           {visible.map((snippet) => {
             const builtin = snippet.isBuiltin || isBuiltinSnippetId(snippet.id);
+            const confirming = confirmDeleteId === snippet.id;
             return (
               <li
                 key={snippet.id}
@@ -171,36 +182,63 @@ export function SnippetLibrary({ store, snippets, onChanged }: SnippetLibraryPro
                   <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">{snippet.content}</p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setNotice(null);
-                      setEditor({ mode: builtin ? 'fork' : 'edit', source: snippet });
-                    }}
-                  >
-                    {builtin ? <GitFork className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-                    {builtin ? 'Fork' : 'Edit'}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={builtin ? 'Built-in snippets cannot be deleted' : 'Delete snippet'}
-                    title={builtin ? STEERING_BUILTIN_DELETE_MESSAGE : 'Delete snippet'}
-                    onClick={() => void handleDelete(snippet)}
-                    className={builtin ? 'text-amber-600' : 'text-slate-400 hover:text-red-600'}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+                {!readOnly && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setNotice(null);
+                        setEditor({ mode: builtin ? 'fork' : 'edit', source: snippet });
+                      }}
+                    >
+                      {builtin ? <GitFork className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                      {builtin ? 'Fork' : 'Edit'}
+                    </Button>
+                    {confirming ? (
+                      <>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => void handleDelete(snippet)}
+                        >
+                          Confirm delete
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          Keep
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={builtin ? 'Built-in snippets cannot be deleted' : 'Delete snippet'}
+                        title={builtin ? STEERING_BUILTIN_DELETE_MESSAGE : 'Delete snippet'}
+                        onClick={() => {
+                          if (builtin) {
+                            void handleDelete(snippet);
+                            return;
+                          }
+                          setConfirmDeleteId(snippet.id);
+                        }}
+                        className={builtin ? 'text-amber-600' : 'text-slate-400 hover:text-red-600'}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                )}
               </li>
             );
           })}
         </ul>
       )}
 
-      <SnippetIOButtons store={store} snippets={snippets} onImported={onChanged} />
+      {!readOnly && store && <SnippetIOButtons store={store} snippets={snippets} onImported={onChanged} />}
     </div>
   );
 }

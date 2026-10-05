@@ -65,25 +65,34 @@ export default function SnippetLibrarySettingsPage() {
       </div>
 
       {!isUnlocked ? (
-        <div className="p-6 border rounded-lg bg-slate-50 space-y-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Unlock className="w-5 h-5 text-slate-700" />
-            Unlock Vault
-          </h2>
-          <p className="text-sm text-slate-600">
-            Enter your vault passphrase to manage your snippets. Built-ins are listed without unlocking.
-          </p>
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              placeholder="Passphrase..."
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-              className="max-w-md bg-white"
-            />
-            <Button onClick={handleUnlock}>Unlock</Button>
+        <div className="space-y-6">
+          <div className="p-6 border rounded-lg bg-slate-50 space-y-4">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Unlock className="w-5 h-5 text-slate-700" />
+              Unlock Vault
+            </h2>
+            <p className="text-sm text-slate-600">
+              Enter your vault passphrase to manage your snippets. The built-in catalogue below is
+              readable without unlocking; your own snippets are not.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder="Passphrase..."
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                className="max-w-md bg-white"
+              />
+              <Button onClick={handleUnlock}>Unlock</Button>
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <SnippetLibrary
+            snippets={getBuiltinSnippets()}
+            onChanged={() => undefined}
+            readOnly
+          />
         </div>
       ) : (
         <div className="space-y-6">

@@ -6,11 +6,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   SNIPPET_EXPORT_FILE_PREFIX,
+  SNIPPET_IMPORT_MAX_FILE_BYTES,
   exportSnippets,
   importSnippets,
+  isImportFileSizeAllowed,
   isSnippetImportError,
+  planImportWrites,
   resolveImportConflicts,
   type ImportConflictMode,
+  type ImportWritePlan,
 } from '@/lib/snippets/import-export';
 import { isBuiltinSnippetId } from '@/lib/snippets/builtin-loader';
 import type { Snippet } from '@/lib/types/steering';
@@ -45,6 +49,12 @@ function todayStamp(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function downloadJson(json: string, filename: string): void {
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -59,14 +69,18 @@ function downloadJson(json: string, filename: string): void {
  * Encrypted snippet transfer, browser-side only.
  *
  * The export passphrase is operator-supplied and independent of the vault
- * passphrase, so a bundle can be decrypted in a fresh browser without transferring
- * the vault key. Nothing is written to the vault until Import is clicked.
+ * passphrase, so a bundle can be decrypted in a fresh browser without
+ * transferring the vault. Picking a file only stages it: nothing is read,
+ * decrypted or written until the operator clicks Import, and a replace that
+ * would delete stored snippets asks once more before it writes.
  */
 export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButtonsProps) {
   const [exportPassphrase, setExportPassphrase] = useState('');
   const [importPassphrase, setImportPassphrase] = useState('');
   const [mode, setMode] = useState<ImportConflictMode>('skip');
-  const [busy, setBusy] = useState<'export' | 'import' | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<ImportWritePlan | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,7 +88,7 @@ export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButto
 
   const handleExport = async () => {
     if (busy) return;
-    setBusy('export');
+    setBusy(true);
     setNotice(null);
     setError(null);
     try {
@@ -85,38 +99,77 @@ export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButto
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Export failed.');
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const handleImportFile = async (file: File | undefined) => {
-    if (!file || busy) return;
-    setBusy('import');
+  const handleFilePicked = (file: File | undefined) => {
+    setPendingPlan(null);
+    setNotice(null);
+    setError(null);
+    if (!file) {
+      setPendingFile(null);
+      return;
+    }
+    // Size is checked here, before the file is ever read into memory.
+    if (!isImportFileSizeAllowed(file.size)) {
+      setPendingFile(null);
+      setError(
+        `That file is ${formatBytes(file.size)}. A snippet bundle must be ${formatBytes(SNIPPET_IMPORT_MAX_FILE_BYTES)} or smaller.`,
+      );
+      return;
+    }
+    setPendingFile(file);
+  };
+
+  const applyPlan = async (plan: ImportWritePlan) => {
+    for (const snippet of plan.upserts) {
+      await store.saveSnippet(snippet);
+    }
+    for (const id of plan.deletions) {
+      await store.deleteSnippet(id);
+    }
+    await onImported();
+    setImportPassphrase('');
+    setPendingFile(null);
+    setPendingPlan(null);
+    if (plan.upserts.length === 0 && plan.deletions.length === 0) {
+      setNotice('Nothing to import — every snippet in the bundle is already in the library.');
+      return;
+    }
+    setNotice(
+      `Import complete: ${plan.upserts.length} snippet${plan.upserts.length === 1 ? '' : 's'} added or updated` +
+        (plan.deletions.length > 0
+          ? `, ${plan.deletions.length} replaced snippet${plan.deletions.length === 1 ? '' : 's'} removed.`
+          : '.') +
+        ' Built-ins are untouched.',
+    );
+  };
+
+  const handleImportClick = async () => {
+    if (busy || !pendingFile) return;
+    if (!isImportFileSizeAllowed(pendingFile.size)) {
+      setError(`That file is ${formatBytes(pendingFile.size)}. A snippet bundle must be ${formatBytes(SNIPPET_IMPORT_MAX_FILE_BYTES)} or smaller.`);
+      setPendingFile(null);
+      return;
+    }
+    setBusy(true);
     setNotice(null);
     setError(null);
     try {
-      const incoming = await importSnippets(await file.text(), importPassphrase);
+      const incoming = await importSnippets(await pendingFile.text(), importPassphrase);
       const current = (await store.listSnippets()).filter(
         (snippet) => !snippet.isBuiltin && !isBuiltinSnippetId(snippet.id)
       );
       const resolved = resolveImportConflicts(current, incoming, mode);
-      const currentIds = new Set(current.map((snippet) => snippet.id));
-      const resolvedIds = new Set(resolved.map((snippet) => snippet.id));
-      const added = resolved.filter((snippet) => !currentIds.has(snippet.id));
-      const removed = current.filter((snippet) => !resolvedIds.has(snippet.id));
-      for (const snippet of added) {
-        await store.saveSnippet(snippet);
+      const plan = planImportWrites(current, resolved);
+      // A replace that would delete stored snippets gets one explicit
+      // confirmation before anything is written.
+      if (plan.deletions.length > 0) {
+        setPendingPlan(plan);
+        return;
       }
-      for (const snippet of removed) {
-        await store.deleteSnippet(snippet.id);
-      }
-      await onImported();
-      setImportPassphrase('');
-      setNotice(
-        `Imported ${added.length} snippet${added.length === 1 ? '' : 's'}` +
-          (removed.length > 0 ? `, removed ${removed.length} replaced snippet${removed.length === 1 ? '' : 's'}.` : '.') +
-          ' Built-ins are untouched.',
-      );
+      await applyPlan(plan);
     } catch (err: unknown) {
       if (isSnippetImportError(err)) {
         setError(err.message);
@@ -124,11 +177,12 @@ export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButto
         setError(err instanceof Error ? err.message : 'Import failed.');
       }
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   const selectedMode = CONFLICT_MODES.find((option) => option.value === mode);
+  const importReady = pendingFile !== null && importPassphrase.trim().length > 0 && !busy;
 
   return (
     <div className="p-4 border rounded-lg bg-white space-y-4">
@@ -158,11 +212,11 @@ export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButto
           />
           <Button
             onClick={handleExport}
-            disabled={busy !== null || customCount === 0 || exportPassphrase.trim().length === 0}
+            disabled={busy || customCount === 0 || exportPassphrase.trim().length === 0}
             size="sm"
           >
             <Download className="w-3.5 h-3.5" />
-            {busy === 'export' ? 'Exporting…' : 'Export encrypted bundle'}
+            {busy ? 'Exporting…' : 'Export encrypted bundle'}
           </Button>
         </div>
 
@@ -198,20 +252,48 @@ export function SnippetIOButtons({ store, snippets, onImported }: SnippetIOButto
             <input
               type="file"
               accept="application/json,.json"
-              disabled={busy !== null || importPassphrase.trim().length === 0}
+              disabled={busy}
               onChange={(event) => {
-                void handleImportFile(event.target.files?.[0]);
+                handleFilePicked(event.target.files?.[0]);
                 event.target.value = '';
               }}
               className="text-xs text-slate-600 file:mr-2 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700"
             />
           </label>
-          <p className="text-xs text-slate-500 flex items-center gap-1">
-            <Upload className="w-3 h-3" />
-            {busy === 'import' ? 'Importing…' : 'Nothing is written to the vault until you choose a bundle.'}
+          {pendingFile && (
+            <p className="text-xs text-slate-600">
+              Staged: {pendingFile.name} ({formatBytes(pendingFile.size)})
+            </p>
+          )}
+          <Button onClick={handleImportClick} disabled={!importReady} size="sm">
+            <Upload className="w-3.5 h-3.5" />
+            {busy ? 'Importing…' : 'Import bundle'}
+          </Button>
+          <p className="text-xs text-slate-500">
+            Nothing is read, decrypted or written to the vault until you click Import.
           </p>
         </div>
       </div>
+
+      {pendingPlan && (
+        <div className="p-3 rounded border border-amber-200 bg-amber-50 space-y-2">
+          <p className="text-sm text-amber-900">
+            This import will <strong>replace {pendingPlan.deletions.length}</strong> stored
+            snippet{pendingPlan.deletions.length === 1 ? '' : 's'}
+            {pendingPlan.upserts.length > 0 &&
+              ` and add or update ${pendingPlan.upserts.length} more`}
+            . Replaced snippets are deleted from the vault.
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => void applyPlan(pendingPlan)}>
+              Confirm import
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setPendingPlan(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
 
       {notice && <p className="text-sm text-emerald-700">{notice}</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}

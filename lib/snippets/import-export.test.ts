@@ -3,11 +3,15 @@ import {
   SNIPPET_EXPORT_FORMAT,
   SNIPPET_IMPORT_DECRYPT_FAILED,
   SNIPPET_IMPORT_INVALID_PAYLOAD,
+  SNIPPET_IMPORT_MAX_FILE_BYTES,
+  SNIPPET_IMPORT_MAX_SNIPPETS,
   SNIPPET_IMPORT_NOT_A_BUNDLE,
   SnippetImportError,
   exportSnippets,
   importSnippets,
+  isImportFileSizeAllowed,
   isSnippetImportError,
+  planImportWrites,
   resolveImportConflicts,
 } from './import-export';
 import { BUILTIN_SNIPPET_IDS, getBuiltinSnippets } from './builtin-loader';
@@ -237,15 +241,15 @@ describe('built-ins survive a full import', () => {
     const bundleJson = await exportSnippets([custom()], PASS);
     const incoming = await importSnippets(bundleJson, PASS);
 
+    // The same write plan the UI uses — no duplicated add/remove heuristic.
     const current = (await store.listSnippets()).filter((snippet) => !snippet.isBuiltin);
     const resolved = resolveImportConflicts(current, incoming, 'merge');
-    const currentIds = new Set(current.map((snippet) => snippet.id));
-    const resolvedIds = new Set(resolved.map((snippet) => snippet.id));
-    for (const snippet of resolved.filter((entry) => !currentIds.has(entry.id))) {
+    const plan = planImportWrites(current, resolved);
+    for (const snippet of plan.upserts) {
       await store.saveSnippet(snippet);
     }
-    for (const snippet of current.filter((entry) => !resolvedIds.has(entry.id))) {
-      await store.deleteSnippet(snippet.id);
+    for (const id of plan.deletions) {
+      await store.deleteSnippet(id);
     }
 
     const after = await store.listSnippets();
@@ -270,6 +274,155 @@ describe('built-ins survive a full import', () => {
     store.unlock(PASS);
     await expect(store.deleteSnippet(BUILTIN_SNIPPET_IDS[0])).rejects.toThrow(STEERING_BUILTIN_DELETE_MESSAGE);
     expect((await store.listSnippets()).some((snippet) => snippet.id === BUILTIN_SNIPPET_IDS[0])).toBe(true);
+  });
+});
+
+/**
+ * The three replace-mode failures the PR #34 review found: the UI used to
+ * save only ids absent from the store and delete only ids absent from the
+ * resolved list, which silently no-ops, skips, or loses data when a
+ * resolved record reuses a stored id. Each case runs the exact write plan
+ * the UI now applies.
+ */
+describe('replace-mode import write plan', () => {
+  async function customsIn(store: ReturnType<typeof createMemorySteeringStore>): Promise<Snippet[]> {
+    const listed = await store.listSnippets();
+    return listed.filter((snippet) => !snippet.isBuiltin);
+  }
+
+  async function applyImport(
+    store: ReturnType<typeof createMemorySteeringStore>,
+    incoming: Snippet[],
+    mode: 'replace' | 'merge' | 'skip' = 'replace'
+  ): Promise<ReturnType<typeof planImportWrites>> {
+    const current = await customsIn(store);
+    const resolved = resolveImportConflicts(current, incoming, mode);
+    const plan = planImportWrites(current, resolved);
+    for (const snippet of plan.upserts) {
+      await store.saveSnippet(snippet);
+    }
+    for (const id of plan.deletions) {
+      await store.deleteSnippet(id);
+    }
+    return plan;
+  }
+
+  it('case 1: an identical re-import writes nothing and reports nothing to do', async () => {
+    const store = createMemorySteeringStore();
+    store.unlock(PASS);
+    const stored = custom({ id: 'snippet-a', title: 'Check scope' });
+    await store.saveSnippet(stored);
+
+    // Re-importing an export of the same snippet is a no-op, not a silent skip.
+    const plan = await applyImport(store, [stored]);
+
+    expect(plan.upserts).toEqual([]);
+    expect(plan.deletions).toEqual([]);
+    expect(await customsIn(store)).toEqual([stored]);
+  });
+
+  it('case 2: a same-id import with a new title overwrites the stored record', async () => {
+    const store = createMemorySteeringStore();
+    store.unlock(PASS);
+    await store.saveSnippet(custom({ id: 'snippet-a', title: 'Check scope' }));
+    const renamed = custom({ id: 'snippet-a', title: 'Check scope harder' });
+
+    const plan = await applyImport(store, [renamed]);
+
+    expect(plan.upserts.map((snippet) => snippet.id)).toEqual(['snippet-a']);
+    expect(plan.deletions).toEqual([]);
+    const after = await customsIn(store);
+    expect(after).toEqual([renamed]);
+    expect(after[0].title).toBe('Check scope harder');
+  });
+
+  it('case 3: an import reusing A’s id with B’s title overwrites A and removes B', async () => {
+    const store = createMemorySteeringStore();
+    store.unlock(PASS);
+    const a = custom({ id: 'snippet-a', title: 'Title X' });
+    const b = custom({ id: 'snippet-b', title: 'Title Y' });
+    await store.saveSnippet(a);
+    await store.saveSnippet(b);
+    // Same id as A, same title as B: the old code deleted B and left A stale.
+    const incoming = custom({ id: 'snippet-a', title: 'Title Y', content: 'Imported body.' });
+
+    const plan = await applyImport(store, [incoming]);
+
+    expect(plan.upserts.map((snippet) => snippet.id)).toEqual(['snippet-a']);
+    expect(plan.deletions).toEqual(['snippet-b']);
+    expect(await customsIn(store)).toEqual([incoming]);
+  });
+
+  it('replace never emits two records with one id when local titles repeat', () => {
+    // A previous merge can leave two local records sharing a title.
+    const duplicated = [
+      custom({ id: 'snippet-a1', title: 'Check scope' }),
+      custom({ id: 'snippet-a2', title: 'Check scope' }),
+    ];
+    const incoming = [custom({ id: 'snippet-incoming', title: 'Check scope' })];
+
+    const resolved = resolveImportConflicts(duplicated, incoming, 'replace');
+
+    expect(resolved.map((snippet) => snippet.id)).toEqual(['snippet-incoming']);
+    expect(new Set(resolved.map((snippet) => snippet.id)).size).toBe(resolved.length);
+  });
+
+  it('a bundle carrying a repeated id is deduplicated before resolving', () => {
+    const incoming = [
+      custom({ id: 'snippet-a', title: 'Check scope' }),
+      custom({ id: 'snippet-a', title: 'Check scope', content: 'Second copy.' }),
+    ];
+
+    const resolved = resolveImportConflicts([], incoming, 'merge');
+
+    expect(resolved.map((snippet) => snippet.id)).toEqual(['snippet-a']);
+  });
+});
+
+describe('import caps', () => {
+  it('rejects a bundle with more snippets than the cap', async () => {
+    const tooMany = Array.from({ length: SNIPPET_IMPORT_MAX_SNIPPETS + 1 }, (_, index) =>
+      custom({ id: `snippet-${index}`, title: `Snippet ${index}` })
+    );
+    const bundleJson = await exportSnippets(tooMany, PASS);
+
+    await expect(importSnippets(bundleJson, PASS)).rejects.toThrow(SNIPPET_IMPORT_INVALID_PAYLOAD);
+  });
+
+  it('accepts a bundle at the cap', async () => {
+    const atCap = Array.from({ length: SNIPPET_IMPORT_MAX_SNIPPETS }, (_, index) =>
+      custom({ id: `snippet-${index}`, title: `Snippet ${index}` })
+    );
+    const bundleJson = await exportSnippets(atCap, PASS);
+
+    expect(await importSnippets(bundleJson, PASS)).toHaveLength(SNIPPET_IMPORT_MAX_SNIPPETS);
+  });
+
+  it('guards the file size before the file is read', () => {
+    expect(isImportFileSizeAllowed(0)).toBe(true);
+    expect(isImportFileSizeAllowed(SNIPPET_IMPORT_MAX_FILE_BYTES)).toBe(true);
+    expect(isImportFileSizeAllowed(SNIPPET_IMPORT_MAX_FILE_BYTES + 1)).toBe(false);
+    expect(isImportFileSizeAllowed(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(isImportFileSizeAllowed(Number.NaN)).toBe(false);
+    expect(isImportFileSizeAllowed(-1)).toBe(false);
+  });
+
+  it('rejects oversized ids and forkedFromId values', () => {
+    const longId = `snippet-${'x'.repeat(300)}`;
+    expect(() => parseSnippet(custom({ id: longId }))).toThrow(/200 characters or fewer/);
+    expect(() => parseSnippet(custom({ forkedFromId: `builtin-${'y'.repeat(300)}` }))).toThrow(
+      /200 characters or fewer/
+    );
+  });
+
+  it('rejects an envelope with an oversized base64 field', async () => {
+    const bundleJson = await exportSnippets([custom()], PASS);
+    const tampered = JSON.parse(bundleJson) as { envelope: { ciphertextB64: string } };
+    tampered.envelope.ciphertextB64 = 'A'.repeat(10_000_001);
+
+    await expect(importSnippets(JSON.stringify(tampered), PASS)).rejects.toThrow(
+      SNIPPET_IMPORT_NOT_A_BUNDLE
+    );
   });
 });
 
