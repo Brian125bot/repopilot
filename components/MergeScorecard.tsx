@@ -53,6 +53,7 @@ import {
   shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
+import { JulesFollowUpPanel } from './JulesSession/JulesFollowUpPanel';
 import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
 import { LOCKED_MESSAGE } from '@/lib/credential-vault';
 
@@ -326,6 +327,18 @@ export function MergeScorecard({
       return '';
     }
   }, [blueprint, continueBrief, auditedHeadSha]);
+
+  // COR-59: the latest audit output (agent feedback, open
+  // fixes, blockers) is the corpus the snippet ranking
+  // engine matches suggested turns against.
+  const followUpLatestMessage = React.useMemo(() => {
+    const parts = [
+      mergeVerdict.actionableFeedbackForAgent,
+      ...(continueBrief?.requiredFixes ?? []),
+      ...(mergeVerdict.keyBlockers ?? []),
+    ].filter((part) => part && part.trim().length > 0);
+    return parts.join(' ');
+  }, [mergeVerdict, continueBrief]);
 
   // Active prompt in view or edit
   const activePrompt = isEditingPrompt ? customPromptText : customPromptText || defaultRemediationPrompt;
@@ -1180,6 +1193,34 @@ export function MergeScorecard({
                     <code className="font-mono text-[11px] text-slate-300">{followUpSessionId}</code>
                   </span>
                 </div>
+
+                {/* COR-59: snippet-assisted interactive turn,
+                    directly beneath the session output. Selecting
+                    a card only populates the editor — the explicit
+                    Send button dispatches through the COR-39
+                    continuation path. */}
+                {blueprint && continueBrief && verdictForGate !== 'READY_TO_MERGE' && (
+                  <JulesFollowUpPanel
+                    blueprint={blueprint}
+                    brief={continueBrief}
+                    latestMessage={followUpLatestMessage}
+                    julesApiKey={julesKey}
+                    currentHeadSha={liveHeadSha || auditedHeadSha || ''}
+                    checkHeadFreshness={checkHeadFreshness}
+                    canSend={requireVerifiedKey}
+                    onContinued={(rebound) => {
+                      onSaveBlueprint?.(rebound);
+                      recordOutcomeRow(
+                        buildOutcomeRow({
+                          blueprint: rebound,
+                          turn: 'new-from-brief',
+                          usedPriorSession: true,
+                        })
+                      );
+                    }}
+                  />
+                )}
+
                 <textarea
                   rows={3}
                   value={followUpText}
