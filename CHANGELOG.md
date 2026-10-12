@@ -22,6 +22,10 @@
   - **Honest limitations.** The goal is keyed by a pre-dispatch `draft-…` id because no Jules session exists at capture time, so `getGoal` looks a goal up by that id rather than by a Jules session id. Confirming a goal replaces the Stage 1 criteria list; because extracted criteria are not guaranteed to satisfy the functional/testing/constraint balance that `preDispatchGate` requires, the first dispatch after a confirmation can be refused client-side with a visible error, which the operator resolves by editing the criteria and dispatching again.
   - The Gemini key is still read only from the client-supplied `x-gemini-api-key` header: no server-held key, no environment variable, and no key in logs. The extraction route returns `400 INVALID_INPUT`, `401 UNAUTHORIZED`, `422 INVALID_INPUT`, or `502 UPSTREAM_ERROR` and discards upstream error text, which can echo prompt content.
 
+### Security
+
+- Pin `next` to 15.5.27 to fix GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p (SSG/ISR cache poisoning).
+
 ## 1.0.3 — 2026-10-02
 
 Hardening pass over the COR-54 scan pipeline. The 1.0.2 pipeline scanned a repository in four stages with a cooperative deadline, and auto-saved an early-terminated scan as an `incomplete` profile; this work makes the failure modes typed and the save path operator-gated. No architectural contract changes: profiles still live only in the encrypted IndexedDB steering store, and no server-held token or environment variable is introduced.
