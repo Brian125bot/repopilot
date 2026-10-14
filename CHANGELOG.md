@@ -30,6 +30,9 @@
   - **Edit-then-send flow** (`components/JulesSession/ResponseEditor.tsx`, `lib/sessions/send.ts`): a controlled multiline textarea pre-populated on selection that preserves any manual edits; the turn dispatches only via the explicit Send button — **there is no auto-send path anywhere in the snippet flow**. The send handler reuses the COR-39 continuation machinery rather than inventing a second dispatch: the prompt is compiled by `compileContinuationPrompt` with the operator-reviewed snippet text appended as the turn directive, dispatched through the existing `/api/jules/dispatch` continuation path (`isRemediation: true`), and the blueprint is rebound with `applyNewRemediationSession`. The COR-40 audited-head-SHA lock is enforced fail-closed (a blueprint without it cannot compile a continuation, and the route rejects a drifted head).
   - **Integration** (`components/JulesSession/JulesFollowUpPanel.tsx`, mounted in `MergeScorecard`'s follow-up section): ranks the library against the audit output, renders the bar and editor, and gates every dispatch behind the scorecard's existing verified-key check and COR-40 head-freshness gate. Custom snippets load through the existing encrypted steering store via an optional passphrase unlock; built-ins are always readable. The existing plain "Send follow-up" (`/api/jules/message`) is unchanged.
   - **Honest limitations.** The ranking is cold-start: with no message text and an unrecognized session stage, nothing clears the threshold and the bar stays hidden by design. Stage affinities are a fixed prior, not learned from operator behavior. The panel has no automated UI coverage — vitest runs in the node environment and the repo has no DOM test setup; the pure modules (ranking, state, citations, send) carry 85 unit tests.
+### Security
+
+- Pin `next` to 15.5.27 to fix GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p (SSG/ISR cache poisoning).
 
 ## 1.0.3 — 2026-10-02
 
