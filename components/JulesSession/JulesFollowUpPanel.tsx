@@ -19,7 +19,8 @@ import {
 } from '@/lib/snippets/state';
 import {
   sendInteractiveTurn,
-  snippetSendBlockReason,
+  snippetSendMode,
+  startNewSessionTurn,
   type HeadFreshnessResult,
 } from '@/lib/sessions/send';
 import type {
@@ -58,11 +59,14 @@ export interface JulesFollowUpPanelProps {
   prNumber?: number;
   /** Audited PR URL, forwarded to the message route. */
   prUrl?: string;
+  /** Audited head SHA known to the scorecard (new-session metadata check). */
+  auditedHeadSha?: string | null;
   /** Current session, from `resolveContinueSessionId`. */
   sessionId: string | null;
   /**
-   * `shouldOfferContinueSession` result. When false, Send is
-   * disabled with an explanation; there is no dispatch fallback.
+   * `shouldOfferContinueSession` result. When false and the audited
+   * PR is fully known, the panel offers a separate, explicit
+   * "Start new Jules session" button instead of Send.
    */
   canContinue: boolean;
   /** Parent policy gate (verified API key, vault lock). */
@@ -73,6 +77,13 @@ export interface JulesFollowUpPanelProps {
   onSent: (sent: {
     sessionId: string;
     auditedHeadSha: string;
+    snippetId: string | null;
+  }) => void;
+  /** Called after the explicit fallback started a new session. */
+  onNewSessionStarted: (started: {
+    sessionId: string;
+    sessionUrl: string | null;
+    blueprint: Blueprint;
     snippetId: string | null;
   }) => void;
 }
@@ -103,11 +114,13 @@ export function JulesFollowUpPanel({
   baseBranch,
   prNumber,
   prUrl,
+  auditedHeadSha,
   sessionId,
   canContinue,
   requireVerifiedKey,
   checkHeadFreshness,
   onSent,
+  onNewSessionStarted,
 }: JulesFollowUpPanelProps) {
   // Snippet library: built-ins are always readable;
   // vault customs require the operator's passphrase.
@@ -131,6 +144,7 @@ export function JulesFollowUpPanel({
   const [isSending, setIsSending] = React.useState(false);
   const [sendResult, setSendResult] = React.useState<{
     ok: boolean;
+    newSession?: boolean;
     sessionId?: string;
     sessionUrl?: string;
     error?: string;
@@ -240,15 +254,21 @@ export function JulesFollowUpPanel({
     );
   };
 
-  const sendDisabledReason = snippetSendBlockReason({
+  const mode = snippetSendMode({
     canContinue,
     sessionId,
+    repo,
     targetBranch,
+    baseBranch,
+    prNumber,
+    auditedHeadSha,
   });
+  const sendDisabledReason = mode.kind === 'blocked' ? mode.reason : null;
+
 
   const handleSend = async (value: string) => {
     const directive = value.trim();
-    if (!directive || isSending || sendDisabledReason) return;
+    if (!directive || isSending || mode.kind !== 'continue') return;
     setIsSending(true);
     setSendResult(null);
     try {
@@ -288,6 +308,56 @@ export function JulesFollowUpPanel({
           err instanceof Error
             ? err.message
             : 'The reply could not be sent.',
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Explicit-click fallback only: never reached from Send or selection.
+  const handleStartNewSession = async (value: string) => {
+    const directive = value.trim();
+    if (!directive || isSending || mode.kind !== 'start-new') return;
+    setIsSending(true);
+    setSendResult(null);
+    try {
+      const result = await startNewSessionTurn({
+        blueprint,
+        brief,
+        directive,
+        julesApiKey,
+        repo,
+        targetBranch,
+        baseBranch,
+        prNumber,
+        prUrl,
+        auditedHeadSha,
+        requireVerifiedKey,
+        checkHeadFreshness,
+      });
+      if (result.ok && result.sessionId && result.blueprint) {
+        if (selectedSnippetId) recordUsage(selectedSnippetId);
+        onNewSessionStarted({
+          sessionId: result.sessionId,
+          sessionUrl: result.sessionUrl ?? null,
+          blueprint: result.blueprint,
+          snippetId: selectedSnippetId,
+        });
+        setSelectedSnippetId(null);
+        setEditorValue('');
+        setSendResult({
+          ok: true,
+          newSession: true,
+          sessionId: result.sessionId,
+          sessionUrl: result.sessionUrl ?? undefined,
+        });
+      } else {
+        setSendResult({ ok: false, error: result.error });
+      }
+    } catch (err: unknown) {
+      setSendResult({
+        ok: false,
+        error: err instanceof Error ? err.message : 'The session could not be started.',
       });
     } finally {
       setIsSending(false);
@@ -342,19 +412,16 @@ export function JulesFollowUpPanel({
         )}
       </div>
 
-      <p className="text-[11px] text-slate-400">
-        Replies in the current Jules session
-        {sessionId ? (
-          <>
-            {' '}
-            <code className="font-mono text-slate-300">{sessionId}</code>
-          </>
-        ) : null}{' '}
-        on <code className="font-mono text-slate-300">{targetBranch}</code>
-        {prNumber !== undefined ? ` (PR #${prNumber}` : ''}
-        {prNumber !== undefined && baseBranch ? ` → ${baseBranch}` : ''}
-        {prNumber !== undefined ? ')' : ''}. No new session is started.
-      </p>
+      {mode.kind === 'continue' && (
+        <p className="text-[11px] text-slate-400">
+          Replies in the current Jules session{' '}
+          <code className="font-mono text-slate-300">{sessionId}</code> on{' '}
+          <code className="font-mono text-slate-300">{targetBranch}</code>
+          {prNumber !== undefined ? ` (PR #${prNumber}` : ''}
+          {prNumber !== undefined && baseBranch ? ` → ${baseBranch}` : ''}
+          {prNumber !== undefined ? ')' : ''}. No new session is started.
+        </p>
+      )}
 
       {unlockError && (
         <p className="text-[11px] text-rose-300">{unlockError}</p>
@@ -375,9 +442,29 @@ export function JulesFollowUpPanel({
         }}
         onSend={(value) => void handleSend(value)}
         isSending={isSending}
-        disabled={Boolean(sendDisabledReason)}
+        disabled={mode.kind !== 'continue'}
+        allowEditWhenDisabled={mode.kind === 'start-new'}
         placeholder="Reply to Jules, or pick a suggested snippet above…"
       />
+
+      {mode.kind === 'start-new' && (
+        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-950/30 p-2.5">
+          <p className="text-[11px] text-amber-200">
+            The previous session has ended. This starts a new session on{' '}
+            <code className="font-mono">{targetBranch}</code>.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void handleStartNewSession(editorValue)}
+            disabled={isSending || !editorValue.trim()}
+            className="h-7 text-[11px] border-amber-500/60 text-amber-100 hover:bg-amber-500/10"
+          >
+            {isSending ? 'Starting…' : 'Start new Jules session'}
+          </Button>
+        </div>
+      )}
 
       {sendDisabledReason && (
         <p className="text-[11px] text-amber-300">{sendDisabledReason}</p>
@@ -385,7 +472,9 @@ export function JulesFollowUpPanel({
 
       {sendResult && sendResult.ok && (
         <p className="text-[11px] text-emerald-300">
-          Sent to the current Jules session
+          {sendResult.newSession
+            ? 'Started a new Jules session'
+            : 'Sent to the current Jules session'}
           {sendResult.sessionUrl ? (
             <>
               {' — '}

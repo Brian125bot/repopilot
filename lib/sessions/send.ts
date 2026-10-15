@@ -1,4 +1,7 @@
-import { compileContinuationPrompt } from '@/lib/outcome-memory';
+import {
+  applyNewRemediationSession,
+  compileContinuationPrompt,
+} from '@/lib/outcome-memory';
 import type { Blueprint, FailureBrief } from '@/types';
 
 /**
@@ -21,10 +24,22 @@ import type { Blueprint, FailureBrief } from '@/types';
  * `blueprint.branchName`, because a vault blueprint matched by repo may
  * point at a different branch.
  *
+ * Fallback (owner decision, 2026-10-15): when the session has ended
+ * (`shouldOfferContinueSession` false) but the audited PR is fully known,
+ * the panel offers a separate, clearly labelled "Start new Jules session"
+ * button. Only that explicit click calls `startNewSessionTurn`, which
+ * POSTs `/api/jules/dispatch` with the same body as the scorecard's
+ * remediation dispatch (`buildRemediationDispatchBody`) and returns the
+ * blueprint rebound via `bindNewRemediationSession`, exactly as that path
+ * does. `sendInteractiveTurn` itself never dispatches.
+ *
  * Operator-in-the-loop: this handler only runs when the operator clicks
  * Send in `ResponseEditor`. There is no auto-send path anywhere in the
  * snippet flow.
  */
+
+/** Endpoint for the explicit start-new-session fallback only. */
+export const NEW_SESSION_ENDPOINT = '/api/jules/dispatch';
 
 /** The existing follow-up endpoint for the current session. */
 export const INTERACTIVE_TURN_ENDPOINT = '/api/jules/message';
@@ -254,6 +269,278 @@ export async function sendInteractiveTurn(
     status: response.status,
     sessionId: (data.sessionId || '').trim() || sessionId,
     sessionUrl: data.sessionUrl,
+    compiledPrompt,
+    auditedHeadSha,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Start-new-session fallback (explicit click only)
+// ---------------------------------------------------------------------------
+
+export type SnippetSendMode =
+  | { kind: 'continue' }
+  | { kind: 'start-new' }
+  | { kind: 'blocked'; reason: string };
+
+export interface SnippetSendModeInput {
+  canContinue: boolean;
+  sessionId: string | null;
+  repo: string;
+  targetBranch: string;
+  baseBranch?: string;
+  prNumber?: number;
+  auditedHeadSha?: string | null;
+}
+
+/** True when the audited repo, branches, PR number and SHA are all known. */
+export function hasAuditedPrMetadata(input: SnippetSendModeInput): boolean {
+  return Boolean(
+    (input.repo || '').trim() &&
+      (input.targetBranch || '').trim() &&
+      (input.baseBranch || '').trim() &&
+      typeof input.prNumber === 'number' &&
+      Number.isFinite(input.prNumber) &&
+      (input.auditedHeadSha || '').trim()
+  );
+}
+
+/**
+ * Which snippet action the panel offers: reply in the live session,
+ * offer the explicit "Start new Jules session" button, or nothing.
+ * Missing PR metadata always blocks with the existing message.
+ */
+export function snippetSendMode(input: SnippetSendModeInput): SnippetSendMode {
+  if (!(input.targetBranch || '').trim()) {
+    return { kind: 'blocked', reason: MISSING_PR_METADATA_MESSAGE };
+  }
+  if (input.canContinue && (input.sessionId || '').trim()) {
+    return { kind: 'continue' };
+  }
+  if (hasAuditedPrMetadata(input)) return { kind: 'start-new' };
+  return { kind: 'blocked', reason: MISSING_PR_METADATA_MESSAGE };
+}
+
+export interface RemediationDispatchInput {
+  repo: string;
+  baseBranch: string;
+  targetBranch: string;
+  auditedHeadSha: string;
+  currentHeadSha: string;
+  prNumber?: number;
+  prUrl?: string;
+  customPrompt: string;
+  fileBoundaries?: readonly string[];
+  criteria?: ReadonlyArray<{ id: string; text: string; category?: string }>;
+}
+
+/**
+ * Pure: the `/api/jules/dispatch` body for a remediation session on the
+ * audited PR. Shared by the scorecard's remediation dispatch and the
+ * snippet start-new-session fallback so the two cannot drift. The
+ * audited branch is both `branchName` and `startingBranch`.
+ */
+export function buildRemediationDispatchBody(
+  input: RemediationDispatchInput
+): Record<string, unknown> {
+  return {
+    repo: input.repo,
+    baseBranch: input.baseBranch,
+    branchName: input.targetBranch,
+    startingBranch: input.targetBranch, // Jules commits only on the audited branch.
+    isRemediation: true,
+    auditedHeadSha: input.auditedHeadSha,
+    currentHeadSha: input.currentHeadSha,
+    prNumber: input.prNumber,
+    prUrl: input.prUrl,
+    customPrompt: input.customPrompt,
+    objective: `Remediate PR #${input.prNumber ?? ''} on branch "${input.targetBranch}": address audit blockers`,
+    fileBoundaries: [...(input.fileBoundaries ?? [])],
+    criteria: (input.criteria ?? []).map((c) => ({ id: c.id, text: c.text, category: c.category })),
+  };
+}
+
+/** Shape of the dispatch route's success body that the bind step reads. */
+export interface RemediationDispatchResponse {
+  success?: boolean;
+  sessionId?: string;
+  sessionUrl?: string;
+  sessionState?: string;
+  targetBranch?: string;
+  apiStatus?: string;
+  warningMessage?: string;
+  julesApiResponse?: { url?: string };
+  blueprint?: Blueprint;
+  error?: string;
+}
+
+/** Session URL as the scorecard derives it from a dispatch response. */
+export function deriveDispatchSessionUrl(data: RemediationDispatchResponse): string | null {
+  return (
+    data.julesApiResponse?.url ||
+    (data.sessionId
+      ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, '')}`
+      : null)
+  );
+}
+
+/**
+ * Rebinds the audited blueprint to the session a remediation dispatch
+ * created (replacing the dead session identity) and stamps the prompt,
+ * exactly as the scorecard remediation dispatch does.
+ */
+export function bindNewRemediationSession(
+  blueprint: Blueprint,
+  data: RemediationDispatchResponse,
+  compiledPrompt: string
+): Blueprint {
+  return {
+    ...applyNewRemediationSession(blueprint, {
+      sessionId: data.sessionId || '',
+      sessionUrl: data.sessionUrl || deriveDispatchSessionUrl(data),
+      sessionState: data.sessionState || data.blueprint?.sessionState,
+    }),
+    compiledPrompt,
+  };
+}
+
+export interface NewSessionTurnParams {
+  blueprint: Blueprint;
+  brief: FailureBrief;
+  directive: string;
+  julesApiKey: string;
+  repo: string;
+  targetBranch: string;
+  baseBranch?: string;
+  prNumber?: number;
+  prUrl?: string;
+  /** Audited SHA known to the scorecard; required for metadata check. */
+  auditedHeadSha?: string | null;
+  requireVerifiedKey: () => boolean;
+  checkHeadFreshness: () => Promise<HeadFreshnessResult>;
+  fetchFn?: typeof fetch;
+}
+
+export interface NewSessionTurnResult {
+  ok: boolean;
+  status: number;
+  sessionId?: string;
+  sessionUrl?: string | null;
+  sessionState?: string;
+  /** Blueprint rebound to the new session (for onSaveBlueprint). */
+  blueprint?: Blueprint;
+  compiledPrompt?: string;
+  auditedHeadSha?: string;
+  error?: string;
+}
+
+/**
+ * Explicit-click fallback: starts ONE new remediation session on the
+ * audited PR branch. Gate order: PR metadata known, then the key gate,
+ * then the COR-40 freshness gate. Fail-closed throughout.
+ */
+export async function startNewSessionTurn(
+  params: NewSessionTurnParams
+): Promise<NewSessionTurnResult> {
+  const directive = params.directive.trim();
+  if (!directive) {
+    return { ok: false, status: 400, error: 'Directive is required to start a Jules session.' };
+  }
+  if (
+    !hasAuditedPrMetadata({
+      canContinue: false,
+      sessionId: null,
+      repo: params.repo,
+      targetBranch: params.targetBranch,
+      baseBranch: params.baseBranch,
+      prNumber: params.prNumber,
+      auditedHeadSha: params.auditedHeadSha,
+    })
+  ) {
+    return { ok: false, status: 409, error: MISSING_PR_METADATA_MESSAGE };
+  }
+  if (!params.requireVerifiedKey()) {
+    return { ok: false, status: 401, error: 'Verify your Jules API key before sending.' };
+  }
+  const freshness = await params.checkHeadFreshness();
+  if (!freshness.ok) return { ok: false, status: 409, error: freshness.error };
+  const auditedHeadSha = (freshness.audited || '').trim();
+  const currentHeadSha = (freshness.live || '').trim();
+  if (!auditedHeadSha) {
+    return { ok: false, status: 400, error: 'Remediation blocked — re-evaluate to lock audited head SHA.' };
+  }
+  if (!currentHeadSha || currentHeadSha.toLowerCase() !== auditedHeadSha.toLowerCase()) {
+    return { ok: false, status: 409, error: 'Head moved since audit — re-evaluate.' };
+  }
+
+  let compiledPrompt: string;
+  try {
+    compiledPrompt = compileInteractiveTurnPrompt({
+      blueprint: params.blueprint,
+      brief: params.brief,
+      directive,
+      targetBranch: params.targetBranch,
+      auditedHeadSha,
+    });
+  } catch (compileError) {
+    return {
+      ok: false,
+      status: 400,
+      error: compileError instanceof Error ? compileError.message : 'The prompt could not be compiled.',
+    };
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (params.julesApiKey) headers['x-jules-api-key'] = params.julesApiKey;
+
+  let response: Response;
+  try {
+    response = await (params.fetchFn ?? fetch)(NEW_SESSION_ENDPOINT, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(
+        buildRemediationDispatchBody({
+          repo: params.repo,
+          baseBranch: params.baseBranch as string,
+          targetBranch: params.targetBranch,
+          auditedHeadSha,
+          currentHeadSha,
+          prNumber: params.prNumber,
+          prUrl: params.prUrl,
+          customPrompt: compiledPrompt,
+          fileBoundaries: params.blueprint.fileBoundaries ?? [],
+          criteria: params.blueprint.criteria ?? [],
+        })
+      ),
+    });
+  } catch (networkError) {
+    return {
+      ok: false,
+      status: 502,
+      error: networkError instanceof Error ? networkError.message : 'Network error starting a Jules session.',
+    };
+  }
+
+  const data = (await response.json().catch(() => ({}))) as RemediationDispatchResponse;
+  if (!response.ok || data.success === false) {
+    return {
+      ok: false,
+      status: response.status,
+      error: data.error || `Failed to start a Jules session (HTTP ${response.status}).`,
+    };
+  }
+  const sessionId = (data.sessionId || '').trim();
+  if (!sessionId) {
+    return { ok: false, status: 502, error: 'The dispatch returned no session id.' };
+  }
+  const bound = bindNewRemediationSession(params.blueprint, { ...data, sessionId }, compiledPrompt);
+  return {
+    ok: true,
+    status: response.status,
+    sessionId,
+    sessionUrl: bound.sessionUrl ?? null,
+    sessionState: data.sessionState,
+    blueprint: bound,
     compiledPrompt,
     auditedHeadSha,
   };

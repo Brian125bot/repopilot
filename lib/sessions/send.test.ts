@@ -5,12 +5,23 @@ import {
   MISSING_PR_METADATA_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
   snippetSendBlockReason,
+  snippetSendMode,
+  startNewSessionTurn,
+  buildRemediationDispatchBody,
+  bindNewRemediationSession,
+  deriveDispatchSessionUrl,
+  NEW_SESSION_ENDPOINT,
+  type NewSessionTurnParams,
   buildInteractiveTurnBody,
   compileInteractiveTurnPrompt,
   sendInteractiveTurn,
   type InteractiveTurnParams,
 } from './send';
 import type { Blueprint, FailureBrief } from '@/types';
+import {
+  resolveContinueSessionId,
+  shouldOfferContinueSession,
+} from '@/lib/outcome-memory';
 
 const STAMP = '2026-09-01T12:00:00.000Z';
 const AUDITED_SHA = 'abc123def456789';
@@ -365,5 +376,204 @@ describe('snippetSendBlockReason', () => {
   });
   it('blocks when PR metadata is missing', () => {
     expect(snippetSendBlockReason({ ...ok, targetBranch: '' })).toBe(MISSING_PR_METADATA_MESSAGE);
+  });
+});
+
+describe('snippetSendMode', () => {
+  const full = {
+    canContinue: true,
+    sessionId: SESSION_ID,
+    repo: 'acme-corp/api-gateway',
+    targetBranch: AUDITED_BRANCH,
+    baseBranch: 'main',
+    prNumber: 42,
+    auditedHeadSha: AUDITED_SHA,
+  };
+  it('continues a live session', () => {
+    expect(snippetSendMode(full)).toEqual({ kind: 'continue' });
+  });
+  it('offers start-new when the session ended and the PR is fully known', () => {
+    expect(snippetSendMode({ ...full, canContinue: false })).toEqual({ kind: 'start-new' });
+    expect(snippetSendMode({ ...full, sessionId: null })).toEqual({ kind: 'start-new' });
+  });
+  it('blocks with the existing message when PR metadata is missing', () => {
+    const blocked = { kind: 'blocked', reason: MISSING_PR_METADATA_MESSAGE };
+    expect(snippetSendMode({ ...full, targetBranch: '' })).toEqual(blocked);
+    for (const missing of [{ repo: '' }, { baseBranch: undefined }, { prNumber: undefined }, { auditedHeadSha: null }]) {
+      expect(snippetSendMode({ ...full, canContinue: false, ...missing })).toEqual(blocked);
+    }
+  });
+});
+
+describe('buildRemediationDispatchBody', () => {
+  it('uses the audited branch as branchName and startingBranch', () => {
+    const body = buildRemediationDispatchBody({
+      repo: 'acme-corp/api-gateway',
+      baseBranch: 'main',
+      targetBranch: AUDITED_BRANCH,
+      auditedHeadSha: AUDITED_SHA,
+      currentHeadSha: AUDITED_SHA,
+      prNumber: 42,
+      customPrompt: 'p',
+    });
+    expect(body).toMatchObject({
+      repo: 'acme-corp/api-gateway',
+      baseBranch: 'main',
+      branchName: AUDITED_BRANCH,
+      startingBranch: AUDITED_BRANCH,
+      isRemediation: true,
+      auditedHeadSha: AUDITED_SHA,
+      prNumber: 42,
+    });
+  });
+  it('derives the session URL like the scorecard', () => {
+    expect(deriveDispatchSessionUrl({ sessionId: 'sessions/x1' })).toBe('https://jules.google.com/session/x1');
+    expect(deriveDispatchSessionUrl({ julesApiResponse: { url: 'u' }, sessionId: 'sessions/x1' })).toBe('u');
+    expect(deriveDispatchSessionUrl({})).toBeNull();
+  });
+});
+
+describe('startNewSessionTurn (explicit fallback)', () => {
+  function newParams(overrides: Partial<NewSessionTurnParams> = {}): NewSessionTurnParams {
+    return {
+      blueprint: blueprint({ sessionState: 'COMPLETED', branchName: 'jules/stale-other-branch' }),
+      brief: brief(),
+      directive: 'Run the relevant tests',
+      julesApiKey: 'jules-test-key',
+      repo: 'acme-corp/api-gateway',
+      targetBranch: AUDITED_BRANCH,
+      baseBranch: 'main',
+      prNumber: 42,
+      prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+      auditedHeadSha: AUDITED_SHA,
+      requireVerifiedKey: () => true,
+      checkHeadFreshness: async () => ({ ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }),
+      ...overrides,
+    };
+  }
+
+  it('dispatches exactly once on the audited branch even when blueprint.branchName differs', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true, sessionId: 'sessions/new456', sessionState: 'QUEUED' } });
+    const result = await startNewSessionTurn(newParams({ fetchFn }));
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(NEW_SESSION_ENDPOINT);
+    expect(calls[0].url).toBe('/api/jules/dispatch');
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers['x-jules-api-key']).toBe('jules-test-key');
+    const sent = JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+    expect(sent.repo).toBe('acme-corp/api-gateway');
+    expect(sent.branchName).toBe(AUDITED_BRANCH);
+    expect(sent.startingBranch).toBe(AUDITED_BRANCH);
+    expect(sent.baseBranch).toBe('main');
+    expect(sent.prNumber).toBe(42);
+    expect(sent.isRemediation).toBe(true);
+    expect(sent.auditedHeadSha).toBe(AUDITED_SHA);
+    expect(sent.currentHeadSha).toBe(AUDITED_SHA);
+    expect(JSON.stringify(sent)).not.toContain('jules/stale-other-branch');
+    expect(JSON.stringify(sent)).not.toContain('jules-test-key');
+  });
+
+  it('runs metadata, then key, then freshness gates', async () => {
+    const order: string[] = [];
+    const { fetchFn } = mockFetch({ body: { success: true, sessionId: 'sessions/new456' } });
+    await startNewSessionTurn(
+      newParams({
+        fetchFn,
+        requireVerifiedKey: () => { order.push('key'); return true; },
+        checkHeadFreshness: async () => { order.push('fresh'); return { ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }; },
+      })
+    );
+    expect(order).toEqual(['key', 'fresh']);
+    const order2: string[] = [];
+    await startNewSessionTurn(
+      newParams({ fetchFn, prNumber: undefined, requireVerifiedKey: () => { order2.push('key'); return true; } })
+    );
+    expect(order2).toEqual([]);
+  });
+
+  it('refuses on a moved or missing head with no fetch', async () => {
+    const cases: Array<NewSessionTurnParams['checkHeadFreshness']> = [
+      async () => ({ ok: false, error: 'Head moved since audit — re-evaluate.' }),
+      async () => ({ ok: true, audited: AUDITED_SHA, live: null }),
+      async () => ({ ok: true, audited: AUDITED_SHA, live: 'fffffff0000000' }),
+      async () => ({ ok: true, audited: '', live: AUDITED_SHA }),
+    ];
+    for (const checkHeadFreshness of cases) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await startNewSessionTurn(newParams({ fetchFn, checkHeadFreshness }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/re-evaluate/);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('refuses on missing metadata or a failed key gate with no fetch', async () => {
+    for (const o of [
+      { targetBranch: '' }, { repo: '' }, { baseBranch: undefined }, { prNumber: undefined }, { auditedHeadSha: null },
+    ] as Array<Partial<NewSessionTurnParams>>) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await startNewSessionTurn(newParams({ fetchFn, ...o }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(MISSING_PR_METADATA_MESSAGE);
+      expect(calls).toHaveLength(0);
+    }
+    const { fetchFn, calls } = mockFetch({});
+    const result = await startNewSessionTurn(newParams({ fetchFn, requireVerifiedKey: () => false }));
+    expect(result.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fails closed on a dispatch error or a missing session id', async () => {
+    for (const r of [{ status: 500, body: { error: 'boom' } }, { status: 200, body: { success: true } }]) {
+      const { fetchFn } = mockFetch(r);
+      const result = await startNewSessionTurn(newParams({ fetchFn }));
+      expect(result.ok).toBe(false);
+      expect(result.blueprint).toBeUndefined();
+    }
+  });
+
+  it('binds the new session, and the next send continues it via /api/jules/message', async () => {
+    const dispatch = mockFetch({ body: { success: true, sessionId: 'sessions/new456', sessionState: 'QUEUED' } });
+    const started = await startNewSessionTurn(newParams({ fetchFn: dispatch.fetchFn }));
+    expect(started.ok).toBe(true);
+    const bound = started.blueprint!;
+    expect(bound.sessionId).toBe('sessions/new456');
+    expect(bound.sessionUrl).toBe('https://jules.google.com/session/new456');
+    expect(bound.isRemediation).toBe(true);
+    expect(bound.compiledPrompt).toBe(started.compiledPrompt);
+
+    // Scorecard passes the new id as recentSessionId (dispatchResult).
+    const recent = started.sessionId!;
+    const canContinue = shouldOfferContinueSession('NEEDS_REVISION', bound, recent);
+    const sessionId = resolveContinueSessionId(bound, recent);
+    expect(canContinue).toBe(true);
+    expect(sessionId).toBe('sessions/new456');
+    expect(
+      snippetSendMode({ canContinue, sessionId, repo: 'acme-corp/api-gateway', targetBranch: AUDITED_BRANCH, baseBranch: 'main', prNumber: 42, auditedHeadSha: AUDITED_SHA })
+    ).toEqual({ kind: 'continue' });
+
+    const reply = mockFetch({ body: { success: true } });
+    const next = await sendInteractiveTurn(params({ fetchFn: reply.fetchFn, blueprint: bound, sessionId, canContinue }));
+    expect(next.ok).toBe(true);
+    expect(reply.calls).toHaveLength(1);
+    expect(reply.calls[0].url).toBe('/api/jules/message');
+    expect(JSON.parse(String(reply.calls[0].init.body)).sessionId).toBe('sessions/new456');
+  });
+
+  it('bindNewRemediationSession replaces the dead session identity', () => {
+    const bound = bindNewRemediationSession(blueprint({ sessionState: 'COMPLETED' }), { sessionId: 'sessions/z9' }, 'prompt');
+    expect(bound.sessionId).toBe('sessions/z9');
+    expect(bound.sessionState).toBeUndefined();
+    expect(bound.compiledPrompt).toBe('prompt');
+  });
+});
+
+describe('live path never dispatches', () => {
+  it('sendInteractiveTurn only ever hits /api/jules/message', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true } });
+    await sendInteractiveTurn(params({ fetchFn }));
+    await sendInteractiveTurn(params({ fetchFn, canContinue: false }));
+    expect(calls.map((c) => c.url)).toEqual(['/api/jules/message']);
   });
 });
