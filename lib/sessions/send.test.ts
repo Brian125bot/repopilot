@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   DIRECTIVE_SECTION_HEADING,
   INTERACTIVE_TURN_ENDPOINT,
+  MISSING_PR_METADATA_MESSAGE,
   NO_ACTIVE_SESSION_MESSAGE,
+  snippetSendBlockReason,
   buildInteractiveTurnBody,
   compileInteractiveTurnPrompt,
   sendInteractiveTurn,
@@ -299,6 +301,16 @@ describe('sendInteractiveTurn', () => {
     }
   });
 
+  it('refuses when PR metadata is missing (no audited branch), with no fallback', async () => {
+    for (const targetBranch of ['', '   ']) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await sendInteractiveTurn(params({ fetchFn, targetBranch }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(MISSING_PR_METADATA_MESSAGE);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
   it('refuses an empty directive without fetching', async () => {
     const { fetchFn, calls } = mockFetch({});
     const result = await sendInteractiveTurn(params({ directive: '   ', fetchFn }));
@@ -339,5 +351,19 @@ describe('sendInteractiveTurn', () => {
     const result = await sendInteractiveTurn(params({ fetchFn }));
     expect(result.status).toBe(502);
     expect(result.error).toBe('fetch failed');
+  });
+});
+
+describe('snippetSendBlockReason', () => {
+  const ok = { canContinue: true, sessionId: SESSION_ID, targetBranch: AUDITED_BRANCH };
+  it('allows a live session with an audited branch', () => {
+    expect(snippetSendBlockReason(ok)).toBeNull();
+  });
+  it('blocks without a live session', () => {
+    expect(snippetSendBlockReason({ ...ok, canContinue: false })).toBe(NO_ACTIVE_SESSION_MESSAGE);
+    expect(snippetSendBlockReason({ ...ok, sessionId: null })).toBe(NO_ACTIVE_SESSION_MESSAGE);
+  });
+  it('blocks when PR metadata is missing', () => {
+    expect(snippetSendBlockReason({ ...ok, targetBranch: '' })).toBe(MISSING_PR_METADATA_MESSAGE);
   });
 });

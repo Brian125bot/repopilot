@@ -37,6 +37,27 @@ export const DIRECTIVE_SECTION_HEADING =
 export const NO_ACTIVE_SESSION_MESSAGE =
   'No active Jules session. Start a remediation from the scorecard first.';
 
+/** Shown when PR metadata (the audited head branch) is missing. */
+export const MISSING_PR_METADATA_MESSAGE =
+  'PR metadata is missing, so the audited branch is unknown. Re-evaluate the PR before sending.';
+
+/**
+ * Why snippet Send is disabled, or null when it may send. No live
+ * session or no audited PR head branch both block; neither falls back
+ * to dispatch or to `blueprint.branchName`.
+ */
+export function snippetSendBlockReason(input: {
+  canContinue: boolean;
+  sessionId: string | null;
+  targetBranch: string;
+}): string | null {
+  if (!input.canContinue || !(input.sessionId || '').trim()) {
+    return NO_ACTIVE_SESSION_MESSAGE;
+  }
+  if (!(input.targetBranch || '').trim()) return MISSING_PR_METADATA_MESSAGE;
+  return null;
+}
+
 export type HeadFreshnessResult =
   | { ok: true; audited: string; live: string | null }
   | { ok: false; error: string };
@@ -149,8 +170,9 @@ export async function sendInteractiveTurn(
     return { ok: false, status: 400, error: 'Directive is required to reply to Jules.' };
   }
   const sessionId = (params.sessionId || '').trim();
-  if (!params.canContinue || !sessionId) {
-    return { ok: false, status: 409, error: NO_ACTIVE_SESSION_MESSAGE };
+  const blocked = snippetSendBlockReason(params);
+  if (blocked) {
+    return { ok: false, status: 409, error: blocked };
   }
   if (!params.requireVerifiedKey()) {
     return { ok: false, status: 401, error: 'Verify your Jules API key before sending.' };

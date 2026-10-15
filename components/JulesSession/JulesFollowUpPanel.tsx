@@ -18,8 +18,8 @@ import {
   inferSessionStage,
 } from '@/lib/snippets/state';
 import {
-  NO_ACTIVE_SESSION_MESSAGE,
   sendInteractiveTurn,
+  snippetSendBlockReason,
   type HeadFreshnessResult,
 } from '@/lib/sessions/send';
 import type {
@@ -47,7 +47,10 @@ export interface JulesFollowUpPanelProps {
   julesApiKey: string;
   /** Audited PR repo (`owner/name`), the scorecard's `cleanRepo`. */
   repo: string;
-  /** Audited PR head branch, the scorecard's `auditedBranch`. */
+  /**
+   * Audited PR head branch (`prMetadata.headBranch`). Empty when PR
+   * metadata is missing, which disables Send.
+   */
   targetBranch: string;
   /** Audited PR base branch (`prMetadata.baseBranch`). */
   baseBranch?: string;
@@ -115,14 +118,6 @@ export function JulesFollowUpPanel({
   const [isUnlocked, setIsUnlocked] = React.useState(false);
   const [unlockError, setUnlockError] = React.useState<string | null>(
     null
-  );
-  // Unlocked vault handle, kept so a send can persist the
-  // custom snippet's usageCount. The passphrase itself is
-  // cleared from state as soon as the unlock succeeds.
-  const storeRef = React.useRef<SteeringStore | null>(null);
-  const builtinIds = React.useMemo(
-    () => new Set(getBuiltinSnippets().map((snippet) => snippet.id)),
-    []
   );
   const [repoProfile, setRepoProfile] = React.useState<
     RepoProfile | undefined
@@ -211,12 +206,10 @@ export function JulesFollowUpPanel({
       // profile is optional and simply omitted when
       // absent (fail-soft).
       setRepoProfile((await store.getRepoProfile(repo)) ?? undefined);
-      storeRef.current = store;
       setIsUnlocked(true);
       // Do not keep the vault passphrase in React state.
       setPassphrase('');
     } catch (err: unknown) {
-      storeRef.current = null;
       setIsUnlocked(false);
       setRepoProfile(undefined);
       setSnippets(getBuiltinSnippets());
@@ -236,24 +229,22 @@ export function JulesFollowUpPanel({
     setSendResult(null);
   };
 
+  // In-memory only: the send path never writes to the vault.
   const recordUsage = (snippetId: string) => {
-    const used = snippets.find((snippet) => snippet.id === snippetId);
-    if (!used) return;
-    const bumped: Snippet = { ...used, usageCount: (used.usageCount ?? 0) + 1 };
     setSnippets((current) =>
-      current.map((snippet) => (snippet.id === snippetId ? bumped : snippet))
+      current.map((snippet) =>
+        snippet.id === snippetId
+          ? { ...snippet, usageCount: (snippet.usageCount ?? 0) + 1 }
+          : snippet
+      )
     );
-    // Persist only vault customs; built-ins are read-only and
-    // their count lives for this panel session.
-    const store = storeRef.current;
-    if (store && !builtinIds.has(snippetId)) {
-      void store.saveSnippet(bumped).catch(() => undefined);
-    }
   };
 
-  const sendDisabledReason = !canContinue || !sessionId
-    ? NO_ACTIVE_SESSION_MESSAGE
-    : null;
+  const sendDisabledReason = snippetSendBlockReason({
+    canContinue,
+    sessionId,
+    targetBranch,
+  });
 
   const handleSend = async (value: string) => {
     const directive = value.trim();

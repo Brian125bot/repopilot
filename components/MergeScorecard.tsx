@@ -1208,7 +1208,9 @@ export function MergeScorecard({
                     latestMessage={followUpLatestMessage}
                     julesApiKey={julesKey}
                     repo={cleanRepo}
-                    targetBranch={auditedBranch}
+                    // PR head branch only: no blueprint.branchName fallback,
+                    // so missing PR metadata disables Send.
+                    targetBranch={prMetadata?.headBranch?.trim() || ''}
                     baseBranch={prMetadata?.baseBranch}
                     prNumber={prMetadata?.number}
                     prUrl={copyableUrl}
