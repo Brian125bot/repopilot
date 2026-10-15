@@ -22,6 +22,12 @@ export interface OutcomeLogRow {
   score?: number;
   unauthorizedCount?: number;
   unmetIds?: string[];
+  /**
+   * True when this turn drew on prior session memory (an earlier brief,
+   * outcome row or session context). It does NOT mean the turn ran in
+   * the same Jules session; `turn` ('continuation' vs 'new-from-brief')
+   * carries that.
+   */
   usedPriorSession: boolean;
   at: string;
   /** COR-40: PR head SHA locked at Evaluate time. Null blocks remediation. */
@@ -283,6 +289,7 @@ export function applyNewRemediationSession(
 export function buildOutcomeRow(input: {
   blueprint: Pick<Blueprint, 'blueprintId' | 'repo' | 'sessionId' | 'auditedHeadSha'>;
   turn: OutcomeTurn;
+  /** See OutcomeLogRow.usedPriorSession: prior memory, not same session. */
   usedPriorSession: boolean;
   verdict?: OutcomeLogRow['verdict'];
   score?: number;

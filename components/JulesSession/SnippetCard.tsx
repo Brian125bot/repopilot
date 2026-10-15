@@ -62,8 +62,8 @@ export function SnippetCard({
         aria-pressed={isSelected}
         className={`block w-full rounded-xl border p-3 text-left transition-colors ${
           isSelected
-            ? 'border-indigo-500 bg-indigo-50/60'
-            : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/30'
+            ? 'border-indigo-400 bg-indigo-500/15'
+            : 'border-white/10 bg-black/40 hover:border-indigo-400/60 hover:bg-white/5'
         }`}
       >
         {/* Phrasing content only (span, not div/p) so the
@@ -78,10 +78,10 @@ export function SnippetCard({
         >
           {snippet.category}
         </span>
-        <span className="mt-1.5 block text-xs font-semibold text-slate-800">
+        <span className="mt-1.5 block text-xs font-semibold text-slate-100">
           {snippet.title}
         </span>
-        <span className="mt-1 block text-[11px] leading-relaxed text-slate-500">
+        <span className="mt-1 block text-[11px] leading-relaxed text-slate-400">
           {preview(snippet.content)}
         </span>
       </button>
@@ -95,23 +95,23 @@ export function SnippetCard({
             aria-label={`Why this snippet is suggested: ${snippet.title}`}
             aria-expanded={whyOpen}
             onClick={() => setWhyOpen((open) => !open)}
-            className="absolute right-1.5 top-1.5 h-6 w-6 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"
+            className="absolute right-1.5 top-1.5 h-6 w-6 text-slate-400 hover:bg-white/10 hover:text-indigo-300"
           >
             <HelpCircle className="h-3.5 w-3.5" />
           </Button>
           {whyOpen && (
             <div
               role="tooltip"
-              className="absolute right-0 top-8 z-10 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-lg"
+              className="absolute right-0 top-8 z-10 w-72 rounded-lg border border-slate-700 bg-slate-900 p-3 shadow-lg"
             >
-              <p className="text-[11px] font-semibold text-slate-700">
+              <p className="text-[11px] font-semibold text-slate-200">
                 Why this?
               </p>
               <ul className="mt-1.5 space-y-1.5">
                 {citations.map((citation) => (
                   <li
                     key={`${citation.kind}-${citation.text}`}
-                    className="flex gap-1.5 text-[11px] leading-snug text-slate-600"
+                    className="flex gap-1.5 text-[11px] leading-snug text-slate-300"
                   >
                     <Quote className="mt-0.5 h-3 w-3 shrink-0 text-indigo-400" />
                     <span>{citation.text}</span>

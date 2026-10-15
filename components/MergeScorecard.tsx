@@ -260,7 +260,6 @@ export function MergeScorecard({
     sessionUrl?: string | null;
     error?: string;
   } | null>(null);
-  const followUpSessionId = dispatchResult?.sessionId || blueprint?.sessionId || null;
 
   // Continue-with-brief: primary blocked-audit action (POST /api/jules/message only).
   const [isContinuing, setIsContinuing] = React.useState(false);
@@ -300,6 +299,9 @@ export function MergeScorecard({
   const continueSessionId = blueprint
     ? resolveContinueSessionId(blueprint, recentSessionId)
     : null;
+  // Follow-up box and snippet Send share the continue resolver, so they
+  // can never point at a stale session.
+  const followUpSessionId = continueSessionId;
   const continueFailed = Boolean(continueResult && !continueResult.success);
   // Blocked audit without any session to continue: the only Jules action is a
   // fresh brief-backed session (same continuation prompt via existing dispatch).
@@ -1197,23 +1199,30 @@ export function MergeScorecard({
                 {/* COR-59: snippet-assisted interactive turn,
                     directly beneath the session output. Selecting
                     a card only populates the editor — the explicit
-                    Send button dispatches through the COR-39
-                    continuation path. */}
+                    Send button replies in the current session via
+                    /api/jules/message. */}
                 {blueprint && continueBrief && verdictForGate !== 'READY_TO_MERGE' && (
                   <JulesFollowUpPanel
                     blueprint={blueprint}
                     brief={continueBrief}
                     latestMessage={followUpLatestMessage}
                     julesApiKey={julesKey}
-                    currentHeadSha={liveHeadSha || auditedHeadSha || ''}
+                    repo={cleanRepo}
+                    targetBranch={auditedBranch}
+                    baseBranch={prMetadata?.baseBranch}
+                    prNumber={prMetadata?.number}
+                    prUrl={copyableUrl}
+                    sessionId={continueSessionId}
+                    canContinue={canOfferContinue}
+                    requireVerifiedKey={requireVerifiedKey}
                     checkHeadFreshness={checkHeadFreshness}
-                    canSend={requireVerifiedKey}
-                    onContinued={(rebound) => {
-                      onSaveBlueprint?.(rebound);
+                    onSent={({ sessionId, auditedHeadSha: lockedSha }) => {
+                      // Same session: record a continuation turn and
+                      // leave the blueprint binding untouched.
                       recordOutcomeRow(
                         buildOutcomeRow({
-                          blueprint: rebound,
-                          turn: 'new-from-brief',
+                          blueprint: { ...blueprint, sessionId, auditedHeadSha: lockedSha },
+                          turn: 'continuation',
                           usedPriorSession: true,
                         })
                       );
