@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_SUGGESTIONS,
   MIN_SUGGESTION_SCORE,
+  RELEVANCE_SATURATION_HITS,
   RELEVANCE_WEIGHT,
   TAG_MATCH_WEIGHT,
   TITLE_MATCH_WEIGHT,
@@ -71,20 +72,28 @@ describe('computeRelevance', () => {
     expect(computeRelevance([], snippet())).toBe(0);
   });
 
-  it('scores a full title match at 1', () => {
-    // One query token hitting the title: (1 * 2) / (1 * 2) = 1.
-    expect(computeRelevance(['tests'], snippet())).toBe(1);
+  it('scores a single title hit at half saturation', () => {
+    // One title hit: (1 * 2) / RELEVANCE_SATURATION_HITS (4) = 0.5.
+    expect(computeRelevance(['tests'], snippet())).toBe(0.5);
   });
 
   it('weights a title hit above a content hit', () => {
-    // 'suite' only exists in the content: (0 * 2 + 1) / (1 * 2) = 0.5.
-    expect(computeRelevance(['suite'], snippet())).toBe(0.5);
+    // 'suite' only exists in the content: 1 / 4 = 0.25.
+    expect(computeRelevance(['suite'], snippet())).toBe(0.25);
   });
 
   it('mixes title and content hits across a multi-token query', () => {
     // 'tests' hits the title, 'suite' hits the content, 'lint' misses:
-    // (1 * 2 + 1) / (3 * 2) = 0.5.
-    expect(computeRelevance(['tests', 'suite', 'lint'], snippet())).toBe(0.5);
+    // (1 * 2 + 1) / 4 = 0.75 — the miss does not dilute the score.
+    expect(computeRelevance(['tests', 'suite', 'lint'], snippet())).toBe(0.75);
+  });
+
+  it('is independent of query length', () => {
+    const short = computeRelevance(['tests', 'suite'], snippet());
+    const noise = Array.from({ length: 200 }, (_, i) => `noise${i}`);
+    const long = computeRelevance(['tests', 'suite', ...noise], snippet());
+    expect(long).toBe(short);
+    expect(long).toBe(Math.min(1, (TITLE_MATCH_WEIGHT + 1) / RELEVANCE_SATURATION_HITS));
   });
 
   it('never exceeds 1', () => {
@@ -97,7 +106,7 @@ describe('computeRelevance', () => {
     expect(computeRelevance(['the', 'tests'], snippet())).toBe(0.5);
     expect(
       computeRelevance(buildQueryTokens({ latestMessage: 'the tests' }), snippet())
-    ).toBe(1);
+    ).toBe(0.5);
   });
 });
 
@@ -237,7 +246,7 @@ describe('rankSnippets', () => {
 
   it('a higher relevance outranks a higher tagMatch when scores differ', () => {
     // Both verification (tagMatch 0.9 at mid_execution). The first
-    // matches the query token in its title (relevance 1); the second
+    // matches the query token in its title (relevance 0.5); the second
     // matches nothing (relevance 0).
     const strong = snippet({ id: 'snippet-strong', title: 'Run tests' });
     const weak = snippet({ id: 'snippet-weak', title: 'Unrelated topic' });
@@ -246,7 +255,7 @@ describe('rankSnippets', () => {
       stage: 'mid_execution',
     });
     expect(results[0].snippet.id).toBe('snippet-strong');
-    expect(results[0].relevance).toBe(1);
+    expect(results[0].relevance).toBe(0.5);
     expect(results[1].relevance).toBe(0);
   });
 
@@ -307,5 +316,39 @@ describe('rankSnippets', () => {
     expect(
       computeRelevance(['tests', 'suite'], snippet())
     ).toBeCloseTo(0.75, 12);
+  });
+});
+
+describe('not-ready audit suggestions (post_pr, long audit text)', () => {
+  const AUDIT_TEXT = [
+    'NEEDS_REVISION: the build failure in CI is caused by a failing test fixture in auth.test.ts.',
+    '[UNMET] Criterion crit-1: All tests pass — Remaining: 2 failing assertions in the login flow.',
+    'Blocker: the change introduced a regression; the smallest fix is to correct the token refresh path.',
+    'Reviewer notes: keep the session handling untouched, document the cause, cite failing output lines,',
+    'confirm boundaries, avoid touching unrelated modules, rerun the pipeline, update the changelog entry.',
+  ].join(' ');
+
+  it('ranks remediation snippets above the cutoff for a not-ready audit', () => {
+    const results = rankSnippets(getBuiltinSnippets(), {
+      latestMessage: AUDIT_TEXT,
+      stage: 'post_pr',
+    });
+    const remediation = results.filter((r) => r.snippet.category === 'remediation');
+    expect(remediation.length).toBeGreaterThan(0);
+    for (const r of remediation) {
+      expect(r.score).toBeGreaterThanOrEqual(MIN_SUGGESTION_SCORE);
+    }
+    expect(remediation[0].relevance).toBeGreaterThan(0.25);
+  });
+
+  it('ranks remediation snippets above the cutoff for a failed audit', () => {
+    const results = rankSnippets(getBuiltinSnippets(), {
+      latestMessage: 'BLOCKED: build failure. Explain the root cause of the failing test and propose the smallest fix.',
+      stage: 'post_pr',
+    });
+    const ids = results.map((r) => r.snippet.id);
+    expect(ids).toContain('builtin-explain-failure');
+    const failure = results.find((r) => r.snippet.id === 'builtin-explain-failure');
+    expect(failure!.score).toBeGreaterThanOrEqual(MIN_SUGGESTION_SCORE);
   });
 });
