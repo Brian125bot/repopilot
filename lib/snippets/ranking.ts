@@ -26,6 +26,13 @@ export const RELEVANCE_WEIGHT = 0.6;
 export const TAG_MATCH_WEIGHT = 0.4;
 /** A title keyword hit is worth this many content hits. */
 export const TITLE_MATCH_WEIGHT = 2;
+/**
+ * Weighted hits (title hit = TITLE_MATCH_WEIGHT, content hit = 1) at
+ * which relevance saturates to 1. A fixed cap keeps relevance
+ * independent of query length: the query is often the full audit
+ * text, so dividing by its length would drive relevance to ~0.
+ */
+export const RELEVANCE_SATURATION_HITS = 4;
 /** Minimum score a snippet needs to be suggested at all. */
 export const MIN_SUGGESTION_SCORE = 0.25;
 /** Maximum number of suggestions the snippet bar renders. */
@@ -143,8 +150,11 @@ export function buildQueryTokens(context: RankingContext): string[] {
 }
 
 /**
- * Text relevance in [0, 1]: the share of query tokens the snippet
- * covers, with a title hit worth TITLE_MATCH_WEIGHT content hits.
+ * Text relevance in [0, 1]: a capped overlap score. Each distinct
+ * query token the snippet covers counts once — TITLE_MATCH_WEIGHT for
+ * a title hit, 1 for a content-only hit — and the sum saturates at
+ * RELEVANCE_SATURATION_HITS. The normalization does not depend on the
+ * query's length, so a long audit text does not dilute a real match.
  * An empty query yields zero relevance — no text, no signal.
  */
 export function computeRelevance(
@@ -161,7 +171,7 @@ export function computeRelevance(
     else if (contentTokens.has(token)) contentHits += 1;
   }
   const weighted = titleHits * TITLE_MATCH_WEIGHT + contentHits;
-  return Math.min(1, weighted / (query.length * TITLE_MATCH_WEIGHT));
+  return Math.min(1, weighted / RELEVANCE_SATURATION_HITS);
 }
 
 /** Stage/category affinity in [0, 1]. */

@@ -2,15 +2,31 @@ import { describe, expect, it } from 'vitest';
 import {
   DIRECTIVE_SECTION_HEADING,
   INTERACTIVE_TURN_ENDPOINT,
+  MISSING_PR_METADATA_MESSAGE,
+  NO_ACTIVE_SESSION_MESSAGE,
+  snippetSendBlockReason,
+  snippetSendMode,
+  startNewSessionTurn,
+  buildRemediationDispatchBody,
+  bindNewRemediationSession,
+  deriveDispatchSessionUrl,
+  NEW_SESSION_ENDPOINT,
+  type NewSessionTurnParams,
   buildInteractiveTurnBody,
   compileInteractiveTurnPrompt,
   sendInteractiveTurn,
   type InteractiveTurnParams,
 } from './send';
 import type { Blueprint, FailureBrief } from '@/types';
+import {
+  resolveContinueSessionId,
+  shouldOfferContinueSession,
+} from '@/lib/outcome-memory';
 
 const STAMP = '2026-09-01T12:00:00.000Z';
 const AUDITED_SHA = 'abc123def456789';
+const AUDITED_BRANCH = 'feature/audited-pr-head';
+const SESSION_ID = 'sessions/abc123';
 
 function blueprint(
   overrides: Partial<Blueprint> = {}
@@ -61,7 +77,12 @@ function params(
     brief: brief(),
     directive: 'Run the relevant tests',
     julesApiKey: 'jules-test-key',
-    currentHeadSha: AUDITED_SHA,
+    targetBranch: AUDITED_BRANCH,
+    sessionId: SESSION_ID,
+    canContinue: true,
+    requireVerifiedKey: () => true,
+    checkHeadFreshness: async () => ({ ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }),
+    prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
     ...overrides,
   };
 }
@@ -94,240 +115,465 @@ function mockFetch(response: {
 }
 
 describe('compileInteractiveTurnPrompt', () => {
-  it('compiles the continuation contract and appends the directive', () => {
-    const prompt = compileInteractiveTurnPrompt(params());
+  const base = {
+    blueprint: blueprint(),
+    brief: brief(),
+    directive: '  Run the relevant tests  ',
+    targetBranch: AUDITED_BRANCH,
+    auditedHeadSha: AUDITED_SHA,
+  };
 
-    // COR-39 continuation compiler output is present…
+  it('compiles the continuation contract and appends the trimmed directive', () => {
+    const prompt = compileInteractiveTurnPrompt(base);
     expect(prompt).toContain('Continuation Contract');
-    expect(prompt).toContain('Fix the failing auth tests');
     expect(prompt).toContain('LOCKED AUDITED SHA: ' + AUDITED_SHA);
-    // …and the operator directive is the final section.
     expect(prompt).toContain(DIRECTIVE_SECTION_HEADING);
-    expect(prompt).toContain('Run the relevant tests');
+    expect(prompt).toContain('\nRun the relevant tests');
+    expect(prompt).not.toContain('  Run the relevant tests  ');
     expect(prompt.indexOf(DIRECTIVE_SECTION_HEADING)).toBeGreaterThan(
       prompt.indexOf('LOCKED AUDITED SHA')
     );
   });
 
-  it('trims the directive', () => {
-    const prompt = compileInteractiveTurnPrompt(
-      params({ directive: '  Run the relevant tests  ' })
-    );
-    expect(prompt).toContain('Run the relevant tests');
-    expect(prompt).not.toContain('  Run the relevant tests  ');
+  it('locks the audited branch even when blueprint.branchName differs', () => {
+    const prompt = compileInteractiveTurnPrompt({
+      ...base,
+      blueprint: blueprint({ branchName: 'jules/stale-other-branch' }),
+    });
+    expect(prompt).toContain(`LOCKED HEAD BRANCH: ${AUDITED_BRANCH}`);
+    expect(prompt).not.toContain('jules/stale-other-branch');
   });
 
-  it('throws when the blueprint carries no audited head SHA', () => {
+  it('uses the supplied audited SHA over the blueprint field', () => {
+    const prompt = compileInteractiveTurnPrompt({
+      ...base,
+      blueprint: blueprint({ auditedHeadSha: null }),
+    });
+    expect(prompt).toContain('LOCKED AUDITED SHA: ' + AUDITED_SHA);
+  });
+
+  it('throws when no audited head SHA is supplied', () => {
     expect(() =>
-      compileInteractiveTurnPrompt(
-        params({ blueprint: blueprint({ auditedHeadSha: null }) })
-      )
+      compileInteractiveTurnPrompt({ ...base, auditedHeadSha: '' })
     ).toThrow(/audited head SHA/i);
   });
 });
 
 describe('buildInteractiveTurnBody', () => {
-  it('builds the exact continuation dispatch body', () => {
-    const body = buildInteractiveTurnBody(params());
-
-    expect(body.repo).toBe('acme-corp/api-gateway');
-    expect(body.baseBranch).toBe('main');
-    expect(body.branchName).toBe('jules/remediate-auth');
-    expect(body.startingBranch).toBe('jules/remediate-auth');
-    expect(body.isRemediation).toBe(true);
-    expect(body.auditedHeadSha).toBe(AUDITED_SHA);
-    expect(body.currentHeadSha).toBe(AUDITED_SHA);
-    expect(body.customPrompt).toContain('Run the relevant tests');
-    expect(body.objective).toContain('jules/remediate-auth');
-    expect(body.fileBoundaries).toEqual(['lib/**', 'components/**']);
-    expect(body.criteria).toEqual([
-      { id: 'crit-1', text: 'All tests pass', category: 'testing' },
-    ]);
-  });
-
-  it('carries the PR reference when given', () => {
-    const body = buildInteractiveTurnBody(
-      params({ prNumber: 42, prUrl: 'https://github.com/acme-corp/api-gateway/pull/42' })
-    );
-    expect(body.prNumber).toBe(42);
-    expect(body.prUrl).toBe('https://github.com/acme-corp/api-gateway/pull/42');
-  });
-
-  it('omits optional fields when absent', () => {
-    const body = buildInteractiveTurnBody(
-      params({
-        prNumber: undefined,
-        prUrl: undefined,
-        blueprint: blueprint({
-          fileBoundaries: [],
-          criteria: [],
-        }),
+  it('builds the exact /api/jules/message body', () => {
+    expect(
+      buildInteractiveTurnBody({
+        sessionId: SESSION_ID,
+        prompt: 'p',
+        auditedHeadSha: ` ${AUDITED_SHA} `,
+        currentHeadSha: AUDITED_SHA,
       })
-    );
-    expect(body.prNumber).toBeUndefined();
-    expect(body.prUrl).toBeUndefined();
-    expect(body.fileBoundaries).toBeUndefined();
-    expect(body.criteria).toBeUndefined();
-  });
-
-  it('normalizes the current head SHA', () => {
-    const body = buildInteractiveTurnBody(
-      params({ currentHeadSha: `  ${AUDITED_SHA}  ` })
-    );
-    expect(body.currentHeadSha).toBe(AUDITED_SHA);
+    ).toEqual({
+      sessionId: SESSION_ID,
+      prompt: 'p',
+      isRemediation: true,
+      auditedHeadSha: AUDITED_SHA,
+      currentHeadSha: AUDITED_SHA,
+    });
   });
 });
 
 describe('sendInteractiveTurn', () => {
-  it('dispatches through the continuation path and rebinds the blueprint', async () => {
-    const { fetchFn, calls } = mockFetch({
-      body: {
-        success: true,
-        sessionId: 'sessions/new456',
-        sessionUrl: 'https://jules.google.com/session/new456',
-        sessionState: 'EXECUTING',
-      },
-    });
+  function body(calls: Array<{ init: RequestInit }>): Record<string, unknown> {
+    return JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+  }
 
-    const result = await sendInteractiveTurn(
-      params({ fetchFn })
-    );
+  it('replies in the current session via /api/jules/message, never dispatch', async () => {
+    const { fetchFn, calls } = mockFetch({
+      body: { success: true, sessionId: SESSION_ID, sessionUrl: 'https://jules.google.com/session/abc123' },
+    });
+    const result = await sendInteractiveTurn(params({ fetchFn }));
 
     expect(result.ok).toBe(true);
-    expect(result.status).toBe(200);
-    expect(result.sessionId).toBe('sessions/new456');
-    expect(result.sessionUrl).toBe(
-      'https://jules.google.com/session/new456'
-    );
-    expect(result.sessionState).toBe('EXECUTING');
-
-    // Exactly one call to the existing dispatch endpoint.
+    expect(result.sessionId).toBe(SESSION_ID);
+    expect(result.auditedHeadSha).toBe(AUDITED_SHA);
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(INTERACTIVE_TURN_ENDPOINT);
-    expect(calls[0].init.method).toBe('POST');
-    expect(
-      (calls[0].init.headers as Record<string, string>)['x-jules-api-key']
-    ).toBe('jules-test-key');
-
-    const sent = JSON.parse(
-      String(calls[0].init.body)
-    ) as Record<string, unknown>;
+    expect(INTERACTIVE_TURN_ENDPOINT).toBe('/api/jules/message');
+    expect(calls[0].url).toBe('/api/jules/message');
+    expect(calls.some((c) => c.url.includes('/api/jules/dispatch'))).toBe(false);
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers['x-jules-api-key']).toBe('jules-test-key');
+    const sent = body(calls);
+    expect(sent.sessionId).toBe(SESSION_ID);
     expect(sent.isRemediation).toBe(true);
     expect(sent.auditedHeadSha).toBe(AUDITED_SHA);
     expect(sent.currentHeadSha).toBe(AUDITED_SHA);
-    expect(String(sent.customPrompt)).toContain('Run the relevant tests');
-
-    // applyNewRemediationSession rebound the blueprint.
-    expect(result.blueprint?.sessionId).toBe('sessions/new456');
-    expect(result.blueprint?.sessionUrl).toBe(
-      'https://jules.google.com/session/new456'
-    );
-    expect(result.blueprint?.sessionState).toBe('EXECUTING');
-    expect(result.blueprint?.isRemediation).toBe(true);
-    // The audited-branch contract survives the rebind.
-    expect(result.blueprint?.auditedHeadSha).toBe(AUDITED_SHA);
-    expect(result.blueprint?.branchName).toBe('jules/remediate-auth');
-    // The operator-reviewed prompt is stamped on the blueprint.
-    expect(result.blueprint?.compiledPrompt).toBe(result.compiledPrompt);
-    expect(result.blueprint?.compiledPrompt).toContain(
-      'Run the relevant tests'
-    );
+    expect(String(sent.prompt)).toContain('Run the relevant tests');
+    expect(String(sent.prompt)).toContain(`LOCKED HEAD BRANCH: ${AUDITED_BRANCH}`);
+    // Key only in the header.
+    expect(JSON.stringify(sent)).not.toContain('jules-test-key');
+    expect(sent).not.toHaveProperty('startingBranch');
   });
 
-  it('sends no api-key header when the key is empty', async () => {
-    const { fetchFn, calls } = mockFetch({
-      body: { success: true, sessionId: 'sessions/new456' },
-    });
-    await sendInteractiveTurn(params({ julesApiKey: '', fetchFn }));
-    expect(
-      (calls[0].init.headers as Record<string, string>)['x-jules-api-key']
-    ).toBeUndefined();
+  it('targets the audited branch when blueprint.branchName differs', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true } });
+    await sendInteractiveTurn(
+      params({ fetchFn, blueprint: blueprint({ branchName: 'jules/stale-other-branch' }) })
+    );
+    const prompt = String(body(calls).prompt);
+    expect(prompt).toContain(`LOCKED HEAD BRANCH: ${AUDITED_BRANCH}`);
+    expect(prompt).not.toContain('jules/stale-other-branch');
   });
 
-  it('refuses an empty directive without dispatching', async () => {
-    const { fetchFn, calls } = mockFetch({});
+  it('locks to freshness.audited even when the blueprint has no SHA', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true } });
     const result = await sendInteractiveTurn(
-      params({ directive: '   ', fetchFn })
+      params({ fetchFn, blueprint: blueprint({ auditedHeadSha: null }) })
     );
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(400);
-    expect(result.error).toContain('Directive is required');
-    expect(calls).toHaveLength(0);
+    expect(result.ok).toBe(true);
+    expect(body(calls).auditedHeadSha).toBe(AUDITED_SHA);
   });
 
-  it('refuses a blueprint without an audited head SHA', async () => {
+  it('leaves the blueprint unchanged', async () => {
+    const bp = blueprint();
+    const snapshot = JSON.parse(JSON.stringify(bp));
+    const { fetchFn } = mockFetch({ body: { success: true, sessionId: 'sessions/other' } });
+    const result = await sendInteractiveTurn(params({ fetchFn, blueprint: bp }));
+    expect(result.ok).toBe(true);
+    expect(bp).toEqual(snapshot);
+    expect(result).not.toHaveProperty('blueprint');
+  });
+
+  it('runs the key gate before the freshness gate', async () => {
+    const order: string[] = [];
+    const { fetchFn } = mockFetch({ body: { success: true } });
+    await sendInteractiveTurn(
+      params({
+        fetchFn,
+        requireVerifiedKey: () => { order.push('key'); return true; },
+        checkHeadFreshness: async () => { order.push('fresh'); return { ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }; },
+      })
+    );
+    expect(order).toEqual(['key', 'fresh']);
+  });
+
+  it('refuses when the key gate fails, without checking freshness or fetching', async () => {
+    let checked = false;
     const { fetchFn, calls } = mockFetch({});
     const result = await sendInteractiveTurn(
       params({
-        blueprint: blueprint({ auditedHeadSha: null }),
         fetchFn,
+        requireVerifiedKey: () => false,
+        checkHeadFreshness: async () => { checked = true; return { ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }; },
       })
     );
     expect(result.ok).toBe(false);
-    expect(result.status).toBe(400);
+    expect(checked).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses when the head moved', async () => {
+    const { fetchFn, calls } = mockFetch({});
+    const result = await sendInteractiveTurn(
+      params({
+        fetchFn,
+        checkHeadFreshness: async () => ({ ok: false, error: 'Head moved since audit — re-evaluate.' }),
+      })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('Head moved since audit — re-evaluate.');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses when the live head is missing or differs even if the gate passed', async () => {
+    for (const live of [null, 'fffffff0000000']) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await sendInteractiveTurn(
+        params({ fetchFn, checkHeadFreshness: async () => ({ ok: true, audited: AUDITED_SHA, live }) })
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('Head moved');
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('refuses when the audited SHA is missing', async () => {
+    const { fetchFn, calls } = mockFetch({});
+    const result = await sendInteractiveTurn(
+      params({ fetchFn, checkHeadFreshness: async () => ({ ok: true, audited: '', live: AUDITED_SHA }) })
+    );
+    expect(result.ok).toBe(false);
     expect(result.error).toContain('re-evaluate');
     expect(calls).toHaveLength(0);
   });
 
-  it('propagates dispatch errors fail-closed', async () => {
-    const { fetchFn } = mockFetch({
-      status: 409,
-      body: {
-        success: false,
-        error: 'Head moved since audit — re-evaluate.',
-      },
-    });
+  it('refuses without a live session and never falls back to dispatch', async () => {
+    for (const p of [{ canContinue: false }, { sessionId: null }, { sessionId: '  ' }]) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await sendInteractiveTurn(params({ fetchFn, ...p }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(NO_ACTIVE_SESSION_MESSAGE);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('refuses when PR metadata is missing (no audited branch), with no fallback', async () => {
+    for (const targetBranch of ['', '   ']) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await sendInteractiveTurn(params({ fetchFn, targetBranch }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(MISSING_PR_METADATA_MESSAGE);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('refuses an empty directive without fetching', async () => {
+    const { fetchFn, calls } = mockFetch({});
+    const result = await sendInteractiveTurn(params({ directive: '   ', fetchFn }));
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(400);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('sends no api-key header when the key is empty', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true } });
+    await sendInteractiveTurn(params({ julesApiKey: '', fetchFn }));
+    expect((calls[0].init.headers as Record<string, string>)['x-jules-api-key']).toBeUndefined();
+  });
+
+  it('propagates server errors fail-closed', async () => {
+    const { fetchFn } = mockFetch({ status: 409, body: { success: false, error: 'Head moved since audit — re-evaluate.' } });
     const result = await sendInteractiveTurn(params({ fetchFn }));
     expect(result.ok).toBe(false);
     expect(result.status).toBe(409);
     expect(result.error).toBe('Head moved since audit — re-evaluate.');
-    expect(result.blueprint).toBeUndefined();
   });
 
   it('treats a success:false body as a failure', async () => {
-    const { fetchFn } = mockFetch({
-      status: 200,
-      body: { success: false, error: 'Remediation blocked.' },
-    });
+    const { fetchFn } = mockFetch({ status: 200, body: { success: false, error: 'Nope.' } });
     const result = await sendInteractiveTurn(params({ fetchFn }));
     expect(result.ok).toBe(false);
-    expect(result.error).toBe('Remediation blocked.');
+    expect(result.error).toBe('Nope.');
   });
 
   it('falls back to an HTTP error message when the body has none', async () => {
     const { fetchFn } = mockFetch({ status: 500, body: {} });
     const result = await sendInteractiveTurn(params({ fetchFn }));
-    expect(result.ok).toBe(false);
     expect(result.error).toContain('HTTP 500');
   });
 
   it('maps a network failure to a 502', async () => {
-    const fetchFn = (async () => {
-      throw new Error('fetch failed');
-    }) as typeof fetch;
+    const fetchFn = (async () => { throw new Error('fetch failed'); }) as typeof fetch;
     const result = await sendInteractiveTurn(params({ fetchFn }));
-    expect(result.ok).toBe(false);
     expect(result.status).toBe(502);
     expect(result.error).toBe('fetch failed');
   });
+});
 
-  it('refuses a dispatch response without a session id', async () => {
-    const { fetchFn } = mockFetch({
-      body: { success: true },
+describe('snippetSendBlockReason', () => {
+  const ok = { canContinue: true, sessionId: SESSION_ID, targetBranch: AUDITED_BRANCH };
+  it('allows a live session with an audited branch', () => {
+    expect(snippetSendBlockReason(ok)).toBeNull();
+  });
+  it('blocks without a live session', () => {
+    expect(snippetSendBlockReason({ ...ok, canContinue: false })).toBe(NO_ACTIVE_SESSION_MESSAGE);
+    expect(snippetSendBlockReason({ ...ok, sessionId: null })).toBe(NO_ACTIVE_SESSION_MESSAGE);
+  });
+  it('blocks when PR metadata is missing', () => {
+    expect(snippetSendBlockReason({ ...ok, targetBranch: '' })).toBe(MISSING_PR_METADATA_MESSAGE);
+  });
+});
+
+describe('snippetSendMode', () => {
+  const full = {
+    canContinue: true,
+    sessionId: SESSION_ID,
+    repo: 'acme-corp/api-gateway',
+    targetBranch: AUDITED_BRANCH,
+    baseBranch: 'main',
+    prNumber: 42,
+    auditedHeadSha: AUDITED_SHA,
+  };
+  it('continues a live session', () => {
+    expect(snippetSendMode(full)).toEqual({ kind: 'continue' });
+  });
+  it('offers start-new when the session ended and the PR is fully known', () => {
+    expect(snippetSendMode({ ...full, canContinue: false })).toEqual({ kind: 'start-new' });
+    expect(snippetSendMode({ ...full, sessionId: null })).toEqual({ kind: 'start-new' });
+  });
+  it('blocks with the existing message when PR metadata is missing', () => {
+    const blocked = { kind: 'blocked', reason: MISSING_PR_METADATA_MESSAGE };
+    expect(snippetSendMode({ ...full, targetBranch: '' })).toEqual(blocked);
+    for (const missing of [{ repo: '' }, { baseBranch: undefined }, { prNumber: undefined }, { auditedHeadSha: null }]) {
+      expect(snippetSendMode({ ...full, canContinue: false, ...missing })).toEqual(blocked);
+    }
+  });
+});
+
+describe('buildRemediationDispatchBody', () => {
+  it('uses the audited branch as branchName and startingBranch', () => {
+    const body = buildRemediationDispatchBody({
+      repo: 'acme-corp/api-gateway',
+      baseBranch: 'main',
+      targetBranch: AUDITED_BRANCH,
+      auditedHeadSha: AUDITED_SHA,
+      currentHeadSha: AUDITED_SHA,
+      prNumber: 42,
+      customPrompt: 'p',
     });
-    const result = await sendInteractiveTurn(params({ fetchFn }));
-    expect(result.ok).toBe(false);
-    expect(result.status).toBe(502);
-    expect(result.error).toContain('no session id');
+    expect(body).toMatchObject({
+      repo: 'acme-corp/api-gateway',
+      baseBranch: 'main',
+      branchName: AUDITED_BRANCH,
+      startingBranch: AUDITED_BRANCH,
+      isRemediation: true,
+      auditedHeadSha: AUDITED_SHA,
+      prNumber: 42,
+    });
+  });
+  it('derives the session URL like the scorecard', () => {
+    expect(deriveDispatchSessionUrl({ sessionId: 'sessions/x1' })).toBe('https://jules.google.com/session/x1');
+    expect(deriveDispatchSessionUrl({ julesApiResponse: { url: 'u' }, sessionId: 'sessions/x1' })).toBe('u');
+    expect(deriveDispatchSessionUrl({})).toBeNull();
+  });
+});
+
+describe('startNewSessionTurn (explicit fallback)', () => {
+  function newParams(overrides: Partial<NewSessionTurnParams> = {}): NewSessionTurnParams {
+    return {
+      blueprint: blueprint({ sessionState: 'COMPLETED', branchName: 'jules/stale-other-branch' }),
+      brief: brief(),
+      directive: 'Run the relevant tests',
+      julesApiKey: 'jules-test-key',
+      repo: 'acme-corp/api-gateway',
+      targetBranch: AUDITED_BRANCH,
+      baseBranch: 'main',
+      prNumber: 42,
+      prUrl: 'https://github.com/acme-corp/api-gateway/pull/42',
+      auditedHeadSha: AUDITED_SHA,
+      requireVerifiedKey: () => true,
+      checkHeadFreshness: async () => ({ ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }),
+      ...overrides,
+    };
+  }
+
+  it('dispatches exactly once on the audited branch even when blueprint.branchName differs', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true, sessionId: 'sessions/new456', sessionState: 'QUEUED' } });
+    const result = await startNewSessionTurn(newParams({ fetchFn }));
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(NEW_SESSION_ENDPOINT);
+    expect(calls[0].url).toBe('/api/jules/dispatch');
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers['x-jules-api-key']).toBe('jules-test-key');
+    const sent = JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+    expect(sent.repo).toBe('acme-corp/api-gateway');
+    expect(sent.branchName).toBe(AUDITED_BRANCH);
+    expect(sent.startingBranch).toBe(AUDITED_BRANCH);
+    expect(sent.baseBranch).toBe('main');
+    expect(sent.prNumber).toBe(42);
+    expect(sent.isRemediation).toBe(true);
+    expect(sent.auditedHeadSha).toBe(AUDITED_SHA);
+    expect(sent.currentHeadSha).toBe(AUDITED_SHA);
+    expect(JSON.stringify(sent)).not.toContain('jules/stale-other-branch');
+    expect(JSON.stringify(sent)).not.toContain('jules-test-key');
   });
 
-  it('keeps the original session identity when the dispatch fails', async () => {
-    const { fetchFn } = mockFetch({
-      status: 400,
-      body: { success: false, error: 'Bad input' },
-    });
-    const result = await sendInteractiveTurn(params({ fetchFn }));
-    expect(result.blueprint).toBeUndefined();
-    expect(result.sessionId).toBeUndefined();
+  it('runs metadata, then key, then freshness gates', async () => {
+    const order: string[] = [];
+    const { fetchFn } = mockFetch({ body: { success: true, sessionId: 'sessions/new456' } });
+    await startNewSessionTurn(
+      newParams({
+        fetchFn,
+        requireVerifiedKey: () => { order.push('key'); return true; },
+        checkHeadFreshness: async () => { order.push('fresh'); return { ok: true, audited: AUDITED_SHA, live: AUDITED_SHA }; },
+      })
+    );
+    expect(order).toEqual(['key', 'fresh']);
+    const order2: string[] = [];
+    await startNewSessionTurn(
+      newParams({ fetchFn, prNumber: undefined, requireVerifiedKey: () => { order2.push('key'); return true; } })
+    );
+    expect(order2).toEqual([]);
+  });
+
+  it('refuses on a moved or missing head with no fetch', async () => {
+    const cases: Array<NewSessionTurnParams['checkHeadFreshness']> = [
+      async () => ({ ok: false, error: 'Head moved since audit — re-evaluate.' }),
+      async () => ({ ok: true, audited: AUDITED_SHA, live: null }),
+      async () => ({ ok: true, audited: AUDITED_SHA, live: 'fffffff0000000' }),
+      async () => ({ ok: true, audited: '', live: AUDITED_SHA }),
+    ];
+    for (const checkHeadFreshness of cases) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await startNewSessionTurn(newParams({ fetchFn, checkHeadFreshness }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/re-evaluate/);
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  it('refuses on missing metadata or a failed key gate with no fetch', async () => {
+    for (const o of [
+      { targetBranch: '' }, { repo: '' }, { baseBranch: undefined }, { prNumber: undefined }, { auditedHeadSha: null },
+    ] as Array<Partial<NewSessionTurnParams>>) {
+      const { fetchFn, calls } = mockFetch({});
+      const result = await startNewSessionTurn(newParams({ fetchFn, ...o }));
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe(MISSING_PR_METADATA_MESSAGE);
+      expect(calls).toHaveLength(0);
+    }
+    const { fetchFn, calls } = mockFetch({});
+    const result = await startNewSessionTurn(newParams({ fetchFn, requireVerifiedKey: () => false }));
+    expect(result.ok).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fails closed on a dispatch error or a missing session id', async () => {
+    for (const r of [{ status: 500, body: { error: 'boom' } }, { status: 200, body: { success: true } }]) {
+      const { fetchFn } = mockFetch(r);
+      const result = await startNewSessionTurn(newParams({ fetchFn }));
+      expect(result.ok).toBe(false);
+      expect(result.blueprint).toBeUndefined();
+    }
+  });
+
+  it('binds the new session, and the next send continues it via /api/jules/message', async () => {
+    const dispatch = mockFetch({ body: { success: true, sessionId: 'sessions/new456', sessionState: 'QUEUED' } });
+    const started = await startNewSessionTurn(newParams({ fetchFn: dispatch.fetchFn }));
+    expect(started.ok).toBe(true);
+    const bound = started.blueprint!;
+    expect(bound.sessionId).toBe('sessions/new456');
+    expect(bound.sessionUrl).toBe('https://jules.google.com/session/new456');
+    expect(bound.isRemediation).toBe(true);
+    expect(bound.compiledPrompt).toBe(started.compiledPrompt);
+
+    // Scorecard passes the new id as recentSessionId (dispatchResult).
+    const recent = started.sessionId!;
+    const canContinue = shouldOfferContinueSession('NEEDS_REVISION', bound, recent);
+    const sessionId = resolveContinueSessionId(bound, recent);
+    expect(canContinue).toBe(true);
+    expect(sessionId).toBe('sessions/new456');
+    expect(
+      snippetSendMode({ canContinue, sessionId, repo: 'acme-corp/api-gateway', targetBranch: AUDITED_BRANCH, baseBranch: 'main', prNumber: 42, auditedHeadSha: AUDITED_SHA })
+    ).toEqual({ kind: 'continue' });
+
+    const reply = mockFetch({ body: { success: true } });
+    const next = await sendInteractiveTurn(params({ fetchFn: reply.fetchFn, blueprint: bound, sessionId, canContinue }));
+    expect(next.ok).toBe(true);
+    expect(reply.calls).toHaveLength(1);
+    expect(reply.calls[0].url).toBe('/api/jules/message');
+    expect(JSON.parse(String(reply.calls[0].init.body)).sessionId).toBe('sessions/new456');
+  });
+
+  it('bindNewRemediationSession replaces the dead session identity', () => {
+    const bound = bindNewRemediationSession(blueprint({ sessionState: 'COMPLETED' }), { sessionId: 'sessions/z9' }, 'prompt');
+    expect(bound.sessionId).toBe('sessions/z9');
+    expect(bound.sessionState).toBeUndefined();
+    expect(bound.compiledPrompt).toBe('prompt');
+  });
+});
+
+describe('live path never dispatches', () => {
+  it('sendInteractiveTurn only ever hits /api/jules/message', async () => {
+    const { fetchFn, calls } = mockFetch({ body: { success: true } });
+    await sendInteractiveTurn(params({ fetchFn }));
+    await sendInteractiveTurn(params({ fetchFn, canContinue: false }));
+    expect(calls.map((c) => c.url)).toEqual(['/api/jules/message']);
   });
 });

@@ -47,13 +47,17 @@ import {
   buildFailureBrief,
   buildOutcomeRow,
   compileContinuationPrompt,
-  applyNewRemediationSession,
   recordOutcomeRow,
   resolveContinueSessionId,
   shouldOfferContinueSession,
 } from '@/lib/outcome-memory';
 import { JulesTroubleshootModal } from './JulesTroubleshootModal';
 import { JulesFollowUpPanel } from './JulesSession/JulesFollowUpPanel';
+import {
+  bindNewRemediationSession,
+  buildRemediationDispatchBody,
+  deriveDispatchSessionUrl,
+} from '@/lib/sessions/send';
 import { hasVerifiedKey, VERIFY_BEFORE_DISPATCH_MESSAGE, type KeyStorage } from '@/lib/settings-keys';
 import { LOCKED_MESSAGE } from '@/lib/credential-vault';
 
@@ -260,7 +264,6 @@ export function MergeScorecard({
     sessionUrl?: string | null;
     error?: string;
   } | null>(null);
-  const followUpSessionId = dispatchResult?.sessionId || blueprint?.sessionId || null;
 
   // Continue-with-brief: primary blocked-audit action (POST /api/jules/message only).
   const [isContinuing, setIsContinuing] = React.useState(false);
@@ -300,6 +303,9 @@ export function MergeScorecard({
   const continueSessionId = blueprint
     ? resolveContinueSessionId(blueprint, recentSessionId)
     : null;
+  // Follow-up box and snippet Send share the continue resolver, so they
+  // can never point at a stale session.
+  const followUpSessionId = continueSessionId;
   const continueFailed = Boolean(continueResult && !continueResult.success);
   // Blocked audit without any session to continue: the only Jules action is a
   // fresh brief-backed session (same continuation prompt via existing dispatch).
@@ -497,25 +503,24 @@ export function MergeScorecard({
       const res = await fetch('/api/jules/dispatch', {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          repo: cleanRepo,
-          baseBranch: prMetadata?.baseBranch || 'main',
-          branchName: auditedBranch,
-          startingBranch: auditedBranch, // DIRECTS JULES JUST TO MAKE THE CHANGES ON THE AUDITED BRANCH
-          isRemediation: true,
-          auditedHeadSha: freshness.audited,
-          currentHeadSha: freshness.live || liveHeadSha || freshness.audited,
-          prNumber: prMetadata?.number,
-          prUrl: copyableUrl,
-          customPrompt: promptToSend,
-          objective: `Remediate PR #${prMetadata?.number || ''} on branch "${auditedBranch}": address audit blockers`,
-          fileBoundaries: fileBoundaries || [],
-          criteria: criteriaResults.map((c) => ({
-            id: String(c.id),
-            text: c.criterion,
-            category: c.category || 'functional',
-          })),
-        }),
+        body: JSON.stringify(
+          buildRemediationDispatchBody({
+            repo: cleanRepo,
+            baseBranch: prMetadata?.baseBranch || 'main',
+            targetBranch: auditedBranch,
+            auditedHeadSha: freshness.audited,
+            currentHeadSha: freshness.live || liveHeadSha || freshness.audited,
+            prNumber: prMetadata?.number,
+            prUrl: copyableUrl,
+            customPrompt: promptToSend,
+            fileBoundaries: fileBoundaries || [],
+            criteria: criteriaResults.map((c) => ({
+              id: String(c.id),
+              text: c.criterion,
+              category: c.category || 'functional',
+            })),
+          })
+        ),
       });
 
       const data = await res.json();
@@ -523,11 +528,7 @@ export function MergeScorecard({
         throw new Error(data.error || 'Failed to dispatch remediation session to Jules.');
       }
 
-      const sessionUrl =
-        data.julesApiResponse?.url ||
-        (data.sessionId
-          ? `https://jules.google.com/session/${data.sessionId.replace(/^sessions\//, '')}`
-          : null);
+      const sessionUrl = deriveDispatchSessionUrl(data);
 
       setDispatchResult({
         success: true,
@@ -541,14 +542,7 @@ export function MergeScorecard({
       // A fallback session replaces the audited blueprint's old/dead session
       // identity. Keep its continuation brief and audited branch contract.
       if (onSaveBlueprint && blueprint && data.sessionId) {
-        onSaveBlueprint({
-          ...applyNewRemediationSession(blueprint, {
-            sessionId: data.sessionId,
-            sessionUrl: data.sessionUrl || sessionUrl,
-            sessionState: data.sessionState || data.blueprint?.sessionState,
-          }),
-          compiledPrompt: promptToSend,
-        });
+        onSaveBlueprint(bindNewRemediationSession(blueprint, data, promptToSend));
       } else if (onSaveBlueprint && data.blueprint) {
         onSaveBlueprint(data.blueprint);
       }
@@ -1197,22 +1191,52 @@ export function MergeScorecard({
                 {/* COR-59: snippet-assisted interactive turn,
                     directly beneath the session output. Selecting
                     a card only populates the editor — the explicit
-                    Send button dispatches through the COR-39
-                    continuation path. */}
+                    Send button replies in the current session via
+                    /api/jules/message. */}
                 {blueprint && continueBrief && verdictForGate !== 'READY_TO_MERGE' && (
                   <JulesFollowUpPanel
                     blueprint={blueprint}
                     brief={continueBrief}
                     latestMessage={followUpLatestMessage}
                     julesApiKey={julesKey}
-                    currentHeadSha={liveHeadSha || auditedHeadSha || ''}
+                    repo={cleanRepo}
+                    // PR head branch only: no blueprint.branchName fallback,
+                    // so missing PR metadata disables Send.
+                    targetBranch={prMetadata?.headBranch?.trim() || ''}
+                    baseBranch={prMetadata?.baseBranch}
+                    prNumber={prMetadata?.number}
+                    prUrl={copyableUrl}
+                    auditedHeadSha={auditedHeadSha}
+                    sessionId={continueSessionId}
+                    canContinue={canOfferContinue}
+                    requireVerifiedKey={requireVerifiedKey}
                     checkHeadFreshness={checkHeadFreshness}
-                    canSend={requireVerifiedKey}
-                    onContinued={(rebound) => {
-                      onSaveBlueprint?.(rebound);
+                    onSent={({ sessionId, auditedHeadSha: lockedSha }) => {
+                      // Same session: record a continuation turn and
+                      // leave the blueprint binding untouched.
                       recordOutcomeRow(
                         buildOutcomeRow({
-                          blueprint: rebound,
+                          blueprint: { ...blueprint, sessionId, auditedHeadSha: lockedSha },
+                          turn: 'continuation',
+                          usedPriorSession: true,
+                        })
+                      );
+                    }}
+                    onNewSessionStarted={(started) => {
+                      // Same bind as the scorecard remediation dispatch:
+                      // the dispatch result makes the new session the
+                      // continue target (panel flips back to in-session
+                      // Send), and the rebound blueprint is saved.
+                      setDispatchResult({
+                        success: true,
+                        sessionId: started.sessionId,
+                        sessionUrl: started.sessionUrl,
+                        targetBranch: auditedBranch,
+                      });
+                      onSaveBlueprint?.(started.blueprint);
+                      recordOutcomeRow(
+                        buildOutcomeRow({
+                          blueprint: { ...blueprint, sessionId: started.sessionId },
                           turn: 'new-from-brief',
                           usedPriorSession: true,
                         })

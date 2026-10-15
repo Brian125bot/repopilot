@@ -21,6 +21,8 @@ export interface ResponseEditorProps {
   onSend: (value: string) => void;
   isSending?: boolean;
   disabled?: boolean;
+  /** Keep the textarea editable while Send is disabled. */
+  allowEditWhenDisabled?: boolean;
   placeholder?: string;
 }
 
@@ -41,6 +43,7 @@ export function ResponseEditor({
   onSend,
   isSending = false,
   disabled = false,
+  allowEditWhenDisabled = false,
   placeholder = 'Reply to Jules…',
 }: ResponseEditorProps) {
   const trimmed = value.trim();
@@ -52,7 +55,7 @@ export function ResponseEditor({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        disabled={disabled || isSending}
+        disabled={(disabled && !allowEditWhenDisabled) || isSending}
         rows={4}
         aria-label="Response to Jules"
         className="min-h-[96px] resize-y text-xs"

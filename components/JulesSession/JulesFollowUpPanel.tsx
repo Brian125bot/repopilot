@@ -17,7 +17,12 @@ import {
   describeSessionStage,
   inferSessionStage,
 } from '@/lib/snippets/state';
-import { sendInteractiveTurn } from '@/lib/sessions/send';
+import {
+  sendInteractiveTurn,
+  snippetSendMode,
+  startNewSessionTurn,
+  type HeadFreshnessResult,
+} from '@/lib/sessions/send';
 import type {
   RepoProfile,
   Snippet,
@@ -29,11 +34,7 @@ import {
 import type { Blueprint, FailureBrief } from '@/types';
 
 export interface JulesFollowUpPanelProps {
-  /**
-   * Active session blueprint. `auditedHeadSha` locks the
-   * continuation (COR-40); a blueprint without it cannot
-   * send a turn.
-   */
+  /** Active session blueprint. Read-only: Send never rebinds it. */
   blueprint: Blueprint;
   /** Latest failure brief, input to the continuation compiler. */
   brief: FailureBrief;
@@ -43,32 +44,48 @@ export interface JulesFollowUpPanelProps {
    * ranking engine matches snippets against.
    */
   latestMessage: string;
-  /** Client-side Jules API key; never stored. */
+  /** Client-side Jules API key; sent only as a header, never stored. */
   julesApiKey: string;
+  /** Audited PR repo (`owner/name`), the scorecard's `cleanRepo`. */
+  repo: string;
   /**
-   * COR-40 lock: live PR head SHA. The dispatch route
-   * rejects the turn unless it equals the audited SHA.
+   * Audited PR head branch (`prMetadata.headBranch`). Empty when PR
+   * metadata is missing, which disables Send.
    */
-  currentHeadSha: string;
+  targetBranch: string;
+  /** Audited PR base branch (`prMetadata.baseBranch`). */
+  baseBranch?: string;
+  /** Audited PR number (`prMetadata.number`). */
+  prNumber?: number;
+  /** Audited PR URL, forwarded to the message route. */
+  prUrl?: string;
+  /** Audited head SHA known to the scorecard (new-session metadata check). */
+  auditedHeadSha?: string | null;
+  /** Current session, from `resolveContinueSessionId`. */
+  sessionId: string | null;
   /**
-   * COR-40 freshness gate, run before every dispatch
-   * (same contract as the scorecard's remediation
-   * flows). A failure aborts the turn with the gate's
-   * error. When provided, the freshly resolved live
-   * SHA is used as the continuation lock.
+   * `shouldOfferContinueSession` result. When false and the audited
+   * PR is fully known, the panel offers a separate, explicit
+   * "Start new Jules session" button instead of Send.
    */
-  checkHeadFreshness?: () => Promise<
-    | { ok: true; audited: string; live: string | null }
-    | { ok: false; error: string }
-  >;
-  /**
-   * Parent policy gate (verified API key, vault lock).
-   * Returning false aborts the turn — the parent has
-   * already surfaced the reason to the operator.
-   */
-  canSend?: () => boolean;
-  /** Called with the rebound blueprint after a successful turn. */
-  onContinued: (blueprint: Blueprint) => void;
+  canContinue: boolean;
+  /** Parent policy gate (verified API key, vault lock). */
+  requireVerifiedKey: () => boolean;
+  /** COR-40 freshness gate, run after the key gate on every Send. */
+  checkHeadFreshness: () => Promise<HeadFreshnessResult>;
+  /** Called after a reply lands in the current session. */
+  onSent: (sent: {
+    sessionId: string;
+    auditedHeadSha: string;
+    snippetId: string | null;
+  }) => void;
+  /** Called after the explicit fallback started a new session. */
+  onNewSessionStarted: (started: {
+    sessionId: string;
+    sessionUrl: string | null;
+    blueprint: Blueprint;
+    snippetId: string | null;
+  }) => void;
 }
 
 /**
@@ -79,9 +96,9 @@ export interface JulesFollowUpPanelProps {
  * vault customs) against the latest Jules output, the
  * ingested goal criteria, and the inferred session
  * stage; renders the snippet bar directly beneath the
- * output; and dispatches the operator-reviewed turn
- * through the COR-39 continuation path
- * (`/api/jules/dispatch` + `applyNewRemediationSession`).
+ * output; and replies in the CURRENT Jules session via
+ * `/api/jules/message`, locked to the audited PR branch
+ * and head SHA. It never starts a new session.
  *
  * Operator-in-the-loop: selecting a card only populates
  * the editor. Nothing sends until the explicit Send
@@ -92,10 +109,18 @@ export function JulesFollowUpPanel({
   brief,
   latestMessage,
   julesApiKey,
-  currentHeadSha,
+  repo,
+  targetBranch,
+  baseBranch,
+  prNumber,
+  prUrl,
+  auditedHeadSha,
+  sessionId,
+  canContinue,
+  requireVerifiedKey,
   checkHeadFreshness,
-  canSend,
-  onContinued,
+  onSent,
+  onNewSessionStarted,
 }: JulesFollowUpPanelProps) {
   // Snippet library: built-ins are always readable;
   // vault customs require the operator's passphrase.
@@ -119,6 +144,7 @@ export function JulesFollowUpPanel({
   const [isSending, setIsSending] = React.useState(false);
   const [sendResult, setSendResult] = React.useState<{
     ok: boolean;
+    newSession?: boolean;
     sessionId?: string;
     sessionUrl?: string;
     error?: string;
@@ -185,15 +211,18 @@ export function JulesFollowUpPanel({
     try {
       const store: SteeringStore = indexedDbSteeringStore();
       store.unlock(trimmed);
-      // listSnippets throws when the passphrase cannot
-      // decrypt the vault — the unlock fails loudly.
+      // listSnippets skips records the passphrase cannot
+      // decrypt rather than throwing, so a wrong passphrase
+      // shows only the built-ins plus any readable customs.
       const unlocked = await store.listSnippets();
-      setSnippets(unlocked);
+      setSnippets(mergeWithBuiltins(unlocked));
       // Repo conventions ground the citations; the
       // profile is optional and simply omitted when
       // absent (fail-soft).
-      setRepoProfile((await store.getRepoProfile(blueprint.repo)) ?? undefined);
+      setRepoProfile((await store.getRepoProfile(repo)) ?? undefined);
       setIsUnlocked(true);
+      // Do not keep the vault passphrase in React state.
+      setPassphrase('');
     } catch (err: unknown) {
       setIsUnlocked(false);
       setRepoProfile(undefined);
@@ -214,38 +243,54 @@ export function JulesFollowUpPanel({
     setSendResult(null);
   };
 
+  // In-memory only: the send path never writes to the vault.
+  const recordUsage = (snippetId: string) => {
+    setSnippets((current) =>
+      current.map((snippet) =>
+        snippet.id === snippetId
+          ? { ...snippet, usageCount: (snippet.usageCount ?? 0) + 1 }
+          : snippet
+      )
+    );
+  };
+
+  const mode = snippetSendMode({
+    canContinue,
+    sessionId,
+    repo,
+    targetBranch,
+    baseBranch,
+    prNumber,
+    auditedHeadSha,
+  });
+  const sendDisabledReason = mode.kind === 'blocked' ? mode.reason : null;
+
+
   const handleSend = async (value: string) => {
     const directive = value.trim();
-    if (!directive || isSending) return;
-    // Parent policy gate (verified key, vault lock):
-    // the parent surfaces the reason when it aborts.
-    if (canSend && !canSend()) return;
+    if (!directive || isSending || mode.kind !== 'continue') return;
     setIsSending(true);
     setSendResult(null);
     try {
-      // COR-40 gate: resolve the live head SHA and
-      // refuse the turn when it drifted from the
-      // audited commit. The dispatch route enforces
-      // the same lock server-side.
-      let headSha = (currentHeadSha || '').trim();
-      if (checkHeadFreshness) {
-        const freshness = await checkHeadFreshness();
-        if (!freshness.ok) {
-          setSendResult({ ok: false, error: freshness.error });
-          return;
-        }
-        if (freshness.live) headSha = freshness.live.trim();
-      }
       const result = await sendInteractiveTurn({
         blueprint,
         brief,
         directive,
         julesApiKey,
-        currentHeadSha: headSha,
-        prUrl: blueprint.prUrl,
+        targetBranch,
+        sessionId,
+        canContinue,
+        requireVerifiedKey,
+        checkHeadFreshness,
+        prUrl,
       });
-      if (result.ok && result.blueprint) {
-        onContinued(result.blueprint);
+      if (result.ok && result.sessionId && result.auditedHeadSha) {
+        if (selectedSnippetId) recordUsage(selectedSnippetId);
+        onSent({
+          sessionId: result.sessionId,
+          auditedHeadSha: result.auditedHeadSha,
+          snippetId: selectedSnippetId,
+        });
         setSelectedSnippetId(null);
         setEditorValue('');
         setSendResult({
@@ -262,7 +307,57 @@ export function JulesFollowUpPanel({
         error:
           err instanceof Error
             ? err.message
-            : 'The turn could not be sent.',
+            : 'The reply could not be sent.',
+      });
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Explicit-click fallback only: never reached from Send or selection.
+  const handleStartNewSession = async (value: string) => {
+    const directive = value.trim();
+    if (!directive || isSending || mode.kind !== 'start-new') return;
+    setIsSending(true);
+    setSendResult(null);
+    try {
+      const result = await startNewSessionTurn({
+        blueprint,
+        brief,
+        directive,
+        julesApiKey,
+        repo,
+        targetBranch,
+        baseBranch,
+        prNumber,
+        prUrl,
+        auditedHeadSha,
+        requireVerifiedKey,
+        checkHeadFreshness,
+      });
+      if (result.ok && result.sessionId && result.blueprint) {
+        if (selectedSnippetId) recordUsage(selectedSnippetId);
+        onNewSessionStarted({
+          sessionId: result.sessionId,
+          sessionUrl: result.sessionUrl ?? null,
+          blueprint: result.blueprint,
+          snippetId: selectedSnippetId,
+        });
+        setSelectedSnippetId(null);
+        setEditorValue('');
+        setSendResult({
+          ok: true,
+          newSession: true,
+          sessionId: result.sessionId,
+          sessionUrl: result.sessionUrl ?? undefined,
+        });
+      } else {
+        setSendResult({ ok: false, error: result.error });
+      }
+    } catch (err: unknown) {
+      setSendResult({
+        ok: false,
+        error: err instanceof Error ? err.message : 'The session could not be started.',
       });
     } finally {
       setIsSending(false);
@@ -317,6 +412,17 @@ export function JulesFollowUpPanel({
         )}
       </div>
 
+      {mode.kind === 'continue' && (
+        <p className="text-[11px] text-slate-400">
+          Replies in the current Jules session{' '}
+          <code className="font-mono text-slate-300">{sessionId}</code> on{' '}
+          <code className="font-mono text-slate-300">{targetBranch}</code>
+          {prNumber !== undefined ? ` (PR #${prNumber}` : ''}
+          {prNumber !== undefined && baseBranch ? ` → ${baseBranch}` : ''}
+          {prNumber !== undefined ? ')' : ''}. No new session is started.
+        </p>
+      )}
+
       {unlockError && (
         <p className="text-[11px] text-rose-300">{unlockError}</p>
       )}
@@ -336,12 +442,39 @@ export function JulesFollowUpPanel({
         }}
         onSend={(value) => void handleSend(value)}
         isSending={isSending}
+        disabled={mode.kind !== 'continue'}
+        allowEditWhenDisabled={mode.kind === 'start-new'}
         placeholder="Reply to Jules, or pick a suggested snippet above…"
       />
 
+      {mode.kind === 'start-new' && (
+        <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-950/30 p-2.5">
+          <p className="text-[11px] text-amber-200">
+            The previous session has ended. This starts a new session on{' '}
+            <code className="font-mono">{targetBranch}</code>.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void handleStartNewSession(editorValue)}
+            disabled={isSending || !editorValue.trim()}
+            className="h-7 text-[11px] border-amber-500/60 text-amber-100 hover:bg-amber-500/10"
+          >
+            {isSending ? 'Starting…' : 'Start new Jules session'}
+          </Button>
+        </div>
+      )}
+
+      {sendDisabledReason && (
+        <p className="text-[11px] text-amber-300">{sendDisabledReason}</p>
+      )}
+
       {sendResult && sendResult.ok && (
         <p className="text-[11px] text-emerald-300">
-          Turn dispatched to Jules
+          {sendResult.newSession
+            ? 'Started a new Jules session'
+            : 'Sent to the current Jules session'}
           {sendResult.sessionUrl ? (
             <>
               {' — '}
@@ -364,4 +497,12 @@ export function JulesFollowUpPanel({
       )}
     </div>
   );
+}
+
+/** Built-ins plus vault customs, deduplicated by id (vault wins). */
+function mergeWithBuiltins(custom: Snippet[]): Snippet[] {
+  const byId = new Map<string, Snippet>();
+  for (const snippet of getBuiltinSnippets()) byId.set(snippet.id, snippet);
+  for (const snippet of custom) byId.set(snippet.id, snippet);
+  return [...byId.values()];
 }
