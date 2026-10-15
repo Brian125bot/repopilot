@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 1.0.4 — 2026-10-15
+
 ### Added
 
 - **One-Click Snippet Bar in Jules Sessions (COR-59, PR 7):** contextually ranked snippet cards beneath the latest Jules output in an active interactive session, cutting operator typing on a follow-up turn from ~30s to ~5s.
