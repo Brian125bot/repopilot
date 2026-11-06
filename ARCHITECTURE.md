@@ -150,9 +150,9 @@ To guarantee agent adherence to file boundaries, path matching must satisfy stri
 
 ---
 
-## 6. After 1.0.4
+## 6. After 1.0.5
 
-The loop frozen in 1.0.1 is unchanged through 1.0.4: dispatch → wait for PR → audit → same-branch fix. 1.0.2 added the encrypted steering store and repository scan pipeline alongside it, 1.0.3 hardened that pipeline, and 1.0.4 added goal ingestion before dispatch, the snippet library, and a snippet bar whose follow-ups reuse the existing continuation path; none changed the loop. Later, not yet shipped:
+The loop frozen in 1.0.1 is unchanged through 1.0.5: dispatch → wait for PR → audit → same-branch fix. 1.0.2 added the encrypted steering store and repository scan pipeline alongside it, 1.0.3 hardened that pipeline, 1.0.4 added goal ingestion before dispatch, the snippet library, and a snippet bar whose follow-ups reuse the existing continuation path, and 1.0.5 corrected snippet Send so it targets the audited PR and replies in the current session (a new Jules session starts only from the explicit fallback); none changed the loop. Later, not yet shipped:
 
 1. **GitHub Action Integration:** Package the audit engine into a standalone reusable GitHub Action (`repopilot-audit-action`) for automated CI/CD gating.
 2. **Multi-Agent Comparative Audit:** Dispatch parallel sessions to multiple models (e.g. Jules, Claude Code, GitHub Copilot Workspace) and perform automated multi-way diff arbitration.
