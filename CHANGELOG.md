@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 1.0.5 — 2026-11-06
+
 ### Fixed
 
 - **Snippet Send targets the audited PR and replies in the current session (COR-59 review follow-up).** PR #36 merged without its review fixes; this lands them. The COR-59 entry in the 1.0.4 notes is left as released; these lines supersede it:
