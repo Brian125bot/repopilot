@@ -31,6 +31,7 @@ import {
   indexedDbSteeringStore,
   type SteeringStore,
 } from '@/lib/vault/steering-store';
+import { assertPassphraseOpensVault } from '@/lib/vault/passphrase-check';
 import type { Blueprint, FailureBrief } from '@/types';
 
 export interface JulesFollowUpPanelProps {
@@ -209,11 +210,12 @@ export function JulesFollowUpPanel({
     if (!trimmed) return;
     setUnlockError(null);
     try {
+      await assertPassphraseOpensVault(trimmed);
       const store: SteeringStore = indexedDbSteeringStore();
       store.unlock(trimmed);
-      // listSnippets skips records the passphrase cannot
-      // decrypt rather than throwing, so a wrong passphrase
-      // shows only the built-ins plus any readable customs.
+      // The open check above rejects a wrong passphrase.
+      // listSnippets still skips one unreadable record after
+      // the passphrase has been proved.
       const unlocked = await store.listSnippets();
       setSnippets(mergeWithBuiltins(unlocked));
       // Repo conventions ground the citations; the

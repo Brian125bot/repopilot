@@ -14,6 +14,7 @@ import { describeScanOutcome, describeScanError } from '@/lib/repo-profile/descr
 import { RepoProfile } from '@/lib/types/steering';
 import { indexedDbSteeringStore } from '@/lib/vault/steering-store';
 import { indexedDbVaultStore, unwrapVault } from '@/lib/credential-vault';
+import { assertPassphraseOpensVault } from '@/lib/vault/passphrase-check';
 import { AlertCircle, Trash2, Unlock, Save, Check } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -63,22 +64,18 @@ export default function ReposSettingsPage() {
   const handleUnlock = async () => {
     if (!passphrase.trim()) return;
     try {
+      await assertPassphraseOpensVault(passphrase);
       const store = indexedDbSteeringStore();
       store.unlock(passphrase);
       await store.listRepoProfiles();
 
-      // Try loading GitHub PAT from existing credential vault
       const vaultStore = indexedDbVaultStore();
       const envelope = await vaultStore.read();
       if (envelope) {
-        try {
-          const creds = await unwrapVault(envelope, passphrase);
-          if (creds.githubPat && creds.githubPat.trim()) {
-            setGithubPat(creds.githubPat.trim());
-            setHasVaultPat(true);
-          }
-        } catch {
-          // Vault passphrase mismatch or corrupt vault - keep fallback input
+        const creds = await unwrapVault(envelope, passphrase);
+        if (creds.githubPat && creds.githubPat.trim()) {
+          setGithubPat(creds.githubPat.trim());
+          setHasVaultPat(true);
         }
       }
 

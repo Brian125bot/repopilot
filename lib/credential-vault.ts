@@ -29,6 +29,13 @@ export const LOCKED_MESSAGE = VAULT_LOCKED_MESSAGE;
 export const VAULT_PASSPHRASE_REQUIRED =
   'A passphrase is required to unlock the credential vault.';
 export const VAULT_UNLOCK_FAILED = 'Incorrect passphrase — vault remains locked.';
+/**
+ * Known plaintext sealed inside new credential envelopes. AES-GCM already
+ * rejects a wrong passphrase; this value distinguishes a decrypted-but-tampered
+ * payload from an authentication failure. Envelopes written before the field
+ * existed omit it and still unwrap.
+ */
+export const VAULT_PASSPHRASE_CHECK_VALUE = 'repopilot-passphrase-ok';
 export const VAULT_CORRUPT_MESSAGE =
   'Saved vault is unreadable — clear it and set up again.';
 export const VAULT_IMPORT_INVALID =
@@ -74,7 +81,9 @@ export function encodeBase64(bytes: Uint8Array): string {
 }
 
 export function decodeBase64(b64: string): Uint8Array {
-  if (!b64 || typeof b64 !== 'string') {
+  // Reject non-alphabet input before WebCrypto. A failed AES-GCM tag is a
+  // passphrase miss; garbage encoding is a corrupt envelope.
+  if (!b64 || typeof b64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) {
     throw new Error(VAULT_CORRUPT_MESSAGE);
   }
   if (typeof Buffer !== 'undefined') {
@@ -91,6 +100,14 @@ function assertPassphrase(passphrase: string): string {
     throw new Error(VAULT_PASSPHRASE_REQUIRED);
   }
   return passphrase;
+}
+
+/** WebCrypto AES-GCM reports a failed authentication tag as OperationError. */
+export function isPassphraseMismatchError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if (err instanceof Error && err.message === VAULT_UNLOCK_FAILED) return true;
+  const name = 'name' in err ? (err as { name?: unknown }).name : undefined;
+  return name === 'OperationError' || name === 'InvalidAccessError';
 }
 
 export async function deriveKek(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
@@ -133,7 +150,9 @@ export async function wrapVault(
   const salt = getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = getRandomValues(new Uint8Array(IV_BYTES));
   const kek = await deriveKek(cleanPass, salt);
-  const plaintext = new TextEncoder().encode(JSON.stringify(normalized));
+  const plaintext = new TextEncoder().encode(
+    JSON.stringify({ ...normalized, check: VAULT_PASSPHRASE_CHECK_VALUE })
+  );
   const ciphertext = await subtle.encrypt({ name: 'AES-GCM', iv: iv as BufferSource }, kek, plaintext);
   return {
     version: 1,
@@ -177,7 +196,9 @@ export async function unwrapVault(
       kek,
       ciphertext as BufferSource
     );
-    const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<VaultCredentials>;
+    const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<VaultCredentials> & {
+      check?: unknown;
+    };
     if (
       typeof parsed.julesKey !== 'string' ||
       typeof parsed.geminiKey !== 'string' ||
@@ -185,10 +206,18 @@ export async function unwrapVault(
     ) {
       throw new Error(VAULT_CORRUPT_MESSAGE);
     }
+    // Legacy envelopes have no check field. A present-but-wrong value means the
+    // ciphertext decrypted to something that is not this vault.
+    if (parsed.check !== undefined && parsed.check !== VAULT_PASSPHRASE_CHECK_VALUE) {
+      throw new Error(VAULT_CORRUPT_MESSAGE);
+    }
     return normalizeCredentials(parsed);
   } catch (err) {
     if (err instanceof Error && (err.message === VAULT_PASSPHRASE_REQUIRED || err.message === VAULT_CORRUPT_MESSAGE)) {
       throw err;
+    }
+    if (isPassphraseMismatchError(err) || err instanceof SyntaxError) {
+      throw new Error(err instanceof SyntaxError ? VAULT_CORRUPT_MESSAGE : VAULT_UNLOCK_FAILED);
     }
     throw new Error(VAULT_UNLOCK_FAILED);
   }

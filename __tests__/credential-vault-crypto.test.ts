@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   LOCKED_MESSAGE,
+  VAULT_CORRUPT_MESSAGE,
+  VAULT_PASSPHRASE_CHECK_VALUE,
   VAULT_PASSPHRASE_REQUIRED,
   VAULT_UNLOCK_FAILED,
+  encodeBase64,
   createMemoryVault,
   exportEncryptedEnvelope,
   exportPlaintextOptIn,
@@ -35,6 +38,13 @@ describe('credential vault AES-GCM round-trip', () => {
     expect(a.saltB64).not.toBe(b.saltB64);
   });
 
+  it('rejects a truncated salt as a corrupt vault, not a passphrase miss', async () => {
+    const envelope = await wrapVault(CREDS, PASS);
+    await expect(
+      unwrapVault({ ...envelope, saltB64: encodeBase64(new Uint8Array(4)) }, PASS)
+    ).rejects.toThrow(VAULT_CORRUPT_MESSAGE);
+  });
+
   it('fails closed with a fixed sentence on wrong passphrase', async () => {
     const envelope = await wrapVault(CREDS, PASS);
     await expect(unwrapVault(envelope, 'wrong passphrase')).rejects.toThrow(VAULT_UNLOCK_FAILED);
@@ -56,6 +66,7 @@ describe('credential vault AES-GCM round-trip', () => {
     expect(serialized).not.toContain(CREDS.julesKey);
     expect(serialized).not.toContain(CREDS.geminiKey);
     expect(serialized).not.toContain(CREDS.githubPat);
+    expect(serialized).not.toContain(VAULT_PASSPHRASE_CHECK_VALUE);
   });
 
   it('round-trips through encrypted export/import without plaintext fields', async () => {

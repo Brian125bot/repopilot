@@ -22,8 +22,10 @@ import {
   type Goal,
   type GoalExtracted,
 } from '@/lib/goals/types';
-import { GOAL_VAULT_SAVE_FAILED, saveGoal } from '@/lib/goals/storage';
+import { GOAL_VAULT_SAVE_FAILED, isGoalVaultError, saveGoal } from '@/lib/goals/storage';
+import { VAULT_UNLOCK_FAILED } from '@/lib/credential-vault';
 import { indexedDbSteeringStore } from '@/lib/vault/steering-store';
+import { assertPassphraseOpensVault } from '@/lib/vault/passphrase-check';
 import type { RepoProfile } from '@/lib/types/steering';
 
 /** What Confirm does once the goal is safely in the vault. */
@@ -115,6 +117,7 @@ function StartSessionWizard({
   const loadRepoProfile = React.useCallback(async (): Promise<RepoProfile | undefined> => {
     const ref = repo.trim();
     if (!ref || !passphrase.trim()) return undefined;
+    await assertPassphraseOpensVault(passphrase);
     try {
       const store = indexedDbSteeringStore();
       store.unlock(passphrase);
@@ -123,7 +126,8 @@ function StartSessionWizard({
         setNotice('No saved repository profile matched this repo, so extraction is not grounded in stack details.');
       }
       return profile ?? undefined;
-    } catch {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === VAULT_UNLOCK_FAILED) throw err;
       setNotice('No saved repository profile was readable, so extraction is not grounded in stack details.');
       return undefined;
     }
@@ -203,9 +207,13 @@ function StartSessionWizard({
 
       try {
         await saveGoal(goal, passphrase);
-      } catch {
+      } catch (err: unknown) {
         setIsSaving(false);
-        setSaveError(GOAL_VAULT_SAVE_FAILED);
+        setSaveError(
+          isGoalVaultError(err) && err.message !== GOAL_VAULT_SAVE_FAILED
+            ? err.message
+            : GOAL_VAULT_SAVE_FAILED
+        );
         return;
       }
 

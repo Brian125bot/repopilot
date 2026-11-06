@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { VAULT_PASSPHRASE_REQUIRED, VAULT_UNLOCK_FAILED } from '@/lib/credential-vault';
 import {
   GOALS_STORE_NAME,
   isIndexedDbAvailable,
   openVaultDb,
 } from '@/lib/vault/open-db';
+import { assertPassphraseOpensVault, sealPassphraseCheckIfAbsent } from '@/lib/vault/passphrase-check';
 import {
   unwrapRecord,
   wrapRecord,
@@ -151,6 +153,19 @@ function assertSessionId(sessionId: string): string {
   return sessionId.trim();
 }
 
+function rethrowGoalVault(err: unknown, fallback: string): never {
+  if (err instanceof GoalVaultError) throw err;
+  if (
+    err instanceof Error &&
+    (err.message === VAULT_UNLOCK_FAILED ||
+      err.message === VAULT_PASSPHRASE_REQUIRED ||
+      err.message === GOAL_STORAGE_UNAVAILABLE)
+  ) {
+    throw new GoalVaultError(err.message, err);
+  }
+  throw new GoalVaultError(fallback, err);
+}
+
 /**
  * Encrypts and stores a goal. Throws `GoalVaultError` when the passphrase is
  * missing, storage is unavailable, encryption fails, or the write is rejected.
@@ -162,17 +177,33 @@ export async function saveGoal(
 ): Promise<void> {
   const parsed = parseGoal(goal);
   const cleanPass = assertPassphrase(passphrase);
+  // The default IndexedDB path is the vault open. A wrong passphrase fails
+  // here, before a goal is wrapped under a key that cannot reopen the vault.
+  if (!store) {
+    try {
+      await assertPassphraseOpensVault(cleanPass);
+    } catch (err) {
+      rethrowGoalVault(err, GOAL_VAULT_SAVE_FAILED);
+    }
+  }
   const recordStore = resolveStore(store);
   let envelope: GoalEnvelope;
   try {
     envelope = await wrapRecord(parsed, cleanPass);
   } catch (err) {
-    throw new GoalVaultError(GOAL_VAULT_SAVE_FAILED, err);
+    rethrowGoalVault(err, GOAL_VAULT_SAVE_FAILED);
   }
   try {
     await recordStore.write(parsed.sessionId, envelope);
   } catch (err) {
-    throw new GoalVaultError(GOAL_VAULT_SAVE_FAILED, err);
+    rethrowGoalVault(err, GOAL_VAULT_SAVE_FAILED);
+  }
+  if (!store) {
+    try {
+      await sealPassphraseCheckIfAbsent(cleanPass);
+    } catch {
+      // The goal is already stored. The next open proves the passphrase from it.
+    }
   }
 }
 
@@ -199,7 +230,7 @@ export async function getGoal(
   try {
     return await unwrapRecord<Goal>(envelope, cleanPass, GoalSchema as unknown as z.ZodType<Goal>);
   } catch (err) {
-    throw new GoalVaultError(GOAL_VAULT_READ_FAILED, err);
+    rethrowGoalVault(err, GOAL_VAULT_READ_FAILED);
   }
 }
 

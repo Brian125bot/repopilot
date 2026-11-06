@@ -13,10 +13,16 @@ import type { RepoProfile } from '@/lib/types/steering';
  */
 export const MAX_EVALUATE_DIFF_CHARS = MAX_DIFF_CHAR_BUDGET;
 
+/**
+ * Header-only client. Callers pass the `x-gemini-api-key` request header.
+ * This does not read `process.env.GEMINI_API_KEY` — a public deploy leaves
+ * that unset, and construction stays a direct `GoogleGenAI` call plus the
+ * RepoPilot User-Agent (no extra imports).
+ */
 export function getGeminiClient(customApiKey?: string): GoogleGenAI {
-  const key = customApiKey || process.env.GEMINI_API_KEY;
+  const key = customApiKey?.trim() ?? '';
   if (!key) {
-    throw new Error('GEMINI_API_KEY is not configured on server or in client request headers.');
+    throw new Error('Gemini API key is required in the x-gemini-api-key request header.');
   }
 
   return new GoogleGenAI({

@@ -19,6 +19,7 @@ import {
   type VaultStatus,
 } from '@/lib/credential-vault';
 import type { KeyStorage } from '@/lib/settings-keys';
+import { sealPassphraseCheck } from '@/lib/vault/passphrase-check';
 
 export const VAULT_IDLE_TIMEOUT_MS = 20 * 60 * 1000;
 
@@ -130,6 +131,11 @@ export function useCredentialVault(storeOverride?: VaultIdbStore): CredentialVau
         setCredentials({ ...unwrapped });
         setStatus('unlocked');
         setLastError(null);
+        try {
+          await sealPassphraseCheck(passphrase);
+        } catch {
+          // Credentials are already unwrapped. Open repairs a missing or stale check.
+        }
         return true;
       } catch (err) {
         lock();
@@ -155,6 +161,11 @@ export function useCredentialVault(storeOverride?: VaultIdbStore): CredentialVau
         setVaultExists(true);
         setStatus('unlocked');
         setLastError(null);
+        try {
+          await sealPassphraseCheck(passphrase);
+        } catch {
+          // The new envelope is stored. Open repairs the check from it.
+        }
         const storage = resolveStorage();
         if (storage && hasAnyLegacyKey(storage)) {
           for (const key of [
@@ -186,6 +197,11 @@ export function useCredentialVault(storeOverride?: VaultIdbStore): CredentialVau
         setStatus('unlocked');
         setVaultExists(true);
         setLastError(null);
+        try {
+          await sealPassphraseCheck(passphrase);
+        } catch {
+          // The migrated envelope is stored. Open repairs the check from it.
+        }
       }
       return result;
     },
@@ -208,6 +224,11 @@ export function useCredentialVault(storeOverride?: VaultIdbStore): CredentialVau
         setStatus('unlocked');
         setVaultExists(true);
         setLastError(null);
+        try {
+          await sealPassphraseCheck(passphrase);
+        } catch {
+          // The imported envelope is stored. Open repairs the check from it.
+        }
         return true;
       } catch (err) {
         setLastError(err instanceof Error ? err.message : 'Import failed — vault remains locked.');

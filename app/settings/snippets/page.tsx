@@ -11,6 +11,7 @@ import { VAULT_LOCKED_MESSAGE } from '@/lib/credential-vault';
 import { getBuiltinSnippets } from '@/lib/snippets/builtin-loader';
 import type { Snippet } from '@/lib/types/steering';
 import { indexedDbSteeringStore, type SteeringStore } from '@/lib/vault/steering-store';
+import { assertPassphraseOpensVault } from '@/lib/vault/passphrase-check';
 
 export default function SnippetLibrarySettingsPage() {
   const [passphrase, setPassphrase] = useState('');
@@ -46,6 +47,7 @@ export default function SnippetLibrarySettingsPage() {
   const handleUnlock = async () => {
     if (!passphrase.trim()) return;
     try {
+      await assertPassphraseOpensVault(passphrase);
       const store = openStore();
       await store.listSnippets();
       setIsUnlocked(true);

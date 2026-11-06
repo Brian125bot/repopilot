@@ -3,7 +3,9 @@ import {
   VAULT_CORRUPT_MESSAGE,
   VAULT_LOCKED_MESSAGE,
   VAULT_PASSPHRASE_REQUIRED,
+  VAULT_UNLOCK_FAILED,
   decodeBase64,
+  isPassphraseMismatchError,
   deriveKek,
   encodeBase64,
 } from '@/lib/credential-vault';
@@ -147,6 +149,12 @@ export async function unwrapRecord<T>(
     if (err instanceof Error && err.message === VAULT_PASSPHRASE_REQUIRED) throw err;
     if (err instanceof Error && err.message === VAULT_CORRUPT_MESSAGE) {
       throw new SteeringCorruptError();
+    }
+    // The AES-GCM tag is the passphrase check. Surface that failure on its own
+    // so openers can reject a wrong passphrase instead of treating it as a
+    // corrupt record.
+    if (isPassphraseMismatchError(err)) {
+      throw new Error(VAULT_UNLOCK_FAILED);
     }
     throw new SteeringCorruptError();
   }

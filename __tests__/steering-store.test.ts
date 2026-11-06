@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { VAULT_LOCKED_MESSAGE } from '@/lib/credential-vault';
+import { VAULT_LOCKED_MESSAGE, VAULT_UNLOCK_FAILED } from '@/lib/credential-vault';
 import { BUILTIN_SNIPPET_IDS } from '@/lib/snippets/builtin-loader';
 import type { RepoProfile, Snippet } from '@/lib/types/steering';
 import {
@@ -161,9 +161,7 @@ describe('steering store failure modes', () => {
 
   it('rejects wrong passphrases without leaking plaintext', async () => {
     const envelope = await wrapRecord(snippet(), PASS);
-    await expect(unwrapRecord(envelope, 'wrong passphrase', SnippetSchema)).rejects.toBeInstanceOf(
-      SteeringCorruptError
-    );
+    await expect(unwrapRecord(envelope, 'wrong passphrase', SnippetSchema)).rejects.toThrow(VAULT_UNLOCK_FAILED);
     await expect(unwrapRecord(envelope, 'wrong passphrase', SnippetSchema)).rejects.not.toThrow(
       'flag anything unintended'
     );

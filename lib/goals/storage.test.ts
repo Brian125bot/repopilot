@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { VAULT_UNLOCK_FAILED } from '@/lib/credential-vault';
 import {
   GOAL_VAULT_PASSPHRASE_REQUIRED,
   GOAL_VAULT_READ_FAILED,
@@ -108,7 +109,7 @@ describe('Goal vault storage', () => {
     const goal = makeGoal();
     await saveGoal(goal, PASS, store);
 
-    await expect(getGoal(goal.sessionId, WRONG_PASS, store)).rejects.toThrow(GOAL_VAULT_READ_FAILED);
+    await expect(getGoal(goal.sessionId, WRONG_PASS, store)).rejects.toThrow(VAULT_UNLOCK_FAILED);
   });
 
   it('returns null for an unknown session id', async () => {

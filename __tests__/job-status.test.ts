@@ -62,6 +62,32 @@ describe('deriveJobStatus', () => {
     ).toBe('last verdict');
   });
 
+  it('treats a missing blueprint and whitespace-only session or PR fields as idle', () => {
+    expect(deriveJobStatus(undefined)).toBe('idle');
+    expect(deriveJobStatus({ ...base(), sessionId: '   ', prUrl: '  ' })).toBe('idle');
+  });
+
+  it('lets a harvested PR beat an in-flight session, and ignores a blank PR URL', () => {
+    expect(
+      deriveJobStatus({
+        ...base(),
+        sessionId: 'sessions/abc',
+        prUrl: 'https://github.com/acme-corp/api-gateway/pull/7',
+      })
+    ).toBe('PR ready');
+    expect(deriveJobStatus({ ...base(), sessionId: 'sessions/abc', prUrl: '   ' })).toBe('watching');
+  });
+
+  it('falls through a last brief that has no verdict', () => {
+    expect(
+      deriveJobStatus({
+        ...base(),
+        sessionId: 'sessions/abc',
+        lastBrief: { ...brief('NEEDS_REVISION'), verdict: '' as FailureBrief['verdict'] },
+      })
+    ).toBe('watching');
+  });
+
   it('shows the four labels in the navbar chrome and uses 1.0.4 as the version mark', () => {
     const nav = readFileSync('components/Navbar.tsx', 'utf8');
     expect(nav).toContain('deriveJobStatus');
@@ -81,10 +107,43 @@ describe('jobStatusDetail and chrome tone', () => {
     expect(jobStatusDetail(bp)).toBe('NEEDS_REVISION · 70');
   });
 
+  it('uses the verdict alone when the brief has no numeric score', () => {
+    expect(
+      jobStatusDetail({
+        ...base(),
+        lastBrief: { ...brief('BLOCKED'), score: undefined as unknown as number },
+      })
+    ).toBe('BLOCKED');
+  });
+
+  it('shows the PR title when a pull request is ready and the session state while watching', () => {
+    expect(
+      jobStatusDetail({
+        ...base(),
+        prUrl: 'https://github.com/acme-corp/api-gateway/pull/7',
+        prTitle: 'Add limiter',
+      })
+    ).toBe('Add limiter');
+    expect(
+      jobStatusDetail({ ...base(), sessionId: 'sessions/abc', sessionState: 'IN_PROGRESS' })
+    ).toBe('IN_PROGRESS');
+    expect(jobStatusDetail(null)).toBe('idle');
+  });
+
   it('uses caution for NEEDS_REVISION and danger for BLOCKED last verdicts', () => {
     expect(jobChromeTone({ ...base(), lastBrief: brief('READY_TO_MERGE') })).toBe('positive');
     expect(jobChromeTone({ ...base(), lastBrief: brief('NEEDS_REVISION') })).toBe('caution');
     expect(jobChromeTone({ ...base(), lastBrief: brief('BLOCKED') })).toBe('danger');
     expect(jobChromeTone({ ...base(), sessionId: 'sessions/abc' })).toBe('watching');
+    expect(jobChromeTone({ ...base(), prUrl: 'https://github.com/acme-corp/api-gateway/pull/7' })).toBe(
+      'positive'
+    );
+    expect(jobChromeTone(null)).toBe('neutral');
+    expect(
+      jobChromeTone({
+        ...base(),
+        lastBrief: { ...brief('NEEDS_REVISION'), verdict: 'UNKNOWN' as FailureBrief['verdict'] },
+      })
+    ).toBe('neutral');
   });
 });
